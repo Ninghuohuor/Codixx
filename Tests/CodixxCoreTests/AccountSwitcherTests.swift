@@ -137,6 +137,27 @@ final class AccountSwitcherTests: XCTestCase {
 
         XCTAssertNotEqual(first.lastPathComponent, second.lastPathComponent)
     }
+
+    func testBackupManagerKeepsMostRecentTwentyBackups() throws {
+        let fixture = try SwitchFixture()
+        defer { fixture.cleanup() }
+        let base = Date(timeIntervalSince1970: 10_000)
+        var currentDate = base
+        let backupManager = SwitchBackupManager(paths: fixture.paths, now: { currentDate })
+
+        for offset in 0..<25 {
+            currentDate = base.addingTimeInterval(Double(offset))
+            _ = try backupManager.backupCurrentAuth(alias: "Main")
+        }
+
+        let backupFiles = try FileManager.default.contentsOfDirectory(
+            at: fixture.paths.backups,
+            includingPropertiesForKeys: [.creationDateKey]
+        )
+
+        XCTAssertEqual(backupFiles.count, 20)
+        XCTAssertFalse(backupFiles.contains { $0.lastPathComponent.contains("1970-01-01T02-46-40Z") })
+    }
 }
 
 private final class SwitchFixture {
@@ -157,7 +178,8 @@ private final class SwitchFixture {
         paths = CodixxPaths(home: home)
         metadataStore = AccountMetadataStore(paths: paths)
         vault = InMemorySwitchVault()
-        auditLog = SwitchAuditLog(paths: paths)
+        let fixtureNow = now
+        auditLog = SwitchAuditLog(paths: paths, retention: .init(now: { fixtureNow }))
         backupManager = SwitchBackupManager(paths: paths, now: { Date(timeIntervalSince1970: 1_000) })
 
         sourceAuth = try AuthSnapshot(jsonData: Data(#"{"account_id":"source","access_token":"source-secret"}"#.utf8))

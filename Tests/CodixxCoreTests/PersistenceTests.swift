@@ -119,4 +119,53 @@ final class PersistenceTests: XCTestCase {
         XCTAssertEqual(loaded.accounts, [account])
         XCTAssertTrue(FileManager.default.fileExists(atPath: paths.accountsJSON.path))
     }
+
+    func testSwitchAuditLogPrunesEventsOlderThanNinetyDays() throws {
+        let tempHome = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: tempHome) }
+        let paths = CodixxPaths(home: tempHome)
+        let now = Date(timeIntervalSince1970: 10_000_000)
+        let log = SwitchAuditLog(paths: paths, retention: .init(now: { now }))
+
+        try log.append(event(timestamp: now.addingTimeInterval(-91 * 86_400), alias: "Old"))
+        try log.append(event(timestamp: now.addingTimeInterval(-89 * 86_400), alias: "Recent"))
+
+        let loaded = try log.loadEvents()
+
+        XCTAssertEqual(loaded.map(\.targetAlias), ["Recent"])
+    }
+
+    func testSwitchAuditLogPrunesToMaximumSize() throws {
+        let tempHome = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: tempHome) }
+        let paths = CodixxPaths(home: tempHome)
+        let log = SwitchAuditLog(paths: paths, retention: .init(maximumBytes: 900, now: { Date(timeIntervalSince1970: 1_000) }))
+
+        for index in 0..<20 {
+            try log.append(event(timestamp: Date(timeIntervalSince1970: Double(index)), alias: "Account \(index)"))
+        }
+
+        let data = try Data(contentsOf: paths.switchAuditJSONL)
+        let loaded = try log.loadEvents()
+
+        XCTAssertLessThanOrEqual(data.count, 900)
+        XCTAssertEqual(loaded.last?.targetAlias, "Account 19")
+    }
+
+    private func event(timestamp: Date, alias: String) -> SwitchAuditEvent {
+        SwitchAuditEvent(
+            timestamp: timestamp,
+            trigger: .manual,
+            sourceAccountId: nil,
+            sourceAlias: nil,
+            targetAccountId: nil,
+            targetAlias: alias,
+            sourcePrimaryUsedPercent: nil,
+            sourceSecondaryUsedPercent: nil,
+            threshold: nil,
+            result: .success,
+            errorSummary: nil,
+            backupPath: nil
+        )
+    }
 }
