@@ -1,0 +1,113 @@
+import AppKit
+import SwiftUI
+import CodixxCore
+
+struct DashboardView: View {
+    @ObservedObject var state: AppState
+    @State private var selectedTab = 0
+    @State private var isShowingSettings = false
+
+    var body: some View {
+        VStack(spacing: 0) {
+            TabView(selection: $selectedTab) {
+                overview
+                    .tabItem { Label("Overview", systemImage: "gauge.with.dots.needle.67percent") }
+                    .tag(0)
+
+                trends
+                    .tabItem { Label("Trends", systemImage: "chart.xyaxis.line") }
+                    .tag(1)
+
+                accounts
+                    .tabItem { Label("Accounts", systemImage: "person.2") }
+                    .tag(2)
+            }
+            .frame(width: 360, height: 520)
+
+            Divider()
+
+            HStack(spacing: 10) {
+                Text(footerText)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                Spacer()
+                Button {
+                    state.refreshNow()
+                } label: {
+                    Label("Refresh", systemImage: state.isRefreshing ? "arrow.triangle.2.circlepath" : "arrow.clockwise")
+                }
+                .labelStyle(.iconOnly)
+                .help("Refresh")
+
+                Button {
+                    isShowingSettings.toggle()
+                } label: {
+                    Label("Settings", systemImage: "gearshape")
+                }
+                .labelStyle(.iconOnly)
+                .help("Settings")
+                .popover(isPresented: $isShowingSettings) {
+                    SettingsView(state: state)
+                        .frame(width: 320)
+                        .padding()
+                }
+
+                Button {
+                    NSApplication.shared.terminate(nil)
+                } label: {
+                    Label("Quit", systemImage: "power")
+                }
+                .labelStyle(.iconOnly)
+                .help("Quit Codixx")
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 10)
+        }
+        .onAppear {
+            state.refreshFromMenuOpen()
+        }
+    }
+
+    private var overview: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 14) {
+                QuotaView(account: state.currentAccount, config: state.config)
+
+                if let error = state.errorMessage {
+                    Label(error, systemImage: "exclamationmark.triangle")
+                        .font(.caption)
+                        .foregroundStyle(.orange)
+                        .lineLimit(4)
+                        .padding(10)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .background(Color.orange.opacity(0.10), in: RoundedRectangle(cornerRadius: 8))
+                }
+
+                ThreadRankingView(threads: state.topThreads)
+                SwitchLogView(events: Array(state.switchEvents.prefix(4)))
+            }
+            .padding(14)
+        }
+    }
+
+    private var trends: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 16) {
+                UsageTrendView(snapshot: state.usageSnapshot)
+                ThreadRankingView(threads: state.topThreads)
+            }
+            .padding(14)
+        }
+    }
+
+    private var accounts: some View {
+        AccountListView(state: state)
+            .padding(14)
+    }
+
+    private var footerText: String {
+        guard let lastUpdatedAt = state.lastUpdatedAt else { return "Not refreshed yet" }
+        return "Updated \(lastUpdatedAt.formatted(date: .omitted, time: .shortened))"
+    }
+}
