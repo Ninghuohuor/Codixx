@@ -21,6 +21,10 @@ struct DashboardView: View {
                 accounts
                     .tabItem { Label(state.strings.accounts, systemImage: "person.2") }
                     .tag(2)
+
+                logs
+                    .tabItem { Label(state.strings.logs, systemImage: "list.clipboard") }
+                    .tag(3)
             }
             .frame(width: 360, height: 520)
 
@@ -83,9 +87,6 @@ struct DashboardView: View {
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .background(Color.orange.opacity(0.10), in: RoundedRectangle(cornerRadius: 8))
                 }
-
-                ThreadRankingView(threads: state.topThreads, strings: state.strings)
-                SwitchLogView(events: Array(state.switchEvents.prefix(4)), strings: state.strings)
             }
             .padding(14)
         }
@@ -104,6 +105,13 @@ struct DashboardView: View {
     private var accounts: some View {
         AccountListView(state: state)
             .padding(14)
+    }
+
+    private var logs: some View {
+        ScrollView {
+            SwitchLogView(events: Array(state.switchEvents.prefix(20)), strings: state.strings)
+                .padding(14)
+        }
     }
 
     private var footerText: String {

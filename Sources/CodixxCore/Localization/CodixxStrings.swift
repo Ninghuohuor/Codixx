@@ -10,6 +10,7 @@ public struct CodixxStrings: Sendable {
     public var overview: String { text(en: "Overview", zh: "概览") }
     public var trends: String { text(en: "Trends", zh: "趋势") }
     public var accounts: String { text(en: "Accounts", zh: "账号") }
+    public var logs: String { text(en: "Logs", zh: "日志") }
     public var refresh: String { text(en: "Refresh", zh: "刷新") }
     public var settings: String { text(en: "Settings", zh: "设置") }
     public var quitCodixx: String { text(en: "Quit Codixx", zh: "退出 Codixx") }
@@ -39,6 +40,8 @@ public struct CodixxStrings: Sendable {
     public var failedBeforeWrite: String { text(en: "Failed before write", zh: "写入前失败") }
     public var failedDuringWrite: String { text(en: "Failed during write", zh: "写入时失败") }
     public var validationFailed: String { text(en: "Validation failed", zh: "校验失败") }
+    public var errorSummaryLabel: String { text(en: "Error", zh: "错误") }
+    public var backupPathLabel: String { text(en: "Backup", zh: "备份") }
     public var total: String { text(en: "Total", zh: "总量") }
     public var threads: String { text(en: "Threads", zh: "会话") }
     public var tokens: String { text(en: "Tokens", zh: "Token") }
@@ -123,6 +126,36 @@ public struct CodixxStrings: Sendable {
 
     public func switchSuccessTitle(target: String) -> String {
         text(en: "Switched to \(target)", zh: "已切换到 \(target)")
+    }
+
+    public func switchTriggerLabel(_ trigger: SwitchTrigger) -> String {
+        switch trigger {
+        case .manual:
+            return text(en: "Manual", zh: "手动切换")
+        case .autoPrimaryThreshold:
+            return text(en: "Automatic", zh: "自动切换")
+        case .recovery:
+            return text(en: "Recovery", zh: "恢复")
+        }
+    }
+
+    public func switchResultLabel(_ result: SwitchAuditResult) -> String {
+        switch result {
+        case .success:
+            return text(en: "Success", zh: "成功")
+        case .skippedNoCandidate:
+            return noCandidate
+        case .failedBeforeWrite:
+            return failedBeforeWrite
+        case .failedDuringWrite:
+            return failedDuringWrite
+        case .failedValidation:
+            return validationFailed
+        case .rolledBack:
+            return rolledBack
+        case .rollbackFailed:
+            return rollbackFailed
+        }
     }
 
     public func quotaWarningBody(alias: String, percent: Int) -> String {

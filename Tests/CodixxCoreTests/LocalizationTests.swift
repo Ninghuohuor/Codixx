@@ -15,6 +15,13 @@ final class LocalizationTests: XCTestCase {
         XCTAssertEqual(strings.savedCurrentAccount(alias: "Main"), "Saved Main.")
         XCTAssertEqual(strings.couldNotSaveCurrentAccount("Missing token"), "Could not save current account: Missing token")
         XCTAssertEqual(strings.switchSuccessTitle(target: "Main"), "Switched to Main")
+        XCTAssertEqual(strings.logs, "Logs")
+        XCTAssertEqual(strings.switchTriggerLabel(.autoPrimaryThreshold), "Automatic")
+        XCTAssertEqual(strings.switchTriggerLabel(.manual), "Manual")
+        XCTAssertEqual(strings.switchTriggerLabel(.recovery), "Recovery")
+        XCTAssertEqual(strings.switchResultLabel(.failedValidation), "Validation failed")
+        XCTAssertEqual(strings.errorSummaryLabel, "Error")
+        XCTAssertEqual(strings.backupPathLabel, "Backup")
     }
 
     func testChineseStringsExplainUnsavedCurrentAccount() {
@@ -30,5 +37,12 @@ final class LocalizationTests: XCTestCase {
         XCTAssertEqual(strings.savedCurrentAccount(alias: "Main"), "已保存 Main。")
         XCTAssertEqual(strings.couldNotSaveCurrentAccount("缺少令牌"), "无法保存当前账号：缺少令牌")
         XCTAssertEqual(strings.switchSuccessTitle(target: "Main"), "已切换到 Main")
+        XCTAssertEqual(strings.logs, "日志")
+        XCTAssertEqual(strings.switchTriggerLabel(.autoPrimaryThreshold), "自动切换")
+        XCTAssertEqual(strings.switchTriggerLabel(.manual), "手动切换")
+        XCTAssertEqual(strings.switchTriggerLabel(.recovery), "恢复")
+        XCTAssertEqual(strings.switchResultLabel(.failedValidation), "校验失败")
+        XCTAssertEqual(strings.errorSummaryLabel, "错误")
+        XCTAssertEqual(strings.backupPathLabel, "备份")
     }
 }
