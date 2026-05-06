@@ -192,7 +192,7 @@ final class AppState: ObservableObject {
         let context = SwitchSafetyContext(
             now: timestamp,
             activeThreadUpdatedAt: usageSnapshot.activeThread?.updatedAt,
-            lastAutoSwitchAt: lastSuccessfulAutoSwitchAt
+            lastSwitchAt: lastSuccessfulSwitchAt
         )
         guard policy.shouldAutoSwitch(currentAccount: currentAccount, context: context),
               let target = candidateAccounts.first
@@ -478,9 +478,9 @@ final class AppState: ObservableObject {
         (try? vault.load(fingerprint: account.fingerprint)) != nil
     }
 
-    private var lastSuccessfulAutoSwitchAt: Date? {
+    private var lastSuccessfulSwitchAt: Date? {
         switchEvents
-            .filter { $0.trigger == .autoPrimaryThreshold && $0.result == .success }
+            .filter { $0.result == .success }
             .map(\.timestamp)
             .max()
     }

@@ -87,7 +87,7 @@ final class SwitchPolicyTests: XCTestCase {
             context: SwitchSafetyContext(
                 now: now,
                 activeThreadUpdatedAt: now.addingTimeInterval(-119),
-                lastAutoSwitchAt: nil
+                lastSwitchAt: nil
             )
         ))
         XCTAssertTrue(policy.shouldAutoSwitch(
@@ -95,12 +95,12 @@ final class SwitchPolicyTests: XCTestCase {
             context: SwitchSafetyContext(
                 now: now,
                 activeThreadUpdatedAt: now.addingTimeInterval(-120),
-                lastAutoSwitchAt: nil
+                lastSwitchAt: nil
             )
         ))
     }
 
-    func testAutoSwitchRespectsCooldownAfterLastAutomaticSwitch() {
+    func testAutoSwitchRespectsCooldownAfterLastSuccessfulSwitch() {
         let now = Date(timeIntervalSince1970: 1_000)
         let policy = SwitchPolicy(primaryThresholdPercent: 93, autoSwitchCooldownSeconds: 300)
         let current = account(alias: "Main", primary: 93, confidence: .fresh, now: now)
@@ -110,7 +110,7 @@ final class SwitchPolicyTests: XCTestCase {
             context: SwitchSafetyContext(
                 now: now,
                 activeThreadUpdatedAt: nil,
-                lastAutoSwitchAt: now.addingTimeInterval(-299)
+                lastSwitchAt: now.addingTimeInterval(-299)
             )
         ))
         XCTAssertTrue(policy.shouldAutoSwitch(
@@ -118,7 +118,7 @@ final class SwitchPolicyTests: XCTestCase {
             context: SwitchSafetyContext(
                 now: now,
                 activeThreadUpdatedAt: nil,
-                lastAutoSwitchAt: now.addingTimeInterval(-300)
+                lastSwitchAt: now.addingTimeInterval(-300)
             )
         ))
     }

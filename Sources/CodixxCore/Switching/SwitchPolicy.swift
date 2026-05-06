@@ -3,16 +3,16 @@ import Foundation
 public struct SwitchSafetyContext: Equatable, Sendable {
     public var now: Date
     public var activeThreadUpdatedAt: Date?
-    public var lastAutoSwitchAt: Date?
+    public var lastSwitchAt: Date?
 
-    public init(now: Date, activeThreadUpdatedAt: Date?, lastAutoSwitchAt: Date?) {
+    public init(now: Date, activeThreadUpdatedAt: Date?, lastSwitchAt: Date?) {
         self.now = now
         self.activeThreadUpdatedAt = activeThreadUpdatedAt
-        self.lastAutoSwitchAt = lastAutoSwitchAt
+        self.lastSwitchAt = lastSwitchAt
     }
 
     public static func idle(now: Date) -> SwitchSafetyContext {
-        SwitchSafetyContext(now: now, activeThreadUpdatedAt: nil, lastAutoSwitchAt: nil)
+        SwitchSafetyContext(now: now, activeThreadUpdatedAt: nil, lastSwitchAt: nil)
     }
 }
 
@@ -55,8 +55,8 @@ public struct SwitchPolicy: Sendable {
             return false
         }
 
-        if let lastAutoSwitchAt = context.lastAutoSwitchAt,
-           context.now.timeIntervalSince(lastAutoSwitchAt) < autoSwitchCooldownSeconds
+        if let lastSwitchAt = context.lastSwitchAt,
+           context.now.timeIntervalSince(lastSwitchAt) < autoSwitchCooldownSeconds
         {
             return false
         }
