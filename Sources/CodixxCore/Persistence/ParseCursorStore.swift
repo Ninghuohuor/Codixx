@@ -15,6 +15,11 @@ public struct ParseCursorState: Codable, Equatable, Sendable {
         offsetsByPath[Self.key(for: url)] = offset
     }
 
+    public mutating func pruneKeepingOnly(_ urls: [URL]) {
+        let retainedKeys = Set(urls.map(Self.key(for:)))
+        offsetsByPath = offsetsByPath.filter { retainedKeys.contains($0.key) }
+    }
+
     private static func key(for url: URL) -> String {
         url.resolvingSymlinksInPath().path
     }

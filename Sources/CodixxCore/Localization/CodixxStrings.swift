@@ -40,6 +40,8 @@ public struct CodixxStrings: Sendable {
     public var codexHome: String { text(en: "Codex Home", zh: "Codex 目录") }
     public var languageLabel: String { text(en: "Language", zh: "语言") }
     public var topThreads: String { text(en: "Top Threads", zh: "高用量会话") }
+    public var activeThread: String { text(en: "Active thread", zh: "活跃会话") }
+    public var noActiveThread: String { text(en: "No active thread", zh: "暂无活跃会话") }
     public var noThreadUsageYet: String { text(en: "No thread usage yet", zh: "暂无会话用量") }
     public var switchLog: String { text(en: "Switch Log", zh: "切换日志") }
     public var noSwitchEvents: String { text(en: "No switch events", zh: "暂无切换事件") }

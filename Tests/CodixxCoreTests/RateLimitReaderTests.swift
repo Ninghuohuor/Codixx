@@ -127,6 +127,34 @@ final class RateLimitReaderTests: XCTestCase {
         XCTAssertEqual(cursor, Int64(try Data(contentsOf: session).count))
     }
 
+    func testMissingSessionFileCursorIsPruned() throws {
+        let home = try makeTempHome()
+        defer { try? FileManager.default.removeItem(at: home) }
+        let paths = CodixxPaths(home: home)
+        let session = paths.codexHome.appendingPathComponent("sessions/2026/05/06/session.jsonl")
+        let missingSession = paths.codexHome.appendingPathComponent("sessions/missing.jsonl")
+        try writeJSONLLines(
+            [
+                """
+                {"timestamp":"2026-05-06T03:30:00Z","rate_limits":{"primary":{"used_percent":82.0,"window_minutes":300,"resets_at":1776409393},"secondary":{"used_percent":41.0,"window_minutes":10080,"resets_at":1776937959}}}
+                """
+            ],
+            to: session
+        )
+        let cursorStore = ParseCursorStore(paths: paths)
+        var cursorState = ParseCursorState()
+        cursorState.setOffset(0, for: session)
+        cursorState.setOffset(20, for: missingSession)
+        try cursorStore.save(cursorState)
+        let reader = RateLimitReader(paths: paths, cursorStore: cursorStore)
+
+        _ = try reader.readNewObservations()
+        let updatedState = try cursorStore.load()
+
+        XCTAssertGreaterThan(updatedState.offset(for: session), 0)
+        XCTAssertEqual(updatedState.offset(for: missingSession), 0)
+    }
+
     func testReadRangeIsBoundedToProvidedFileSize() throws {
         let home = try makeTempHome()
         defer { try? FileManager.default.removeItem(at: home) }

@@ -128,6 +128,27 @@ final class AccountSwitcherTests: XCTestCase {
         XCTAssertEqual(auditEvents.map(\.result), [.failedBeforeWrite])
     }
 
+    func testInsufficientDiskSpaceStopsBeforeBackupOrWrite() throws {
+        let fixture = try SwitchFixture()
+        defer { fixture.cleanup() }
+        let switcher = fixture.switcher(diskSpaceChecker: FixedDiskSpaceChecker(hasEnoughSpace: false))
+
+        XCTAssertThrowsError(try switcher.switchToAccount(fixture.target.id, trigger: .manual)) { error in
+            guard case AccountSwitchError.insufficientDiskSpace = error else {
+                XCTFail("Expected insufficientDiskSpace error, got \(error)")
+                return
+            }
+        }
+
+        let writtenAuth = try Data(contentsOf: fixture.paths.authJSON)
+        let auditEvents = try fixture.auditLog.loadEvents()
+        let backupFiles = try FileManager.default.contentsOfDirectory(atPath: fixture.paths.backups.path)
+
+        XCTAssertEqual(writtenAuth, fixture.sourceAuth.jsonData)
+        XCTAssertEqual(auditEvents.map(\.result), [.failedBeforeWrite])
+        XCTAssertEqual(backupFiles, [])
+    }
+
     func testBackupNamesAreUniqueWithinSameSecond() throws {
         let fixture = try SwitchFixture()
         defer { fixture.cleanup() }
@@ -196,7 +217,8 @@ private final class SwitchFixture {
 
     func switcher(
         fingerprintGenerator: @escaping (AuthSnapshot) throws -> String = AccountFingerprint.generate(from:),
-        writer: AtomicAuthFileWriting = AtomicFileWriter()
+        writer: AtomicAuthFileWriting = AtomicFileWriter(),
+        diskSpaceChecker: DiskSpaceChecking = FileManagerDiskSpaceChecker()
     ) -> AccountSwitcher {
         AccountSwitcher(
             paths: paths,
@@ -206,7 +228,8 @@ private final class SwitchFixture {
             auditLog: auditLog,
             now: { self.now },
             fingerprintGenerator: fingerprintGenerator,
-            writer: writer
+            writer: writer,
+            diskSpaceChecker: diskSpaceChecker
         )
     }
 
@@ -243,6 +266,14 @@ private struct CorruptingAtomicWriter: AtomicAuthFileWriting {
         try Data(#"{"account_id":"corrupt","access_token":"corrupt"}"#.utf8).write(to: url)
         try fileManager.removeItem(at: paths.backups)
         throw AccountStoreError.keychainError("forced write failure")
+    }
+}
+
+private struct FixedDiskSpaceChecker: DiskSpaceChecking {
+    var hasEnoughSpace: Bool
+
+    func hasAvailableSpace(at url: URL, minimumBytes: Int64) -> Bool {
+        hasEnoughSpace
     }
 }
 

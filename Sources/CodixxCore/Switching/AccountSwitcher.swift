@@ -7,16 +7,39 @@ public enum AccountSwitchResult: Equatable, Sendable {
 
 public enum AccountSwitchError: Error, Equatable, LocalizedError, Sendable {
     case rollbackFailed(String)
+    case insufficientDiskSpace(minimumBytes: Int64)
 
     public var errorDescription: String? {
         switch self {
         case .rollbackFailed(let message):
             return "Rollback failed after an account switch error. \(message)"
+        case .insufficientDiskSpace(let minimumBytes):
+            return "Not enough free disk space to switch accounts safely. At least \(minimumBytes) bytes are required."
         }
     }
 }
 
+public protocol DiskSpaceChecking: Sendable {
+    func hasAvailableSpace(at url: URL, minimumBytes: Int64) -> Bool
+}
+
+public struct FileManagerDiskSpaceChecker: DiskSpaceChecking {
+    public init() {}
+
+    public func hasAvailableSpace(at url: URL, minimumBytes: Int64) -> Bool {
+        let directory = url.hasDirectoryPath ? url : url.deletingLastPathComponent()
+        guard let values = try? directory.resourceValues(forKeys: [.volumeAvailableCapacityForImportantUsageKey]),
+              let available = values.volumeAvailableCapacityForImportantUsage
+        else {
+            return true
+        }
+        return available >= minimumBytes
+    }
+}
+
 public struct AccountSwitcher {
+    public static let minimumFreeDiskSpaceBytes: Int64 = 50 * 1024 * 1024
+
     public let paths: CodixxPaths
     private let metadataStore: AccountMetadataStore
     private let vault: AuthSnapshotVault
@@ -25,6 +48,7 @@ public struct AccountSwitcher {
     private let now: () -> Date
     private let fingerprintGenerator: (AuthSnapshot) throws -> String
     private let writer: AtomicAuthFileWriting
+    private let diskSpaceChecker: DiskSpaceChecking
 
     public init(
         paths: CodixxPaths = CodixxPaths(),
@@ -34,7 +58,8 @@ public struct AccountSwitcher {
         auditLog: SwitchAuditLog,
         now: @escaping () -> Date = Date.init,
         fingerprintGenerator: @escaping (AuthSnapshot) throws -> String = AccountFingerprint.generate(from:),
-        writer: AtomicAuthFileWriting = AtomicFileWriter()
+        writer: AtomicAuthFileWriting = AtomicFileWriter(),
+        diskSpaceChecker: DiskSpaceChecking = FileManagerDiskSpaceChecker()
     ) {
         self.paths = paths
         self.metadataStore = metadataStore
@@ -44,6 +69,7 @@ public struct AccountSwitcher {
         self.now = now
         self.fingerprintGenerator = fingerprintGenerator
         self.writer = writer
+        self.diskSpaceChecker = diskSpaceChecker
     }
 
     public func switchToAccount(_ targetId: UUID, trigger: SwitchTrigger) throws -> AccountSwitchResult {
@@ -67,6 +93,23 @@ public struct AccountSwitcher {
         }
         let target = metadata.accounts[targetIndex]
         let source = currentAccount(in: metadata)
+
+        guard diskSpaceChecker.hasAvailableSpace(
+            at: paths.applicationSupport,
+            minimumBytes: Self.minimumFreeDiskSpaceBytes
+        ) else {
+            let error = AccountSwitchError.insufficientDiskSpace(minimumBytes: Self.minimumFreeDiskSpaceBytes)
+            try auditLog.append(event(
+                trigger: trigger,
+                source: source,
+                target: target,
+                result: .failedBeforeWrite,
+                error: error,
+                backupURL: nil
+            ))
+            throw error
+        }
+
         let backupURL: URL
         do {
             backupURL = try backupManager.backupCurrentAuth(alias: source?.alias ?? "unknown")

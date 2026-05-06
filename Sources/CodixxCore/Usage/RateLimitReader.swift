@@ -70,8 +70,10 @@ public struct RateLimitReader {
     public func readNewObservations() throws -> [RateLimitObservation] {
         var cursorState = try cursorStore.load()
         var observations: [RateLimitObservation] = []
+        let files = try jsonlFiles()
+        cursorState.pruneKeepingOnly(files)
 
-        for file in try jsonlFiles() {
+        for file in files {
             let storedOffset = max(0, cursorState.offset(for: file))
             let fileSize = try sizeOfFile(at: file)
             let previousOffset = storedOffset > fileSize ? 0 : storedOffset

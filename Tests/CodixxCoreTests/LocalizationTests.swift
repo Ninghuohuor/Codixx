@@ -29,6 +29,8 @@ final class LocalizationTests: XCTestCase {
         XCTAssertEqual(strings.usageRefresh, "Usage refresh")
         XCTAssertEqual(strings.secondsInterval(60), "60s")
         XCTAssertEqual(strings.minutesInterval(5), "5m")
+        XCTAssertEqual(strings.activeThread, "Active thread")
+        XCTAssertEqual(strings.noActiveThread, "No active thread")
     }
 
     func testChineseStringsExplainUnsavedCurrentAccount() {
@@ -58,5 +60,7 @@ final class LocalizationTests: XCTestCase {
         XCTAssertEqual(strings.usageRefresh, "用量刷新")
         XCTAssertEqual(strings.secondsInterval(60), "60 秒")
         XCTAssertEqual(strings.minutesInterval(5), "5 分钟")
+        XCTAssertEqual(strings.activeThread, "活跃会话")
+        XCTAssertEqual(strings.noActiveThread, "暂无活跃会话")
     }
 }

@@ -77,6 +77,7 @@ struct DashboardView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 14) {
                 QuotaView(account: state.currentAccount, config: state.config, strings: state.strings)
+                activeThreadCard
 
                 if let error = state.errorMessage {
                     Label(error, systemImage: "exclamationmark.triangle")
@@ -90,6 +91,38 @@ struct DashboardView: View {
             }
             .padding(14)
         }
+    }
+
+    private var activeThreadCard: some View {
+        HStack(alignment: .center, spacing: 12) {
+            Image(systemName: state.usageSnapshot.activeThread == nil ? "text.bubble" : "text.bubble.fill")
+                .foregroundStyle(state.usageSnapshot.activeThread == nil ? Color.secondary : Color.green)
+                .frame(width: 22)
+
+            VStack(alignment: .leading, spacing: 3) {
+                Text(state.strings.activeThread)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                if let thread = state.usageSnapshot.activeThread {
+                    Text(thread.title)
+                        .font(.subheadline.weight(.semibold))
+                        .lineLimit(1)
+                    Text("\(thread.tokensUsed.formatted()) \(state.strings.tokens) / \(thread.model)")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                } else {
+                    Text(state.strings.noActiveThread)
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(.secondary)
+                }
+            }
+
+            Spacer()
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 8))
     }
 
     private var trends: some View {
