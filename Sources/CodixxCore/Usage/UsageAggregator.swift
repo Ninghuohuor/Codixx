@@ -72,7 +72,8 @@ public enum UsageAggregator {
         }
         let totalTokens = sortedThreads.reduce(0) { $0 + $1.tokensUsed }
         let activeThread = sortedThreads.first.flatMap { thread in
-            now.timeIntervalSince(thread.updatedAt) <= activeWindow ? thread : nil
+            let age = now.timeIntervalSince(thread.updatedAt)
+            return age >= 0 && age <= activeWindow ? thread : nil
         }
 
         return ThreadUsageSnapshot(

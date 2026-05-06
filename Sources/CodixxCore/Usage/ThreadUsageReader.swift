@@ -26,7 +26,7 @@ public struct ThreadUsageReader: Sendable {
     }
 
     private func readThreadsWithRetries() throws -> [ThreadUsage] {
-        let attempts = max(1, lockedRetryCount)
+        let attempts = max(0, lockedRetryCount) + 1
         var lastError: Error?
 
         for attempt in 1...attempts {
@@ -138,24 +138,28 @@ public struct ThreadUsageReader: Sendable {
     }
 
     private func makeThread(from statement: OpaquePointer) throws -> ThreadUsage {
-        let createdAtText = textColumn(statement, index: 5)
-        let updatedAtText = textColumn(statement, index: 6)
+        let createdAtText = try requiredTextColumn(statement, index: 5, name: "created_at")
+        let updatedAtText = try requiredTextColumn(statement, index: 6, name: "updated_at")
         guard
-            let createdAt = Self.dateFormatter.date(from: createdAtText),
-            let updatedAt = Self.dateFormatter.date(from: updatedAtText)
+            let createdAt = parseISO8601Date(createdAtText),
+            let updatedAt = parseISO8601Date(updatedAtText)
         else {
             throw ThreadUsageReaderError.incompatibleSchema("Invalid ISO8601 timestamp in threads table")
         }
+        let tokenType = sqlite3_column_type(statement, 4)
+        guard tokenType == SQLITE_INTEGER else {
+            throw ThreadUsageReaderError.incompatibleSchema("Invalid tokens_used value in threads table")
+        }
 
         return ThreadUsage(
-            id: textColumn(statement, index: 0),
-            title: textColumn(statement, index: 1),
-            model: textColumn(statement, index: 2),
-            reasoningEffort: textColumn(statement, index: 3),
+            id: try requiredTextColumn(statement, index: 0, name: "id"),
+            title: try requiredTextColumn(statement, index: 1, name: "title"),
+            model: try requiredTextColumn(statement, index: 2, name: "model"),
+            reasoningEffort: try requiredTextColumn(statement, index: 3, name: "reasoning_effort"),
             tokensUsed: Int(sqlite3_column_int64(statement, 4)),
             createdAt: createdAt,
             updatedAt: updatedAt,
-            rolloutPath: textColumn(statement, index: 7)
+            rolloutPath: try requiredTextColumn(statement, index: 7, name: "rollout_path")
         )
     }
 
@@ -164,6 +168,28 @@ public struct ThreadUsageReader: Sendable {
             return ""
         }
         return String(cString: text)
+    }
+
+    private func requiredTextColumn(_ statement: OpaquePointer, index: Int32, name: String) throws -> String {
+        guard sqlite3_column_type(statement, index) != SQLITE_NULL else {
+            throw ThreadUsageReaderError.incompatibleSchema("Missing \(name) value in threads table")
+        }
+        guard let text = sqlite3_column_text(statement, index) else {
+            throw ThreadUsageReaderError.incompatibleSchema("Invalid \(name) value in threads table")
+        }
+        return String(cString: text)
+    }
+
+    private func parseISO8601Date(_ text: String) -> Date? {
+        let wholeSecondFormatter = ISO8601DateFormatter()
+        wholeSecondFormatter.formatOptions = [.withInternetDateTime]
+        if let date = wholeSecondFormatter.date(from: text) {
+            return date
+        }
+
+        let fractionalFormatter = ISO8601DateFormatter()
+        fractionalFormatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return fractionalFormatter.date(from: text)
     }
 
     private func errorMessage(_ database: OpaquePointer) -> String {
@@ -177,7 +203,6 @@ public struct ThreadUsageReader: Sendable {
         code == SQLITE_BUSY || code == SQLITE_LOCKED
     }
 
-    private static let dateFormatter = ISO8601DateFormatter()
 }
 
 private enum ThreadUsageReaderError: LocalizedError {
