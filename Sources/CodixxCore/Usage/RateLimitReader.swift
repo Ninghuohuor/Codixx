@@ -74,12 +74,13 @@ public struct RateLimitReader {
             let previousOffset = storedOffset > fileSize ? 0 : storedOffset
             guard previousOffset < fileSize else { continue }
 
-            observations.append(contentsOf: try Self.readObservations(
+            let readResult = try Self.readCompleteObservations(
                 from: file,
                 offset: previousOffset,
                 byteCount: fileSize - previousOffset
-            ))
-            cursorState.setOffset(fileSize, for: file)
+            )
+            observations.append(contentsOf: readResult.observations)
+            cursorState.setOffset(previousOffset + readResult.consumedByteCount, for: file)
         }
 
         try cursorStore.save(cursorState)
@@ -92,17 +93,34 @@ public struct RateLimitReader {
     }
 
     public static func readObservations(from file: URL, offset: Int64, byteCount: Int64) throws -> [RateLimitObservation] {
+        try readCompleteObservations(from: file, offset: offset, byteCount: byteCount).observations
+    }
+
+    private static func readCompleteObservations(
+        from file: URL,
+        offset: Int64,
+        byteCount: Int64
+    ) throws -> (observations: [RateLimitObservation], consumedByteCount: Int64) {
         let handle = try FileHandle(forReadingFrom: file)
         defer { try? handle.close() }
         try handle.seek(toOffset: UInt64(offset))
         let data = try handle.read(upToCount: Int(byteCount)) ?? Data()
-        guard !data.isEmpty, let content = String(data: data, encoding: .utf8) else {
-            return []
+        guard !data.isEmpty else {
+            return ([], 0)
+        }
+        guard let lastNewlineIndex = data.lastIndex(of: 0x0A) else {
+            return ([], 0)
+        }
+        let consumedByteCount = data.distance(from: data.startIndex, to: data.index(after: lastNewlineIndex))
+        let completeData = data.prefix(consumedByteCount)
+        guard let completeContent = String(data: completeData, encoding: .utf8) else {
+            return ([], 0)
         }
 
-        return content
+        let observations = completeContent
             .split(separator: "\n", omittingEmptySubsequences: true)
             .compactMap { line in parseLine(String(line), sourceFile: file.resolvingSymlinksInPath().path) }
+        return (observations, Int64(consumedByteCount))
     }
 
     private static func parseLine(_ line: String, sourceFile: String) -> RateLimitObservation? {

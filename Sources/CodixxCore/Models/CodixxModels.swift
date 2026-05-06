@@ -100,9 +100,9 @@ public struct CodixxAccount: Codable, Identifiable, Equatable, Sendable {
         self.priority = priority
     }
 
-    public func isEligibleForSwitch(hasSnapshot: Bool) -> Bool {
+    public func isEligibleForSwitch(hasSnapshot: Bool, primaryThresholdPercent: Double = 93.0) -> Bool {
         guard isEnabled, hasSnapshot else { return false }
-        let primaryOK = quota.primaryUsedPercent.map { $0 < 93.0 } ?? true
+        let primaryOK = quota.primaryUsedPercent.map { $0 < primaryThresholdPercent } ?? true
         let secondaryOK = quota.secondaryUsedPercent.map { $0 < 100.0 } ?? true
         return primaryOK && secondaryOK
     }

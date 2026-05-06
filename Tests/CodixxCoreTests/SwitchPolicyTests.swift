@@ -74,6 +74,21 @@ final class SwitchPolicyTests: XCTestCase {
         XCTAssertFalse(policy.shouldAutoSwitch(currentAccount: nil))
     }
 
+    func testCandidateEligibilityUsesConfiguredThreshold() {
+        let now = Date(timeIntervalSince1970: 1_000)
+        let policy = SwitchPolicy(primaryThresholdPercent: 80)
+
+        let ordered = policy.orderedCandidates(
+            from: [
+                account(alias: "At Threshold", primary: 80, confidence: .fresh, now: now),
+                account(alias: "Under Threshold", primary: 79.9, confidence: .fresh, now: now)
+            ],
+            snapshotExists: { _ in true }
+        )
+
+        XCTAssertEqual(ordered.map(\.alias), ["Under Threshold"])
+    }
+
     private func account(
         alias: String,
         primary: Double?,

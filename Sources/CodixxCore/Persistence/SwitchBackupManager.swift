@@ -16,11 +16,11 @@ public struct SwitchBackupManager {
     }
 
     public func backupCurrentAuth(alias: String) throws -> URL {
-        try fileManager.createDirectory(at: paths.backups, withIntermediateDirectories: true)
+        try paths.createApplicationSupportDirectories(fileManager: fileManager)
         let data = try Data(contentsOf: paths.authJSON)
-        let filename = "auth-backup-\(Self.timestamp(now()))-\(alias)-\(UUID().uuidString).json"
+        let filename = "auth-backup-\(Self.timestamp(now()))-\(Self.safeFilename(alias))-\(UUID().uuidString).json"
         let url = paths.backups.appendingPathComponent(filename)
-        try data.write(to: url)
+        try SecureFilePermissions.writeOwnerOnlyFile(data, to: url, fileManager: fileManager)
         return url
     }
 
@@ -33,5 +33,12 @@ public struct SwitchBackupManager {
         ISO8601DateFormatter()
             .string(from: date)
             .replacingOccurrences(of: ":", with: "-")
+    }
+
+    private static func safeFilename(_ value: String) -> String {
+        let allowed = CharacterSet.alphanumerics.union(CharacterSet(charactersIn: "-_ ."))
+        let scalars = value.unicodeScalars.map { allowed.contains($0) ? Character($0) : "-" }
+        let sanitized = String(scalars).trimmingCharacters(in: .whitespacesAndNewlines)
+        return sanitized.isEmpty ? "account" : sanitized
     }
 }

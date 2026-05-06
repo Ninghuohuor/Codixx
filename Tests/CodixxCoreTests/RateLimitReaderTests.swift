@@ -108,6 +108,35 @@ final class RateLimitReaderTests: XCTestCase {
         XCTAssertEqual(observations.map(\.primaryUsedPercent), [82])
     }
 
+    func testPartialFinalLineIsReadAfterItCompletes() throws {
+        let home = try makeTempHome()
+        defer { try? FileManager.default.removeItem(at: home) }
+        let paths = CodixxPaths(home: home)
+        let session = paths.codexHome.appendingPathComponent("sessions/2026/05/06/session.jsonl")
+        let completeLine = """
+        {"timestamp":"2026-05-06T03:30:00Z","rate_limits":{"primary":{"used_percent":82.0,"window_minutes":300,"resets_at":1776409393},"secondary":{"used_percent":41.0,"window_minutes":10080,"resets_at":1776937959}}}
+        """
+        let partialLine = #"{"timestamp":"2026-05-06T03:31:00Z","rate_limits":{"primary":{"used_percent":83.0"#
+        try FileManager.default.createDirectory(at: session.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try Data((completeLine + "\n" + partialLine).utf8).write(to: session)
+        let cursorStore = ParseCursorStore(paths: paths)
+        let reader = RateLimitReader(paths: paths, cursorStore: cursorStore)
+
+        let first = try reader.readNewObservations()
+        let cursorAfterPartial = try cursorStore.load().offset(for: session)
+        let completedLineTail = #","window_minutes":300,"resets_at":1776409393},"secondary":{"used_percent":42.0,"window_minutes":10080,"resets_at":1776937959}}}"# + "\n"
+        let handle = try FileHandle(forWritingTo: session)
+        defer { try? handle.close() }
+        try handle.seekToEnd()
+        try handle.write(contentsOf: Data(completedLineTail.utf8))
+
+        let second = try reader.readNewObservations()
+
+        XCTAssertEqual(first.map(\.primaryUsedPercent), [82])
+        XCTAssertEqual(cursorAfterPartial, Int64((completeLine + "\n").utf8.count))
+        XCTAssertEqual(second.map(\.primaryUsedPercent), [83])
+    }
+
     func testArchivedSessionsAreScanned() throws {
         let home = try makeTempHome()
         defer { try? FileManager.default.removeItem(at: home) }

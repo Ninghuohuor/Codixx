@@ -12,7 +12,7 @@ struct UsageTrendView: View {
                 MetricTile(title: "Threads", value: snapshot.threads.count.formatted(), systemImage: "text.bubble")
             }
 
-            chartSection(title: "7 days") {
+            chartSection(title: "Threads updated, 7 days") {
                 Chart(dailyBuckets) { bucket in
                     BarMark(
                         x: .value("Day", bucket.day, unit: .day),
@@ -27,7 +27,7 @@ struct UsageTrendView: View {
                 }
             }
 
-            chartSection(title: "24 hours") {
+            chartSection(title: "Threads updated, 24 hours") {
                 Chart(hourlyBuckets) { bucket in
                     LineMark(
                         x: .value("Hour", bucket.hour, unit: .hour),

@@ -5,6 +5,17 @@ public enum AccountSwitchResult: Equatable, Sendable {
     case rolledBack
 }
 
+public enum AccountSwitchError: Error, Equatable, LocalizedError, Sendable {
+    case rollbackFailed(String)
+
+    public var errorDescription: String? {
+        switch self {
+        case .rollbackFailed(let message):
+            return "Rollback failed after an account switch error. \(message)"
+        }
+    }
+}
+
 public struct AccountSwitcher {
     public let paths: CodixxPaths
     private let metadataStore: AccountMetadataStore
@@ -168,7 +179,7 @@ public struct AccountSwitcher {
                 error: error,
                 backupURL: backupURL
             ))
-            throw error
+            throw AccountSwitchError.rollbackFailed(error.localizedDescription)
         }
     }
 

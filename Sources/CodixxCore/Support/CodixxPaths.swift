@@ -26,8 +26,8 @@ public struct CodixxPaths: Sendable {
     }
 
     public func createApplicationSupportDirectories(fileManager: FileManager = .default) throws {
-        try fileManager.createDirectory(at: applicationSupport, withIntermediateDirectories: true)
-        try fileManager.createDirectory(at: backups, withIntermediateDirectories: true)
-        try fileManager.createDirectory(at: logs, withIntermediateDirectories: true)
+        try SecureFilePermissions.secureDirectory(applicationSupport, fileManager: fileManager)
+        try SecureFilePermissions.secureDirectory(backups, fileManager: fileManager)
+        try SecureFilePermissions.secureDirectory(logs, fileManager: fileManager)
     }
 }

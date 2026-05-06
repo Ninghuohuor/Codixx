@@ -72,7 +72,7 @@ final class AppState: ObservableObject {
     }
 
     var topThreads: [ThreadUsage] {
-        Array(usageSnapshot.threads.sorted { $0.tokensUsed > $1.tokensUsed }.prefix(8))
+        Array(usageSnapshot.threads.sorted { $0.tokensUsed > $1.tokensUsed }.prefix(10))
     }
 
     var candidateAccounts: [CodixxAccount] {
@@ -190,10 +190,11 @@ final class AppState: ObservableObject {
                 throttled: false
             )
         } catch {
+            let preservedError = pauseAutoSwitchIfRollbackFailed(error)
             refresh(
                 applyRateLimitObservations: false,
                 allowAutoSwitch: false,
-                preservingError: error.localizedDescription,
+                preservingError: preservedError,
                 throttled: false
             )
         }
@@ -230,10 +231,11 @@ final class AppState: ObservableObject {
                 throttled: false
             )
         } catch {
+            let preservedError = pauseAutoSwitchIfRollbackFailed(error)
             refresh(
                 applyRateLimitObservations: false,
                 allowAutoSwitch: false,
-                preservingError: error.localizedDescription,
+                preservingError: preservedError,
                 throttled: false
             )
         }
@@ -274,6 +276,22 @@ final class AppState: ObservableObject {
         }
     }
 
+    private func pauseAutoSwitchIfRollbackFailed(_ error: Error) -> String {
+        guard case AccountSwitchError.rollbackFailed = error else {
+            return error.localizedDescription
+        }
+
+        var updated = config
+        updated.autoSwitchEnabled = false
+        do {
+            try configStore.save(updated)
+            config = updated
+            return "\(error.localizedDescription)\nAuto switch has been paused."
+        } catch {
+            return "\(error.localizedDescription)\nAuto switch could not be paused: \(error.localizedDescription)"
+        }
+    }
+
     private func updateAccount(_ account: CodixxAccount, mutate: (inout CodixxAccount) -> Void) {
         guard let index = accounts.firstIndex(where: { $0.id == account.id }) else { return }
         var updatedAccounts = accounts
@@ -292,10 +310,12 @@ final class AppState: ObservableObject {
         let timestamp = now()
         refreshQuotaConfidence(in: &accounts, timestamp: timestamp)
 
-        guard let observation = try rateLimitReader.readNewObservations().last,
-              let current = currentAccount(in: accounts),
+        guard let current = currentAccount(in: accounts),
               let currentIndex = accounts.firstIndex(where: { $0.id == current.id })
         else {
+            return
+        }
+        guard let observation = try rateLimitReader.readNewObservations().last else {
             return
         }
 

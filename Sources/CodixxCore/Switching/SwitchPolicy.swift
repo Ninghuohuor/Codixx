@@ -22,7 +22,12 @@ public struct SwitchPolicy: Sendable {
         snapshotExists: (CodixxAccount) -> Bool
     ) -> [CodixxAccount] {
         accounts
-            .filter { $0.isEligibleForSwitch(hasSnapshot: snapshotExists($0)) }
+            .filter {
+                $0.isEligibleForSwitch(
+                    hasSnapshot: snapshotExists($0),
+                    primaryThresholdPercent: primaryThresholdPercent
+                )
+            }
             .sorted(by: candidatePrecedes)
     }
 

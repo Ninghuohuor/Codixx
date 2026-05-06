@@ -39,6 +39,23 @@ final class AccountSwitcherTests: XCTestCase {
         XCTAssertEqual(auditEvents.first?.targetAlias, "Backup")
     }
 
+    func testSwitchWritesAuthAndBackupWithOwnerOnlyPermissions() throws {
+        let fixture = try SwitchFixture()
+        defer { fixture.cleanup() }
+        let switcher = fixture.switcher()
+
+        _ = try switcher.switchToAccount(fixture.target.id, trigger: .manual)
+
+        let backupFiles = try FileManager.default.contentsOfDirectory(
+            at: fixture.paths.backups,
+            includingPropertiesForKeys: nil
+        )
+        XCTAssertEqual(try posixPermissions(at: fixture.paths.applicationSupport), 0o700)
+        XCTAssertEqual(try posixPermissions(at: fixture.paths.backups), 0o700)
+        XCTAssertEqual(try posixPermissions(at: fixture.paths.authJSON), 0o600)
+        XCTAssertEqual(try posixPermissions(at: try XCTUnwrap(backupFiles.first)), 0o600)
+    }
+
     func testValidationFailureRollsBackAndWritesAuditEvents() throws {
         let fixture = try SwitchFixture()
         defer { fixture.cleanup() }
@@ -79,6 +96,23 @@ final class AccountSwitcherTests: XCTestCase {
 
         XCTAssertEqual(writtenAuth, fixture.sourceAuth.jsonData)
         XCTAssertEqual(auditEvents.map(\.result), [.failedDuringWrite, .rolledBack])
+    }
+
+    func testRollbackFailureThrowsTypedErrorForProtectionMode() throws {
+        let fixture = try SwitchFixture()
+        defer { fixture.cleanup() }
+        let switcher = fixture.switcher(writer: CorruptingAtomicWriter(paths: fixture.paths))
+
+        XCTAssertThrowsError(try switcher.switchToAccount(fixture.target.id, trigger: .manual)) { error in
+            guard case AccountSwitchError.rollbackFailed = error else {
+                XCTFail("Expected rollbackFailed error, got \(error)")
+                return
+            }
+        }
+
+        let auditEvents = try fixture.auditLog.loadEvents()
+
+        XCTAssertEqual(auditEvents.map(\.result), [.failedDuringWrite, .rollbackFailed])
     }
 
     func testMissingSnapshotWritesFailedBeforeWriteAudit() throws {
@@ -178,6 +212,21 @@ private struct FailingAtomicWriter: AtomicAuthFileWriting {
     func write(_ data: Data, to url: URL, fileManager: FileManager) throws {
         throw AccountStoreError.keychainError("forced write failure")
     }
+}
+
+private struct CorruptingAtomicWriter: AtomicAuthFileWriting {
+    var paths: CodixxPaths
+
+    func write(_ data: Data, to url: URL, fileManager: FileManager) throws {
+        try Data(#"{"account_id":"corrupt","access_token":"corrupt"}"#.utf8).write(to: url)
+        try fileManager.removeItem(at: paths.backups)
+        throw AccountStoreError.keychainError("forced write failure")
+    }
+}
+
+private func posixPermissions(at url: URL) throws -> Int {
+    let attributes = try FileManager.default.attributesOfItem(atPath: url.path)
+    return try XCTUnwrap(attributes[.posixPermissions] as? Int) & 0o777
 }
 
 private final class InMemorySwitchVault: AuthSnapshotVault {
