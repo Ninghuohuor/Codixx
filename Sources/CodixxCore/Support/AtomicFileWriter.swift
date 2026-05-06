@@ -1,6 +1,10 @@
 import Foundation
 
-public struct AtomicFileWriter: Sendable {
+public protocol AtomicAuthFileWriting {
+    func write(_ data: Data, to url: URL, fileManager: FileManager) throws
+}
+
+public struct AtomicFileWriter: AtomicAuthFileWriting, Sendable {
     public init() {}
 
     public func write(_ data: Data, to url: URL, fileManager: FileManager = .default) throws {

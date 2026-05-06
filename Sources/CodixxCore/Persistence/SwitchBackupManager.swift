@@ -18,7 +18,7 @@ public struct SwitchBackupManager {
     public func backupCurrentAuth(alias: String) throws -> URL {
         try fileManager.createDirectory(at: paths.backups, withIntermediateDirectories: true)
         let data = try Data(contentsOf: paths.authJSON)
-        let filename = "auth-backup-\(Self.timestamp(now()))-\(alias).json"
+        let filename = "auth-backup-\(Self.timestamp(now()))-\(alias)-\(UUID().uuidString).json"
         let url = paths.backups.appendingPathComponent(filename)
         try data.write(to: url)
         return url

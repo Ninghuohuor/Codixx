@@ -2,6 +2,16 @@ import XCTest
 @testable import CodixxCore
 
 final class AccountSwitcherTests: XCTestCase {
+    func testFileLockBlocksNestedExclusiveLock() throws {
+        let fixture = try SwitchFixture()
+        defer { fixture.cleanup() }
+        let lock = FileLock(url: fixture.paths.codexHome.appendingPathComponent("auth.json.lock"), timeoutSeconds: 0)
+
+        try lock.withExclusiveLock {
+            XCTAssertThrowsError(try lock.withExclusiveLock {})
+        }
+    }
+
     func testManualSwitchBacksUpWritesValidatesAuditsAndUpdatesMetadata() throws {
         let fixture = try SwitchFixture()
         defer { fixture.cleanup() }
@@ -42,6 +52,57 @@ final class AccountSwitcherTests: XCTestCase {
         XCTAssertEqual(writtenAuth, fixture.sourceAuth.jsonData)
         XCTAssertEqual(auditEvents.map(\.result), [.failedValidation, .rolledBack])
     }
+
+    func testValidationThrowRollsBackAndWritesAuditEvents() throws {
+        let fixture = try SwitchFixture()
+        defer { fixture.cleanup() }
+        let switcher = fixture.switcher(fingerprintGenerator: { _ in throw AccountStoreError.invalidAuthSnapshot })
+
+        let result = try switcher.switchToAccount(fixture.target.id, trigger: .manual)
+        let writtenAuth = try Data(contentsOf: fixture.paths.authJSON)
+        let auditEvents = try fixture.auditLog.loadEvents()
+
+        XCTAssertEqual(result, .rolledBack)
+        XCTAssertEqual(writtenAuth, fixture.sourceAuth.jsonData)
+        XCTAssertEqual(auditEvents.map(\.result), [.failedValidation, .rolledBack])
+    }
+
+    func testWriteFailureAttemptsRestoreAndAuditsRollback() throws {
+        let fixture = try SwitchFixture()
+        defer { fixture.cleanup() }
+        let switcher = fixture.switcher(writer: FailingAtomicWriter())
+
+        XCTAssertThrowsError(try switcher.switchToAccount(fixture.target.id, trigger: .manual))
+
+        let writtenAuth = try Data(contentsOf: fixture.paths.authJSON)
+        let auditEvents = try fixture.auditLog.loadEvents()
+
+        XCTAssertEqual(writtenAuth, fixture.sourceAuth.jsonData)
+        XCTAssertEqual(auditEvents.map(\.result), [.failedDuringWrite, .rolledBack])
+    }
+
+    func testMissingSnapshotWritesFailedBeforeWriteAudit() throws {
+        let fixture = try SwitchFixture()
+        defer { fixture.cleanup() }
+        try fixture.vault.delete(fingerprint: fixture.target.fingerprint)
+        let switcher = fixture.switcher()
+
+        XCTAssertThrowsError(try switcher.switchToAccount(fixture.target.id, trigger: .manual))
+
+        let auditEvents = try fixture.auditLog.loadEvents()
+
+        XCTAssertEqual(auditEvents.map(\.result), [.failedBeforeWrite])
+    }
+
+    func testBackupNamesAreUniqueWithinSameSecond() throws {
+        let fixture = try SwitchFixture()
+        defer { fixture.cleanup() }
+
+        let first = try fixture.backupManager.backupCurrentAuth(alias: "Main")
+        let second = try fixture.backupManager.backupCurrentAuth(alias: "Main")
+
+        XCTAssertNotEqual(first.lastPathComponent, second.lastPathComponent)
+    }
 }
 
 private final class SwitchFixture {
@@ -77,7 +138,10 @@ private final class SwitchFixture {
         try vault.save(snapshot: targetAuth, fingerprint: target.fingerprint)
     }
 
-    func switcher(fingerprintGenerator: @escaping (AuthSnapshot) throws -> String = AccountFingerprint.generate(from:)) -> AccountSwitcher {
+    func switcher(
+        fingerprintGenerator: @escaping (AuthSnapshot) throws -> String = AccountFingerprint.generate(from:),
+        writer: AtomicAuthFileWriting = AtomicFileWriter()
+    ) -> AccountSwitcher {
         AccountSwitcher(
             paths: paths,
             metadataStore: metadataStore,
@@ -85,7 +149,8 @@ private final class SwitchFixture {
             backupManager: backupManager,
             auditLog: auditLog,
             now: { self.now },
-            fingerprintGenerator: fingerprintGenerator
+            fingerprintGenerator: fingerprintGenerator,
+            writer: writer
         )
     }
 
@@ -106,6 +171,12 @@ private final class SwitchFixture {
             isEnabled: true,
             priority: 0
         )
+    }
+}
+
+private struct FailingAtomicWriter: AtomicAuthFileWriting {
+    func write(_ data: Data, to url: URL, fileManager: FileManager) throws {
+        throw AccountStoreError.keychainError("forced write failure")
     }
 }
 

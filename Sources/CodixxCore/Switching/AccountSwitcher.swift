@@ -13,7 +13,7 @@ public struct AccountSwitcher {
     private let auditLog: SwitchAuditLog
     private let now: () -> Date
     private let fingerprintGenerator: (AuthSnapshot) throws -> String
-    private let writer: AtomicFileWriter
+    private let writer: AtomicAuthFileWriting
 
     public init(
         paths: CodixxPaths = CodixxPaths(),
@@ -23,7 +23,7 @@ public struct AccountSwitcher {
         auditLog: SwitchAuditLog,
         now: @escaping () -> Date = Date.init,
         fingerprintGenerator: @escaping (AuthSnapshot) throws -> String = AccountFingerprint.generate(from:),
-        writer: AtomicFileWriter = AtomicFileWriter()
+        writer: AtomicAuthFileWriting = AtomicFileWriter()
     ) {
         self.paths = paths
         self.metadataStore = metadataStore
@@ -44,15 +44,49 @@ public struct AccountSwitcher {
     private func performSwitch(_ targetId: UUID, trigger: SwitchTrigger) throws -> AccountSwitchResult {
         var metadata = try metadataStore.load()
         guard let targetIndex = metadata.accounts.firstIndex(where: { $0.id == targetId }) else {
+            try auditLog.append(event(
+                trigger: trigger,
+                source: currentAccount(in: metadata),
+                target: nil,
+                result: .failedBeforeWrite,
+                error: AccountStoreError.snapshotNotFound(targetId.uuidString),
+                backupURL: nil
+            ))
             throw AccountStoreError.snapshotNotFound(targetId.uuidString)
         }
         let target = metadata.accounts[targetIndex]
         let source = currentAccount(in: metadata)
-        let backupURL = try backupManager.backupCurrentAuth(alias: source?.alias ?? "unknown")
-        let targetSnapshot = try vault.load(fingerprint: target.fingerprint)
+        let backupURL: URL
+        do {
+            backupURL = try backupManager.backupCurrentAuth(alias: source?.alias ?? "unknown")
+        } catch {
+            try auditLog.append(event(
+                trigger: trigger,
+                source: source,
+                target: target,
+                result: .failedBeforeWrite,
+                error: error,
+                backupURL: nil
+            ))
+            throw error
+        }
+        let targetSnapshot: AuthSnapshot
+        do {
+            targetSnapshot = try vault.load(fingerprint: target.fingerprint)
+        } catch {
+            try auditLog.append(event(
+                trigger: trigger,
+                source: source,
+                target: target,
+                result: .failedBeforeWrite,
+                error: error,
+                backupURL: backupURL
+            ))
+            throw error
+        }
 
         do {
-            try writer.write(targetSnapshot.jsonData, to: paths.authJSON)
+            try writer.write(targetSnapshot.jsonData, to: paths.authJSON, fileManager: .default)
         } catch {
             try auditLog.append(event(
                 trigger: trigger,
@@ -62,11 +96,26 @@ public struct AccountSwitcher {
                 error: error,
                 backupURL: backupURL
             ))
+            try restoreAfterFailure(trigger: .recovery, source: target, target: source, backupURL: backupURL)
             throw error
         }
 
-        let writtenSnapshot = try AuthSnapshot(jsonData: Data(contentsOf: paths.authJSON))
-        let writtenFingerprint = try fingerprintGenerator(writtenSnapshot)
+        let writtenFingerprint: String
+        do {
+            let writtenSnapshot = try AuthSnapshot(jsonData: Data(contentsOf: paths.authJSON))
+            writtenFingerprint = try fingerprintGenerator(writtenSnapshot)
+        } catch {
+            try auditLog.append(event(
+                trigger: trigger,
+                source: source,
+                target: target,
+                result: .failedValidation,
+                error: error,
+                backupURL: backupURL
+            ))
+            try restoreAfterFailure(trigger: .recovery, source: target, target: source, backupURL: backupURL)
+            return .rolledBack
+        }
         guard writtenFingerprint == target.fingerprint else {
             try auditLog.append(event(
                 trigger: trigger,
@@ -76,28 +125,8 @@ public struct AccountSwitcher {
                 error: nil,
                 backupURL: backupURL
             ))
-            do {
-                try backupManager.restoreBackup(at: backupURL)
-                try auditLog.append(event(
-                    trigger: .recovery,
-                    source: target,
-                    target: source,
-                    result: .rolledBack,
-                    error: nil,
-                    backupURL: backupURL
-                ))
-                return .rolledBack
-            } catch {
-                try auditLog.append(event(
-                    trigger: .recovery,
-                    source: target,
-                    target: source,
-                    result: .rollbackFailed,
-                    error: error,
-                    backupURL: backupURL
-                ))
-                throw error
-            }
+            try restoreAfterFailure(trigger: .recovery, source: target, target: source, backupURL: backupURL)
+            return .rolledBack
         }
 
         metadata.accounts[targetIndex].lastUsedAt = now()
@@ -112,6 +141,35 @@ public struct AccountSwitcher {
             backupURL: backupURL
         ))
         return .success(target: metadata.accounts[targetIndex])
+    }
+
+    private func restoreAfterFailure(
+        trigger: SwitchTrigger,
+        source: CodixxAccount?,
+        target: CodixxAccount?,
+        backupURL: URL
+    ) throws {
+        do {
+            try backupManager.restoreBackup(at: backupURL)
+            try auditLog.append(event(
+                trigger: trigger,
+                source: source,
+                target: target,
+                result: .rolledBack,
+                error: nil,
+                backupURL: backupURL
+            ))
+        } catch {
+            try auditLog.append(event(
+                trigger: trigger,
+                source: source,
+                target: target,
+                result: .rollbackFailed,
+                error: error,
+                backupURL: backupURL
+            ))
+            throw error
+        }
     }
 
     private func currentAccount(in metadata: AccountMetadataList) -> CodixxAccount? {
@@ -130,7 +188,7 @@ public struct AccountSwitcher {
         target: CodixxAccount?,
         result: SwitchAuditResult,
         error: Error?,
-        backupURL: URL
+        backupURL: URL?
     ) -> SwitchAuditEvent {
         SwitchAuditEvent(
             timestamp: now(),
@@ -144,7 +202,7 @@ public struct AccountSwitcher {
             threshold: nil,
             result: result,
             errorSummary: error.map { String(describing: $0) },
-            backupPath: backupURL.path
+            backupPath: backupURL?.path
         )
     }
 }
