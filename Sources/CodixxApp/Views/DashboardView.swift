@@ -11,15 +11,15 @@ struct DashboardView: View {
         VStack(spacing: 0) {
             TabView(selection: $selectedTab) {
                 overview
-                    .tabItem { Label("Overview", systemImage: "gauge.with.dots.needle.67percent") }
+                    .tabItem { Label(state.strings.overview, systemImage: "gauge.with.dots.needle.67percent") }
                     .tag(0)
 
                 trends
-                    .tabItem { Label("Trends", systemImage: "chart.xyaxis.line") }
+                    .tabItem { Label(state.strings.trends, systemImage: "chart.xyaxis.line") }
                     .tag(1)
 
                 accounts
-                    .tabItem { Label("Accounts", systemImage: "person.2") }
+                    .tabItem { Label(state.strings.accounts, systemImage: "person.2") }
                     .tag(2)
             }
             .frame(width: 360, height: 520)
@@ -35,18 +35,18 @@ struct DashboardView: View {
                 Button {
                     state.refreshNow()
                 } label: {
-                    Label("Refresh", systemImage: state.isRefreshing ? "arrow.triangle.2.circlepath" : "arrow.clockwise")
+                    Label(state.strings.refresh, systemImage: state.isRefreshing ? "arrow.triangle.2.circlepath" : "arrow.clockwise")
                 }
                 .labelStyle(.iconOnly)
-                .help("Refresh")
+                .help(state.strings.refresh)
 
                 Button {
                     isShowingSettings.toggle()
                 } label: {
-                    Label("Settings", systemImage: "gearshape")
+                    Label(state.strings.settings, systemImage: "gearshape")
                 }
                 .labelStyle(.iconOnly)
-                .help("Settings")
+                .help(state.strings.settings)
                 .popover(isPresented: $isShowingSettings) {
                     SettingsView(state: state)
                         .frame(width: 320)
@@ -56,10 +56,10 @@ struct DashboardView: View {
                 Button {
                     NSApplication.shared.terminate(nil)
                 } label: {
-                    Label("Quit", systemImage: "power")
+                    Label(state.strings.quitCodixx, systemImage: "power")
                 }
                 .labelStyle(.iconOnly)
-                .help("Quit Codixx")
+                .help(state.strings.quitCodixx)
             }
             .padding(.horizontal, 14)
             .padding(.vertical, 10)
@@ -72,7 +72,7 @@ struct DashboardView: View {
     private var overview: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 14) {
-                QuotaView(account: state.currentAccount, config: state.config)
+                QuotaView(account: state.currentAccount, config: state.config, strings: state.strings)
 
                 if let error = state.errorMessage {
                     Label(error, systemImage: "exclamationmark.triangle")
@@ -84,8 +84,8 @@ struct DashboardView: View {
                         .background(Color.orange.opacity(0.10), in: RoundedRectangle(cornerRadius: 8))
                 }
 
-                ThreadRankingView(threads: state.topThreads)
-                SwitchLogView(events: Array(state.switchEvents.prefix(4)))
+                ThreadRankingView(threads: state.topThreads, strings: state.strings)
+                SwitchLogView(events: Array(state.switchEvents.prefix(4)), strings: state.strings)
             }
             .padding(14)
         }
@@ -94,8 +94,8 @@ struct DashboardView: View {
     private var trends: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
-                UsageTrendView(snapshot: state.usageSnapshot)
-                ThreadRankingView(threads: state.topThreads)
+                UsageTrendView(snapshot: state.usageSnapshot, strings: state.strings)
+                ThreadRankingView(threads: state.topThreads, strings: state.strings)
             }
             .padding(14)
         }
@@ -107,7 +107,7 @@ struct DashboardView: View {
     }
 
     private var footerText: String {
-        guard let lastUpdatedAt = state.lastUpdatedAt else { return "Not refreshed yet" }
-        return "Updated \(lastUpdatedAt.formatted(date: .omitted, time: .shortened))"
+        guard let lastUpdatedAt = state.lastUpdatedAt else { return state.strings.notRefreshedYet }
+        return state.strings.updated(lastUpdatedAt)
     }
 }

@@ -10,11 +10,11 @@ struct AccountListView: View {
             VStack(alignment: .leading, spacing: 14) {
                 saveCurrentAccount
 
-                Text("Accounts")
+                Text(state.strings.accounts)
                     .font(.headline)
 
                 if state.accounts.isEmpty {
-                    Text("No saved accounts")
+                    Text(state.strings.noSavedAccounts)
                         .font(.caption)
                         .foregroundStyle(.secondary)
                         .padding(12)
@@ -31,18 +31,18 @@ struct AccountListView: View {
 
     private var saveCurrentAccount: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text("Save Current Auth")
+            Text(state.strings.saveCurrentAuth)
                 .font(.headline)
             HStack {
-                TextField("Alias", text: $newAlias)
+                TextField(state.strings.alias, text: $newAlias)
                     .textFieldStyle(.roundedBorder)
                 Button {
                     state.saveCurrentAccount(alias: newAlias)
                     newAlias = ""
                 } label: {
-                    Label("Save", systemImage: "key")
+                    Label(state.strings.save, systemImage: "key")
                 }
-                .help("Save current Codex auth")
+                .help(state.strings.saveCurrentCodexAuth)
             }
         }
         .padding(12)
@@ -57,7 +57,7 @@ struct AccountListView: View {
                         Text(account.alias)
                             .font(.headline)
                         if account.id == state.currentAccount?.id {
-                            Text("Current")
+                            Text(state.strings.current)
                                 .font(.caption2.weight(.semibold))
                                 .padding(.horizontal, 6)
                                 .padding(.vertical, 2)
@@ -72,19 +72,19 @@ struct AccountListView: View {
                 Button {
                     state.switchToAccount(account)
                 } label: {
-                    Label("Switch", systemImage: "arrow.triangle.2.circlepath")
+                    Label(state.strings.switchAccount, systemImage: "arrow.triangle.2.circlepath")
                 }
                 .disabled(account.id == state.currentAccount?.id)
-                .help("Switch to this account")
+                .help(state.strings.switchToThisAccount)
             }
 
             HStack {
-                Toggle("Enabled", isOn: Binding(
+                Toggle(state.strings.enabled, isOn: Binding(
                     get: { account.isEnabled },
                     set: { state.setAccount(account, isEnabled: $0) }
                 ))
                 Spacer()
-                Stepper("Priority \(account.priority)", value: Binding(
+                Stepper(state.strings.priority(account.priority), value: Binding(
                     get: { account.priority },
                     set: { state.setAccount(account, priority: $0) }
                 ), in: 0...100)
@@ -98,7 +98,7 @@ struct AccountListView: View {
 
     private func quotaText(for account: CodixxAccount) -> String {
         let primary = account.quota.primaryUsedPercent.map { "\(Int($0.rounded()))%" } ?? "--"
-        let confidence = account.quota.confidence.rawValue
-        return "Primary \(primary) / \(confidence)"
+        let confidence = state.strings.confidenceLabel(account.quota.confidence)
+        return state.strings.primaryQuota(primary: primary, confidence: confidence)
     }
 }

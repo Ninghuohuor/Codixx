@@ -3,14 +3,15 @@ import CodixxCore
 
 struct SwitchLogView: View {
     var events: [SwitchAuditEvent]
+    var strings: CodixxStrings
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text("Switch Log")
+            Text(strings.switchLog)
                 .font(.headline)
 
             if events.isEmpty {
-                Text("No switch events")
+                Text(strings.noSwitchEvents)
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -40,22 +41,22 @@ struct SwitchLogView: View {
     }
 
     private func title(for event: SwitchAuditEvent) -> String {
-        let target = event.targetAlias ?? "unknown"
+        let target = event.targetAlias ?? strings.unknown
         switch event.result {
         case .success:
-            return "Switched to \(target)"
+            return strings.switchSuccessTitle(target: target)
         case .rolledBack:
-            return "Rolled back"
+            return strings.rolledBack
         case .rollbackFailed:
-            return "Rollback failed"
+            return strings.rollbackFailed
         case .skippedNoCandidate:
-            return "No candidate"
+            return strings.noCandidate
         case .failedBeforeWrite:
-            return "Failed before write"
+            return strings.failedBeforeWrite
         case .failedDuringWrite:
-            return "Failed during write"
+            return strings.failedDuringWrite
         case .failedValidation:
-            return "Validation failed"
+            return strings.validationFailed
         }
     }
 

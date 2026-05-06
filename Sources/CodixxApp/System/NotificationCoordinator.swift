@@ -33,8 +33,8 @@ final class NotificationCoordinator {
         }
 
         send(
-            title: "Codixx quota warning",
-            body: "\(account.alias) is at \(Int(primaryUsedPercent.rounded()))% of the 5-hour quota."
+            title: state.strings.codixxQuotaWarning,
+            body: state.strings.quotaWarningBody(alias: account.alias, percent: Int(primaryUsedPercent.rounded()))
         )
     }
 
@@ -49,8 +49,8 @@ final class NotificationCoordinator {
         }
 
         send(
-            title: "Codixx protection mode",
-            body: "No saved account is available for automatic switching."
+            title: state.strings.codixxProtectionMode,
+            body: state.strings.noAccountAvailableForAutoSwitch
         )
     }
 
@@ -66,20 +66,20 @@ final class NotificationCoordinator {
         case .success:
             guard throttle.shouldSend(.generic(type: "switch-success"), at: Date()) else { return }
             send(
-                title: "Codixx switched account",
-                body: "Now using \(event.targetAlias ?? "the selected account")."
+                title: state.strings.codixxSwitchedAccount,
+                body: state.strings.switchedAccountBody(target: event.targetAlias ?? state.strings.selectedAccountFallback)
             )
         case .rolledBack, .rollbackFailed, .failedBeforeWrite, .failedDuringWrite, .failedValidation:
             guard throttle.shouldSend(.generic(type: "switch-failure"), at: Date()) else { return }
             send(
-                title: "Codixx switch needs attention",
-                body: event.errorSummary ?? "The account switch did not complete cleanly."
+                title: state.strings.codixxSwitchNeedsAttention,
+                body: event.errorSummary ?? state.strings.switchDidNotCompleteCleanly
             )
         case .skippedNoCandidate:
             guard throttle.shouldSend(.protectionModeEntered, at: Date()) else { return }
             send(
-                title: "Codixx protection mode",
-                body: "No saved account is available for automatic switching."
+                title: state.strings.codixxProtectionMode,
+                body: state.strings.noAccountAvailableForAutoSwitch
             )
         }
     }

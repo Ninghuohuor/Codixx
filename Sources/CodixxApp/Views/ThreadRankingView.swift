@@ -3,14 +3,15 @@ import CodixxCore
 
 struct ThreadRankingView: View {
     var threads: [ThreadUsage]
+    var strings: CodixxStrings
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text("Top Threads")
+            Text(strings.topThreads)
                 .font(.headline)
 
             if threads.isEmpty {
-                Text("No thread usage yet")
+                Text(strings.noThreadUsageYet)
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity, alignment: .leading)

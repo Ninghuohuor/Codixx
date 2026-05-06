@@ -4,19 +4,20 @@ import CodixxCore
 
 struct UsageTrendView: View {
     var snapshot: ThreadUsageSnapshot
+    var strings: CodixxStrings
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
             HStack {
-                MetricTile(title: "Total", value: snapshot.totalTokens.formatted(), systemImage: "sum")
-                MetricTile(title: "Threads", value: snapshot.threads.count.formatted(), systemImage: "text.bubble")
+                MetricTile(title: strings.total, value: snapshot.totalTokens.formatted(), systemImage: "sum")
+                MetricTile(title: strings.threads, value: snapshot.threads.count.formatted(), systemImage: "text.bubble")
             }
 
-            chartSection(title: "Threads updated, 7 days") {
+            chartSection(title: strings.threadsUpdatedSevenDays) {
                 Chart(dailyBuckets) { bucket in
                     BarMark(
-                        x: .value("Day", bucket.day, unit: .day),
-                        y: .value("Tokens", bucket.tokens)
+                        x: .value(strings.day, bucket.day, unit: .day),
+                        y: .value(strings.tokens, bucket.tokens)
                     )
                     .foregroundStyle(.blue)
                 }
@@ -27,16 +28,16 @@ struct UsageTrendView: View {
                 }
             }
 
-            chartSection(title: "Threads updated, 24 hours") {
+            chartSection(title: strings.threadsUpdatedTwentyFourHours) {
                 Chart(hourlyBuckets) { bucket in
                     LineMark(
-                        x: .value("Hour", bucket.hour, unit: .hour),
-                        y: .value("Tokens", bucket.tokens)
+                        x: .value(strings.hour, bucket.hour, unit: .hour),
+                        y: .value(strings.tokens, bucket.tokens)
                     )
                     .foregroundStyle(.green)
                     AreaMark(
-                        x: .value("Hour", bucket.hour, unit: .hour),
-                        y: .value("Tokens", bucket.tokens)
+                        x: .value(strings.hour, bucket.hour, unit: .hour),
+                        y: .value(strings.tokens, bucket.tokens)
                     )
                     .foregroundStyle(.green.opacity(0.18))
                 }

@@ -80,6 +80,10 @@ final class AppState: ObservableObject {
             .orderedCandidates(from: accounts.filter { $0.id != currentAccount?.id }, snapshotExists: hasSnapshot)
     }
 
+    var strings: CodixxStrings {
+        CodixxStrings(language: config.language)
+    }
+
     func refreshNow() {
         refresh(
             applyRateLimitObservations: true,
@@ -265,6 +269,10 @@ final class AppState: ObservableObject {
         updateConfig { $0.primaryThresholdPercent = percent }
     }
 
+    func setLanguage(_ language: CodixxLanguage) {
+        updateConfig { $0.language = language }
+    }
+
     private func updateConfig(_ mutate: (inout CodixxConfig) -> Void) {
         var updated = config
         mutate(&updated)
@@ -286,9 +294,9 @@ final class AppState: ObservableObject {
         do {
             try configStore.save(updated)
             config = updated
-            return "\(error.localizedDescription)\nAuto switch has been paused."
+            return "\(error.localizedDescription)\n\(strings.textForAutoSwitchPaused)"
         } catch {
-            return "\(error.localizedDescription)\nAuto switch could not be paused: \(error.localizedDescription)"
+            return "\(error.localizedDescription)\n\(strings.textForAutoSwitchCouldNotBePaused(error.localizedDescription))"
         }
     }
 

@@ -4,16 +4,18 @@ import CodixxCore
 struct QuotaView: View {
     var account: CodixxAccount?
     var config: CodixxConfig
+    var strings: CodixxStrings
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack(alignment: .firstTextBaseline) {
                 VStack(alignment: .leading, spacing: 3) {
-                    Text(account?.alias ?? "No active account")
+                    Text(account?.alias ?? strings.noActiveAccountTitle)
                         .font(.headline)
-                    Text(confidenceText)
+                    Text(account == nil ? strings.noActiveAccountDetail : confidenceText)
                         .font(.caption)
                         .foregroundStyle(confidenceColor)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
                 Spacer()
                 Text(primaryPercentText)
@@ -51,25 +53,25 @@ struct QuotaView: View {
     }
 
     private var secondaryPercentText: String {
-        guard let used = quota?.secondaryUsedPercent else { return "Weekly --" }
-        return "Weekly \(Int(used.rounded()))%"
+        guard let used = quota?.secondaryUsedPercent else { return strings.weeklyUnknown }
+        return strings.weeklyPercent(Int(used.rounded()))
     }
 
     private var resetText: String {
-        guard let date = quota?.primaryResetsAt else { return "Reset unknown" }
-        return "Resets \(date.formatted(date: .omitted, time: .shortened))"
+        guard let date = quota?.primaryResetsAt else { return strings.resetUnknown }
+        return strings.resets(date)
     }
 
     private var confidenceText: String {
         switch quota?.confidence ?? .unknown {
         case .fresh:
-            return "Fresh quota"
+            return strings.freshQuota
         case .recent:
-            return "Recent quota"
+            return strings.recentQuota
         case .stale:
-            return "Stale quota"
+            return strings.staleQuota
         case .unknown:
-            return "Quota unknown"
+            return strings.quotaUnknown
         }
     }
 

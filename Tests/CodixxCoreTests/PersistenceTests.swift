@@ -30,6 +30,7 @@ final class PersistenceTests: XCTestCase {
         XCTAssertTrue(config.detailedSwitchLoggingEnabled)
         XCTAssertEqual(config.quotaRefreshIntervalSeconds, 60)
         XCTAssertEqual(config.usageRefreshIntervalSeconds, 300)
+        XCTAssertEqual(config.language, .english)
     }
 
     func testConfigStoreSavesAndLoadsConfigJSON() throws {
@@ -44,14 +45,41 @@ final class PersistenceTests: XCTestCase {
             notificationsEnabled: false,
             detailedSwitchLoggingEnabled: false,
             quotaRefreshIntervalSeconds: 30,
-            usageRefreshIntervalSeconds: 120
+            usageRefreshIntervalSeconds: 120,
+            language: .chinese
         )
 
         try store.save(config)
         let loaded = try store.load()
 
         XCTAssertEqual(loaded, config)
+        XCTAssertEqual(loaded.language, .chinese)
         XCTAssertTrue(FileManager.default.fileExists(atPath: paths.configJSON.path))
+    }
+
+    func testConfigStoreLoadsLegacyConfigWithoutLanguageAsEnglish() throws {
+        let tempHome = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: tempHome) }
+        let paths = CodixxPaths(home: tempHome)
+        try paths.createApplicationSupportDirectories()
+        let legacyJSON = """
+        {
+          "codexDirectoryPath": "/tmp/codex",
+          "autoSwitchEnabled": false,
+          "primaryThresholdPercent": 88,
+          "notificationsEnabled": false,
+          "detailedSwitchLoggingEnabled": false,
+          "quotaRefreshIntervalSeconds": 30,
+          "usageRefreshIntervalSeconds": 120
+        }
+        """
+        try legacyJSON.data(using: .utf8)?.write(to: paths.configJSON)
+        let store = CodixxConfigStore(paths: paths)
+
+        let loaded = try store.load()
+
+        XCTAssertEqual(loaded.codexDirectoryPath, "/tmp/codex")
+        XCTAssertEqual(loaded.language, .english)
     }
 
     func testConfigStorePathsCannotBeMutatedAfterInitialization() throws {
