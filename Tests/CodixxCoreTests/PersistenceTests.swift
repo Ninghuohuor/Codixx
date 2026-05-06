@@ -54,6 +54,36 @@ final class PersistenceTests: XCTestCase {
         XCTAssertTrue(FileManager.default.fileExists(atPath: paths.configJSON.path))
     }
 
+    func testConfigStorePathsCannotBeMutatedAfterInitialization() throws {
+        let tempHome = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let otherHome = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer {
+            try? FileManager.default.removeItem(at: tempHome)
+            try? FileManager.default.removeItem(at: otherHome)
+        }
+
+        let store = CodixxConfigStore(paths: CodixxPaths(home: tempHome))
+
+        XCTAssertEqual(store.paths.configJSON.path, CodixxPaths(home: tempHome).configJSON.path)
+        XCTAssertNotEqual(store.paths.configJSON.path, CodixxPaths(home: otherHome).configJSON.path)
+    }
+
+    func testJSONFileStoreOverwritesExistingFileAndLeavesNoTemporaryFiles() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let url = directory.appendingPathComponent("config.json")
+        let store = JSONFileStore<CodixxConfig>(url: url)
+
+        try store.save(CodixxConfig(codexDirectoryPath: "/first"))
+        try store.save(CodixxConfig(codexDirectoryPath: "/second"))
+
+        let loaded = try store.load()
+        let entries = try FileManager.default.contentsOfDirectory(atPath: directory.path)
+
+        XCTAssertEqual(loaded.codexDirectoryPath, "/second")
+        XCTAssertEqual(entries, ["config.json"])
+    }
+
     func testAccountMetadataStoreLoadsEmptyListWhenFileIsAbsent() throws {
         let tempHome = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
         defer { try? FileManager.default.removeItem(at: tempHome) }

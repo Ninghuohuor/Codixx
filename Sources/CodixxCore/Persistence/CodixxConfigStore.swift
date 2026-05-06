@@ -33,7 +33,7 @@ public struct CodixxConfig: Codable, Equatable, Sendable {
 }
 
 public struct CodixxConfigStore {
-    public var paths: CodixxPaths
+    public let paths: CodixxPaths
 
     private let fileManager: FileManager
     private let fileStore: JSONFileStore<CodixxConfig>

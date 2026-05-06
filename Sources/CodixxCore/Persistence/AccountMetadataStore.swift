@@ -9,7 +9,7 @@ public struct AccountMetadataList: Codable, Equatable, Sendable {
 }
 
 public struct AccountMetadataStore {
-    public var paths: CodixxPaths
+    public let paths: CodixxPaths
 
     private let fileManager: FileManager
     private let fileStore: JSONFileStore<AccountMetadataList>
