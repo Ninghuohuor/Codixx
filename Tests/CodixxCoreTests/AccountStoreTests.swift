@@ -13,6 +13,14 @@ final class AccountStoreTests: XCTestCase {
         XCTAssertEqual(try AccountFingerprint.generate(from: tokenAuth), "token:\(sha256Prefix16("secret-token"))")
     }
 
+    func testFingerprintReadsNestedCodexTokensObject() throws {
+        let accountIdAuth = try AuthSnapshot(jsonData: Data(#"{"auth_mode":"chatgpt","tokens":{"account_id":"acct_nested","access_token":"secret"}}"#.utf8))
+        let tokenAuth = try AuthSnapshot(jsonData: Data(#"{"auth_mode":"chatgpt","tokens":{"access_token":"nested-token"}}"#.utf8))
+
+        XCTAssertEqual(try AccountFingerprint.generate(from: accountIdAuth), "account:acct_nested")
+        XCTAssertEqual(try AccountFingerprint.generate(from: tokenAuth), "token:\(sha256Prefix16("nested-token"))")
+    }
+
     func testSaveCurrentAuthStoresSnapshotInVaultAndMetadataWithoutRawAuth() throws {
         let home = try makeTempHome()
         defer { try? FileManager.default.removeItem(at: home) }

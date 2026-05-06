@@ -14,7 +14,10 @@ public struct AuthSnapshot: Equatable, Sendable {
     }
 
     public func stringValue(for key: String) -> String? {
-        object[key]?.stringValue
+        if let value = object[key]?.stringValue {
+            return value
+        }
+        return object["tokens"]?.dictionaryValue?[key]?.stringValue
     }
 
     public static func == (lhs: AuthSnapshot, rhs: AuthSnapshot) -> Bool {
@@ -27,5 +30,10 @@ private struct AnySendableValue: @unchecked Sendable {
 
     var stringValue: String? {
         value as? String
+    }
+
+    var dictionaryValue: [String: AnySendableValue]? {
+        guard let dictionary = value as? [String: Any] else { return nil }
+        return dictionary.mapValues(AnySendableValue.init)
     }
 }

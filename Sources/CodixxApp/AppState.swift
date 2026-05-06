@@ -2,6 +2,11 @@ import Foundation
 import SwiftUI
 import CodixxCore
 
+enum AccountSaveStatus: Equatable {
+    case success(alias: String)
+    case failure(message: String)
+}
+
 @MainActor
 final class AppState: ObservableObject {
     @Published private(set) var config: CodixxConfig
@@ -15,6 +20,7 @@ final class AppState: ObservableObject {
     @Published private(set) var switchEvents: [SwitchAuditEvent] = []
     @Published private(set) var lastUpdatedAt: Date?
     @Published private(set) var isRefreshing = false
+    @Published private(set) var accountSaveStatus: AccountSaveStatus?
     @Published var errorMessage: String?
 
     let paths: CodixxPaths
@@ -206,10 +212,13 @@ final class AppState: ObservableObject {
 
     func saveCurrentAccount(alias: String) {
         let trimmedAlias = alias.trimmingCharacters(in: .whitespacesAndNewlines)
+        let savedAlias = trimmedAlias.isEmpty ? "Codex Account" : trimmedAlias
         do {
-            _ = try accountStore.saveCurrentAuth(alias: trimmedAlias.isEmpty ? "Codex Account" : trimmedAlias)
+            let account = try accountStore.saveCurrentAuth(alias: savedAlias)
+            accountSaveStatus = .success(alias: account.alias)
             refreshNow()
         } catch {
+            accountSaveStatus = .failure(message: error.localizedDescription)
             errorMessage = error.localizedDescription
         }
     }

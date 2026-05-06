@@ -44,6 +44,13 @@ struct AccountListView: View {
                 }
                 .help(state.strings.saveCurrentCodexAuth)
             }
+
+            if let accountSaveStatus = state.accountSaveStatus {
+                Label(saveStatusText(accountSaveStatus), systemImage: saveStatusIcon(accountSaveStatus))
+                    .font(.caption)
+                    .foregroundStyle(saveStatusColor(accountSaveStatus))
+                    .fixedSize(horizontal: false, vertical: true)
+            }
         }
         .padding(12)
         .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 8))
@@ -100,5 +107,32 @@ struct AccountListView: View {
         let primary = account.quota.primaryUsedPercent.map { "\(Int($0.rounded()))%" } ?? "--"
         let confidence = state.strings.confidenceLabel(account.quota.confidence)
         return state.strings.primaryQuota(primary: primary, confidence: confidence)
+    }
+
+    private func saveStatusText(_ status: AccountSaveStatus) -> String {
+        switch status {
+        case .success(let alias):
+            return state.strings.savedCurrentAccount(alias: alias)
+        case .failure(let message):
+            return state.strings.couldNotSaveCurrentAccount(message)
+        }
+    }
+
+    private func saveStatusIcon(_ status: AccountSaveStatus) -> String {
+        switch status {
+        case .success:
+            return "checkmark.circle"
+        case .failure:
+            return "exclamationmark.triangle"
+        }
+    }
+
+    private func saveStatusColor(_ status: AccountSaveStatus) -> Color {
+        switch status {
+        case .success:
+            return .green
+        case .failure:
+            return .orange
+        }
     }
 }

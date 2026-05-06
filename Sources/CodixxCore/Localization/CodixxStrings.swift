@@ -132,6 +132,14 @@ public struct CodixxStrings: Sendable {
         text(en: "Now using \(target).", zh: "当前正在使用 \(target)。")
     }
 
+    public func savedCurrentAccount(alias: String) -> String {
+        text(en: "Saved \(alias).", zh: "已保存 \(alias)。")
+    }
+
+    public func couldNotSaveCurrentAccount(_ error: String) -> String {
+        text(en: "Could not save current account: \(error)", zh: "无法保存当前账号：\(error)")
+    }
+
     public func textForAutoSwitchCouldNotBePaused(_ error: String) -> String {
         text(
             en: "Auto switch could not be paused: \(error)",
