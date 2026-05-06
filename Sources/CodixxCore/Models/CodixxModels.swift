@@ -27,6 +27,30 @@ public struct AccountQuotaState: Codable, Equatable, Sendable {
     public var lastObservedAt: Date?
     public var confidence: QuotaConfidence
 
+    public init(
+        accountId: String,
+        alias: String,
+        primaryUsedPercent: Double?,
+        primaryWindowMinutes: Int?,
+        primaryResetsAt: Date?,
+        secondaryUsedPercent: Double?,
+        secondaryWindowMinutes: Int?,
+        secondaryResetsAt: Date?,
+        lastObservedAt: Date?,
+        confidence: QuotaConfidence
+    ) {
+        self.accountId = accountId
+        self.alias = alias
+        self.primaryUsedPercent = primaryUsedPercent
+        self.primaryWindowMinutes = primaryWindowMinutes
+        self.primaryResetsAt = primaryResetsAt
+        self.secondaryUsedPercent = secondaryUsedPercent
+        self.secondaryWindowMinutes = secondaryWindowMinutes
+        self.secondaryResetsAt = secondaryResetsAt
+        self.lastObservedAt = lastObservedAt
+        self.confidence = confidence
+    }
+
     public static func unknown(accountId: String, alias: String) -> AccountQuotaState {
         AccountQuotaState(
             accountId: accountId,
@@ -53,6 +77,28 @@ public struct CodixxAccount: Codable, Identifiable, Equatable, Sendable {
     public var quota: AccountQuotaState
     public var isEnabled: Bool
     public var priority: Int
+
+    public init(
+        id: UUID,
+        alias: String,
+        fingerprint: String,
+        createdAt: Date,
+        updatedAt: Date,
+        lastUsedAt: Date?,
+        quota: AccountQuotaState,
+        isEnabled: Bool,
+        priority: Int
+    ) {
+        self.id = id
+        self.alias = alias
+        self.fingerprint = fingerprint
+        self.createdAt = createdAt
+        self.updatedAt = updatedAt
+        self.lastUsedAt = lastUsedAt
+        self.quota = quota
+        self.isEnabled = isEnabled
+        self.priority = priority
+    }
 
     public func isEligibleForSwitch(hasSnapshot: Bool) -> Bool {
         guard isEnabled, hasSnapshot else { return false }
