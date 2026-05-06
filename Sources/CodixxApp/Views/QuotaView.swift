@@ -12,7 +12,7 @@ struct QuotaView: View {
                 VStack(alignment: .leading, spacing: 3) {
                     Text(account?.alias ?? strings.noActiveAccountTitle)
                         .font(.headline)
-                    Text(account == nil ? strings.noActiveAccountDetail : confidenceText)
+                    Text(account == nil ? strings.noActiveAccountDetail : strings.fiveHourQuotaWithConfidence(confidenceText))
                         .font(.caption)
                         .foregroundStyle(confidenceColor)
                         .fixedSize(horizontal: false, vertical: true)

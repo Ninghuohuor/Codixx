@@ -53,7 +53,7 @@ public struct CodixxStrings: Sendable {
             zh: "请先在“账号”里保存当前 Codex 登录，之后这里会显示账号额度。"
         )
     }
-    public var weeklyUnknown: String { text(en: "Weekly --", zh: "每周 --") }
+    public var weeklyUnknown: String { text(en: "Weekly quota --", zh: "每周额度 --") }
     public var resetUnknown: String { text(en: "Reset unknown", zh: "重置时间未知") }
     public var freshQuota: String { text(en: "Fresh quota", zh: "额度信息新鲜") }
     public var recentQuota: String { text(en: "Recent quota", zh: "额度信息较新") }
@@ -86,13 +86,13 @@ public struct CodixxStrings: Sendable {
     }
 
     public func weeklyPercent(_ percent: Int) -> String {
-        text(en: "Weekly \(percent)%", zh: "每周 \(percent)%")
+        text(en: "Weekly quota \(percent)%", zh: "每周额度 \(percent)%")
     }
 
     public func resets(_ date: Date) -> String {
         text(
-            en: "Resets \(date.formatted(date: .omitted, time: .shortened))",
-            zh: "\(date.formatted(date: .omitted, time: .shortened)) 重置"
+            en: "5-hour resets \(date.formatted(date: .omitted, time: .shortened))",
+            zh: "5 小时 \(date.formatted(date: .omitted, time: .shortened)) 重置"
         )
     }
 
@@ -101,7 +101,11 @@ public struct CodixxStrings: Sendable {
     }
 
     public func primaryQuota(primary: String, confidence: String) -> String {
-        text(en: "Primary \(primary) / \(confidence)", zh: "主额度 \(primary) / \(confidence)")
+        text(en: "5-hour \(primary) / \(confidence)", zh: "5 小时 \(primary) / \(confidence)")
+    }
+
+    public func fiveHourQuotaWithConfidence(_ confidence: String) -> String {
+        text(en: "5-hour quota / \(confidence)", zh: "5 小时额度 / \(confidence)")
     }
 
     public func confidenceLabel(_ confidence: QuotaConfidence) -> String {
