@@ -5,6 +5,7 @@ struct AccountListView: View {
     @ObservedObject var state: AppState
     @State private var newAlias = ""
     @State private var editedAliases: [UUID: String] = [:]
+    @State private var editingAccountIds: Set<UUID> = []
     @State private var isShowingSaveAccount = false
 
     var body: some View {
@@ -82,24 +83,7 @@ struct AccountListView: View {
     private func accountRow(_ account: CodixxAccount) -> some View {
         VStack(alignment: .leading, spacing: 14) {
             VStack(alignment: .leading, spacing: 8) {
-                HStack(spacing: 8) {
-                    TextField(state.strings.alias, text: Binding(
-                        get: { editedAliases[account.id] ?? account.alias },
-                        set: { editedAliases[account.id] = $0 }
-                    ))
-                    .textFieldStyle(.roundedBorder)
-                    .frame(minWidth: 0, maxWidth: .infinity)
-
-                    Button {
-                        state.renameAccount(account, alias: editedAliases[account.id] ?? account.alias)
-                        editedAliases[account.id] = nil
-                    } label: {
-                        Label(state.strings.renameAccount, systemImage: "checkmark")
-                    }
-                    .labelStyle(.iconOnly)
-                    .help(state.strings.renameAccount)
-                    .disabled((editedAliases[account.id] ?? account.alias).trimmingCharacters(in: .whitespacesAndNewlines) == account.alias)
-                }
+                aliasHeader(for: account)
 
                 HStack(spacing: 8) {
                     if account.id == state.currentAccount?.id {
@@ -122,6 +106,11 @@ struct AccountListView: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
+
+                Text(membershipExpirationText(for: account))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
             }
 
             HStack(spacing: 10) {
@@ -138,6 +127,7 @@ struct AccountListView: View {
                 Button(role: .destructive) {
                     state.deleteAccount(account)
                     editedAliases[account.id] = nil
+                    editingAccountIds.remove(account.id)
                 } label: {
                     Label(state.strings.deleteAccount, systemImage: "trash")
                 }
@@ -163,37 +153,59 @@ struct AccountListView: View {
                 }
             }
             .font(.caption)
-
-            VStack(alignment: .leading, spacing: 6) {
-                Text(state.strings.membershipExpires)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-
-                HStack(spacing: 8) {
-                    DatePicker(
-                        "",
-                        selection: Binding(
-                            get: { account.membershipExpiresAt ?? Date() },
-                            set: { state.setAccount(account, membershipExpiresAt: $0) }
-                        ),
-                        displayedComponents: .date
-                    )
-                    .labelsHidden()
-                    .datePickerStyle(.compact)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-
-                    Button {
-                        state.setAccount(account, membershipExpiresAt: nil)
-                    } label: {
-                        Label(state.strings.clearMembershipExpiration, systemImage: "xmark.circle")
-                    }
-                    .labelStyle(.iconOnly)
-                    .help(state.strings.clearMembershipExpiration)
-                }
-            }
         }
         .padding(12)
         .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 8))
+    }
+
+    @ViewBuilder
+    private func aliasHeader(for account: CodixxAccount) -> some View {
+        if editingAccountIds.contains(account.id) {
+            HStack(spacing: 8) {
+                TextField(state.strings.alias, text: Binding(
+                    get: { editedAliases[account.id] ?? account.alias },
+                    set: { editedAliases[account.id] = $0 }
+                ))
+                .textFieldStyle(.roundedBorder)
+                .frame(minWidth: 0, maxWidth: .infinity)
+
+                Button {
+                    state.renameAccount(account, alias: editedAliases[account.id] ?? account.alias)
+                    editedAliases[account.id] = nil
+                    editingAccountIds.remove(account.id)
+                } label: {
+                    Label(state.strings.renameAccount, systemImage: "checkmark")
+                }
+                .labelStyle(.iconOnly)
+                .help(state.strings.renameAccount)
+                .disabled((editedAliases[account.id] ?? account.alias).trimmingCharacters(in: .whitespacesAndNewlines) == account.alias)
+
+                Button {
+                    editedAliases[account.id] = nil
+                    editingAccountIds.remove(account.id)
+                } label: {
+                    Label(state.strings.cancelEdit, systemImage: "xmark")
+                }
+                .labelStyle(.iconOnly)
+                .help(state.strings.cancelEdit)
+            }
+        } else {
+            HStack(spacing: 8) {
+                Text(account.alias)
+                    .font(.headline)
+                    .lineLimit(1)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+
+                Button {
+                    editedAliases[account.id] = account.alias
+                    editingAccountIds.insert(account.id)
+                } label: {
+                    Label(state.strings.renameAccount, systemImage: "pencil")
+                }
+                .labelStyle(.iconOnly)
+                .help(state.strings.renameAccount)
+            }
+        }
     }
 
     private func quotaProgressRows(for account: CodixxAccount) -> some View {
@@ -248,8 +260,12 @@ struct AccountListView: View {
 
     private func membershipText(for account: CodixxAccount) -> String {
         let plan = account.quota.planType?.isEmpty == false ? account.quota.planType! : state.strings.unknownPlan
+        return "\(state.strings.membership): \(plan)"
+    }
+
+    private func membershipExpirationText(for account: CodixxAccount) -> String {
         let expiration = account.membershipExpiresAt.map(state.strings.expires) ?? state.strings.neverExpires
-        return "\(state.strings.membership): \(plan) / \(expiration)"
+        return "\(state.strings.membershipExpires): \(expiration)"
     }
 
     private func saveStatusText(_ status: AccountSaveStatus) -> String {

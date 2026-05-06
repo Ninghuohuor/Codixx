@@ -276,12 +276,6 @@ final class AppState: ObservableObject {
         }
     }
 
-    func setAccount(_ account: CodixxAccount, membershipExpiresAt: Date?) {
-        updateAccount(account) { updated in
-            updated.membershipExpiresAt = membershipExpiresAt
-        }
-    }
-
     func renameAccount(_ account: CodixxAccount, alias: String) {
         do {
             _ = try accountStore.renameAccount(account.id, alias: alias)

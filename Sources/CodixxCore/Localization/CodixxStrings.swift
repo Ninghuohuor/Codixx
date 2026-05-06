@@ -22,15 +22,14 @@ public struct CodixxStrings: Sendable {
     public var saveCurrentCodexAuth: String { text(en: "Save current Codex auth", zh: "保存当前 Codex 登录") }
     public var noSavedAccounts: String { text(en: "No saved accounts", zh: "尚未保存账号") }
     public var current: String { text(en: "Current", zh: "当前") }
-    public var switchAccount: String { text(en: "Switch", zh: "切换") }
+    public var switchAccount: String { text(en: "Switch to account", zh: "切换到此账号") }
     public var switchToThisAccount: String { text(en: "Switch to this account", zh: "切换到这个账号") }
     public var renameAccount: String { text(en: "Rename account", zh: "重命名账号") }
+    public var cancelEdit: String { text(en: "Cancel edit", zh: "取消编辑") }
     public var deleteAccount: String { text(en: "Delete account", zh: "删除账号") }
     public var membership: String { text(en: "Membership", zh: "会员") }
     public var membershipExpires: String { text(en: "Membership expires", zh: "会员到期") }
-    public var setMembershipExpiration: String { text(en: "Set expiration", zh: "设置到期") }
-    public var clearMembershipExpiration: String { text(en: "Clear expiration", zh: "清除到期") }
-    public var neverExpires: String { text(en: "No expiration set", zh: "未设置到期时间") }
+    public var neverExpires: String { text(en: "Expiration unavailable locally", zh: "本地未提供到期时间") }
     public var enabled: String { text(en: "Enabled", zh: "启用") }
     public var autoSwitch: String { text(en: "Auto switch", zh: "自动切换") }
     public var autoSwitchNeedsTwoAccounts: String {
