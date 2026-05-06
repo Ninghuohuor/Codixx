@@ -80,39 +80,51 @@ struct AccountListView: View {
     }
 
     private func accountRow(_ account: CodixxAccount) -> some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack(alignment: .firstTextBaseline) {
-                VStack(alignment: .leading, spacing: 3) {
-                    HStack(spacing: 8) {
-                        TextField(state.strings.alias, text: Binding(
-                            get: { editedAliases[account.id] ?? account.alias },
-                            set: { editedAliases[account.id] = $0 }
-                        ))
-                        .textFieldStyle(.roundedBorder)
+        VStack(alignment: .leading, spacing: 14) {
+            VStack(alignment: .leading, spacing: 8) {
+                HStack(spacing: 8) {
+                    TextField(state.strings.alias, text: Binding(
+                        get: { editedAliases[account.id] ?? account.alias },
+                        set: { editedAliases[account.id] = $0 }
+                    ))
+                    .textFieldStyle(.roundedBorder)
+                    .frame(minWidth: 0, maxWidth: .infinity)
 
-                        Button {
-                            state.renameAccount(account, alias: editedAliases[account.id] ?? account.alias)
-                            editedAliases[account.id] = nil
-                        } label: {
-                            Label(state.strings.renameAccount, systemImage: "checkmark")
-                        }
-                        .labelStyle(.iconOnly)
-                        .help(state.strings.renameAccount)
-                        .disabled((editedAliases[account.id] ?? account.alias).trimmingCharacters(in: .whitespacesAndNewlines) == account.alias)
-
-                        if account.id == state.currentAccount?.id {
-                            Text(state.strings.current)
-                                .font(.caption2.weight(.semibold))
-                                .padding(.horizontal, 6)
-                                .padding(.vertical, 2)
-                                .background(Color.green.opacity(0.14), in: Capsule())
-                        }
+                    Button {
+                        state.renameAccount(account, alias: editedAliases[account.id] ?? account.alias)
+                        editedAliases[account.id] = nil
+                    } label: {
+                        Label(state.strings.renameAccount, systemImage: "checkmark")
                     }
+                    .labelStyle(.iconOnly)
+                    .help(state.strings.renameAccount)
+                    .disabled((editedAliases[account.id] ?? account.alias).trimmingCharacters(in: .whitespacesAndNewlines) == account.alias)
+                }
+
+                HStack(spacing: 8) {
+                    if account.id == state.currentAccount?.id {
+                        Text(state.strings.current)
+                            .font(.caption2.weight(.semibold))
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 2)
+                            .background(Color.green.opacity(0.14), in: Capsule())
+                    }
+
                     Text(quotaText(for: account))
                         .font(.caption)
                         .foregroundStyle(.secondary)
+                        .lineLimit(2)
+
+                    Spacer(minLength: 0)
                 }
-                Spacer()
+
+                Text(membershipText(for: account))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            HStack(spacing: 10) {
                 Button {
                     state.switchToAccount(account)
                 } label: {
@@ -120,6 +132,8 @@ struct AccountListView: View {
                 }
                 .disabled(account.id == state.currentAccount?.id)
                 .help(state.strings.switchToThisAccount)
+
+                Spacer()
 
                 Button(role: .destructive) {
                     state.deleteAccount(account)
@@ -130,45 +144,52 @@ struct AccountListView: View {
                 .help(state.strings.deleteAccount)
             }
 
-            Text(membershipText(for: account))
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
-
             quotaProgressRows(for: account)
 
-            HStack {
+            HStack(alignment: .center, spacing: 12) {
                 Toggle(state.strings.enabled, isOn: Binding(
                     get: { account.isEnabled },
                     set: { state.setAccount(account, isEnabled: $0) }
                 ))
                 Spacer()
-                Stepper(state.strings.priority(account.priority), value: Binding(
-                    get: { account.priority },
-                    set: { state.setAccount(account, priority: $0) }
-                ), in: 0...100)
-                .frame(width: 138)
+                HStack(spacing: 8) {
+                    Text(state.strings.priority(account.priority))
+                        .font(.caption)
+                    Stepper("", value: Binding(
+                        get: { account.priority },
+                        set: { state.setAccount(account, priority: $0) }
+                    ), in: 0...100)
+                    .labelsHidden()
+                }
             }
             .font(.caption)
 
-            HStack(spacing: 8) {
-                DatePicker(
-                    state.strings.membershipExpires,
-                    selection: Binding(
-                        get: { account.membershipExpiresAt ?? Date() },
-                        set: { state.setAccount(account, membershipExpiresAt: $0) }
-                    ),
-                    displayedComponents: .date
-                )
-                .font(.caption)
+            VStack(alignment: .leading, spacing: 6) {
+                Text(state.strings.membershipExpires)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
 
-                Button {
-                    state.setAccount(account, membershipExpiresAt: nil)
-                } label: {
-                    Label(state.strings.clearMembershipExpiration, systemImage: "xmark.circle")
+                HStack(spacing: 8) {
+                    DatePicker(
+                        "",
+                        selection: Binding(
+                            get: { account.membershipExpiresAt ?? Date() },
+                            set: { state.setAccount(account, membershipExpiresAt: $0) }
+                        ),
+                        displayedComponents: .date
+                    )
+                    .labelsHidden()
+                    .datePickerStyle(.compact)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+
+                    Button {
+                        state.setAccount(account, membershipExpiresAt: nil)
+                    } label: {
+                        Label(state.strings.clearMembershipExpiration, systemImage: "xmark.circle")
+                    }
+                    .labelStyle(.iconOnly)
+                    .help(state.strings.clearMembershipExpiration)
                 }
-                .labelStyle(.iconOnly)
-                .help(state.strings.clearMembershipExpiration)
             }
         }
         .padding(12)
