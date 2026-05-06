@@ -58,6 +58,48 @@ final class RateLimitReaderTests: XCTestCase {
         XCTAssertEqual(cursor, Int64(try Data(contentsOf: session).count))
     }
 
+    func testReadsRateLimitsFromPayloadTokenCountEvent() throws {
+        let home = try makeTempHome()
+        defer { try? FileManager.default.removeItem(at: home) }
+        let paths = CodixxPaths(home: home)
+        let session = paths.codexHome.appendingPathComponent("sessions/2026/05/06/session.jsonl")
+        try writeJSONLLines(
+            [
+                """
+                {"timestamp":"2026-05-06T03:30:00Z","type":"event_msg","payload":{"type":"token_count","info":null,"rate_limits":{"limit_id":"codex","primary":{"used_percent":96.0,"window_minutes":300,"resets_at":1776409393},"secondary":{"used_percent":30.0,"window_minutes":10080,"resets_at":1776937959}}}}
+                """
+            ],
+            to: session
+        )
+        let reader = RateLimitReader(paths: paths, cursorStore: ParseCursorStore(paths: paths))
+
+        let observations = try reader.readNewObservations()
+
+        XCTAssertEqual(observations.map(\.primaryUsedPercent), [96])
+        XCTAssertEqual(observations.first?.secondaryUsedPercent, 30)
+    }
+
+    func testReadsRateLimitsFromPayloadInfoTokenCountEvent() throws {
+        let home = try makeTempHome()
+        defer { try? FileManager.default.removeItem(at: home) }
+        let paths = CodixxPaths(home: home)
+        let session = paths.codexHome.appendingPathComponent("sessions/2026/05/06/session.jsonl")
+        try writeJSONLLines(
+            [
+                """
+                {"timestamp":"2026-05-06T03:30:00Z","type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"total_tokens":41170568},"rate_limits":{"limit_id":"codex","primary":{"used_percent":41.0,"window_minutes":300,"resets_at":1776409393},"secondary":{"used_percent":22.0,"window_minutes":10080,"resets_at":1776937959}}}}}
+                """
+            ],
+            to: session
+        )
+        let reader = RateLimitReader(paths: paths, cursorStore: ParseCursorStore(paths: paths))
+
+        let observations = try reader.readNewObservations()
+
+        XCTAssertEqual(observations.map(\.primaryUsedPercent), [41])
+        XCTAssertEqual(observations.first?.secondaryUsedPercent, 22)
+    }
+
     func testCursorResetsWhenSessionFileShrinks() throws {
         let home = try makeTempHome()
         defer { try? FileManager.default.removeItem(at: home) }

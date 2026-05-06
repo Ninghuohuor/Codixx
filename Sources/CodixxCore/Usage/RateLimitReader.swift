@@ -223,6 +223,37 @@ private struct RateLimitEvent: Decodable {
     enum CodingKeys: String, CodingKey {
         case timestamp
         case rateLimits = "rate_limits"
+        case payload
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.timestamp = try container.decodeIfPresent(String.self, forKey: .timestamp)
+        self.rateLimits = try container.decodeIfPresent(RateLimits.self, forKey: .rateLimits)
+            ?? container.decodeIfPresent(RateLimitPayload.self, forKey: .payload)?.rateLimits
+    }
+}
+
+private struct RateLimitPayload: Decodable {
+    var rateLimits: RateLimits?
+
+    enum CodingKeys: String, CodingKey {
+        case rateLimits = "rate_limits"
+        case info
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.rateLimits = try container.decodeIfPresent(RateLimits.self, forKey: .rateLimits)
+            ?? container.decodeIfPresent(RateLimitPayloadInfo.self, forKey: .info)?.rateLimits
+    }
+}
+
+private struct RateLimitPayloadInfo: Decodable {
+    var rateLimits: RateLimits?
+
+    enum CodingKeys: String, CodingKey {
+        case rateLimits = "rate_limits"
     }
 }
 
