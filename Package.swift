@@ -16,7 +16,10 @@ let package = Package(
         ),
         .target(
             name: "CodixxCore",
-            dependencies: []
+            dependencies: [],
+            linkerSettings: [
+                .linkedLibrary("sqlite3")
+            ]
         ),
         .testTarget(
             name: "CodixxCoreTests",
