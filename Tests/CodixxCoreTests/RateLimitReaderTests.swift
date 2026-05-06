@@ -58,6 +58,56 @@ final class RateLimitReaderTests: XCTestCase {
         XCTAssertEqual(cursor, Int64(try Data(contentsOf: session).count))
     }
 
+    func testCursorResetsWhenSessionFileShrinks() throws {
+        let home = try makeTempHome()
+        defer { try? FileManager.default.removeItem(at: home) }
+        let paths = CodixxPaths(home: home)
+        let session = paths.codexHome.appendingPathComponent("sessions/2026/05/06/session.jsonl")
+        try writeJSONLLines(
+            [
+                """
+                {"timestamp":"2026-05-06T03:30:00Z","rate_limits":{"primary":{"used_percent":82.0,"window_minutes":300,"resets_at":1776409393},"secondary":{"used_percent":41.0,"window_minutes":10080,"resets_at":1776937959}}}
+                """
+            ],
+            to: session
+        )
+        let cursorStore = ParseCursorStore(paths: paths)
+        var staleCursor = ParseCursorState()
+        staleCursor.setOffset(10_000, for: session)
+        try cursorStore.save(staleCursor)
+        let reader = RateLimitReader(paths: paths, cursorStore: cursorStore)
+
+        let observations = try reader.readNewObservations()
+        let cursor = try cursorStore.load().offset(for: session)
+
+        XCTAssertEqual(observations.count, 1)
+        XCTAssertEqual(observations.first?.primaryUsedPercent, 82)
+        XCTAssertEqual(cursor, Int64(try Data(contentsOf: session).count))
+    }
+
+    func testReadRangeIsBoundedToProvidedFileSize() throws {
+        let home = try makeTempHome()
+        defer { try? FileManager.default.removeItem(at: home) }
+        let paths = CodixxPaths(home: home)
+        let session = paths.codexHome.appendingPathComponent("sessions/2026/05/06/session.jsonl")
+        let firstLine = """
+        {"timestamp":"2026-05-06T03:30:00Z","rate_limits":{"primary":{"used_percent":82.0,"window_minutes":300,"resets_at":1776409393},"secondary":{"used_percent":41.0,"window_minutes":10080,"resets_at":1776937959}}}
+        """
+        let secondLine = """
+        {"timestamp":"2026-05-06T03:31:00Z","rate_limits":{"primary":{"used_percent":83.0,"window_minutes":300,"resets_at":1776409393},"secondary":{"used_percent":42.0,"window_minutes":10080,"resets_at":1776937959}}}
+        """
+        try writeJSONLLines([firstLine, secondLine], to: session)
+        let firstLineByteCount = Int64((firstLine + "\n").data(using: .utf8)!.count)
+
+        let observations = try RateLimitReader.readObservations(
+            from: session,
+            offset: 0,
+            byteCount: firstLineByteCount
+        )
+
+        XCTAssertEqual(observations.map(\.primaryUsedPercent), [82])
+    }
+
     func testArchivedSessionsAreScanned() throws {
         let home = try makeTempHome()
         defer { try? FileManager.default.removeItem(at: home) }

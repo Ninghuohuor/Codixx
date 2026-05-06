@@ -69,11 +69,16 @@ public struct RateLimitReader {
         var observations: [RateLimitObservation] = []
 
         for file in try jsonlFiles() {
-            let previousOffset = max(0, cursorState.offset(for: file))
+            let storedOffset = max(0, cursorState.offset(for: file))
             let fileSize = try sizeOfFile(at: file)
+            let previousOffset = storedOffset > fileSize ? 0 : storedOffset
             guard previousOffset < fileSize else { continue }
 
-            observations.append(contentsOf: try readObservations(from: file, offset: previousOffset))
+            observations.append(contentsOf: try Self.readObservations(
+                from: file,
+                offset: previousOffset,
+                byteCount: fileSize - previousOffset
+            ))
             cursorState.setOffset(fileSize, for: file)
         }
 
@@ -86,11 +91,11 @@ public struct RateLimitReader {
         }
     }
 
-    private func readObservations(from file: URL, offset: Int64) throws -> [RateLimitObservation] {
+    public static func readObservations(from file: URL, offset: Int64, byteCount: Int64) throws -> [RateLimitObservation] {
         let handle = try FileHandle(forReadingFrom: file)
         defer { try? handle.close() }
         try handle.seek(toOffset: UInt64(offset))
-        let data = try handle.readToEnd() ?? Data()
+        let data = try handle.read(upToCount: Int(byteCount)) ?? Data()
         guard !data.isEmpty, let content = String(data: data, encoding: .utf8) else {
             return []
         }
@@ -100,7 +105,8 @@ public struct RateLimitReader {
             .compactMap { line in parseLine(String(line), sourceFile: file.resolvingSymlinksInPath().path) }
     }
 
-    private func parseLine(_ line: String, sourceFile: String) -> RateLimitObservation? {
+    private static func parseLine(_ line: String, sourceFile: String) -> RateLimitObservation? {
+        let decoder = JSONDecoder()
         guard let data = line.data(using: .utf8),
               let event = try? decoder.decode(RateLimitEvent.self, from: data),
               let rateLimits = event.rateLimits
@@ -164,7 +170,7 @@ public struct RateLimitReader {
         return attributes[.size] as? Int64 ?? Int64((attributes[.size] as? Int) ?? 0)
     }
 
-    private func parseISO8601Date(_ text: String?) -> Date? {
+    private static func parseISO8601Date(_ text: String?) -> Date? {
         guard let text else { return nil }
 
         let wholeSecondFormatter = ISO8601DateFormatter()
