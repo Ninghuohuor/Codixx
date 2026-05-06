@@ -10,6 +10,8 @@ struct UsageTrendView: View {
         VStack(alignment: .leading, spacing: 16) {
             MetricTile(title: strings.total, value: snapshot.totalTokens.formatted(), systemImage: "sum")
             MetricTile(title: strings.threads, value: snapshot.threads.count.formatted(), systemImage: "text.bubble")
+            MetricTile(title: strings.todayTokens, value: todayTokens.formatted(), systemImage: "calendar")
+            MetricTile(title: strings.yesterdayTokens, value: yesterdayTokens.formatted(), systemImage: "calendar.badge.clock")
 
             chartSection(title: strings.threadsUpdatedSevenDays) {
                 Chart(dailyBuckets) { bucket in
@@ -70,6 +72,24 @@ struct UsageTrendView: View {
                 .reduce(0) { $0 + $1.tokensUsed }
             return TokenBucket(id: day.timeIntervalSince1970, date: day, tokens: tokens)
         }
+    }
+
+    private var todayTokens: Int {
+        tokens(inDayOffset: 0)
+    }
+
+    private var yesterdayTokens: Int {
+        tokens(inDayOffset: -1)
+    }
+
+    private func tokens(inDayOffset offset: Int) -> Int {
+        let calendar = Calendar.current
+        let today = calendar.startOfDay(for: Date())
+        let day = calendar.date(byAdding: .day, value: offset, to: today) ?? today
+        let nextDay = calendar.date(byAdding: .day, value: 1, to: day) ?? day.addingTimeInterval(86_400)
+        return snapshot.threads
+            .filter { $0.updatedAt >= day && $0.updatedAt < nextDay }
+            .reduce(0) { $0 + $1.tokensUsed }
     }
 
     private var hourlyBuckets: [TokenBucket] {

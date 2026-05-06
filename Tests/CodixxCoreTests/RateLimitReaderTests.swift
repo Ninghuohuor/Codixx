@@ -10,7 +10,7 @@ final class RateLimitReaderTests: XCTestCase {
         try writeJSONLLines(
             [
                 """
-                {"timestamp":"2026-05-06T03:30:00Z","rate_limits":{"limit_id":"codex","primary":{"used_percent":82.0,"window_minutes":300,"resets_at":1776409393},"secondary":{"used_percent":41.0,"window_minutes":10080,"resets_at":1776937959}}}
+                {"timestamp":"2026-05-06T03:30:00Z","rate_limits":{"limit_id":"codex","plan_type":"pro","primary":{"used_percent":82.0,"window_minutes":300,"resets_at":1776409393},"secondary":{"used_percent":41.0,"window_minutes":10080,"resets_at":1776937959}}}
                 """
             ],
             to: session
@@ -25,6 +25,7 @@ final class RateLimitReaderTests: XCTestCase {
         XCTAssertEqual(first.count, 1)
         XCTAssertEqual(first.first?.primaryUsedPercent, 82)
         XCTAssertEqual(first.first?.primaryWindowMinutes, 300)
+        XCTAssertEqual(first.first?.planType, "pro")
         XCTAssertEqual(first.first?.secondaryUsedPercent, 41)
         XCTAssertEqual(first.first?.secondaryWindowMinutes, 10_080)
         XCTAssertEqual(first.first?.primaryResetsAt, Date(timeIntervalSince1970: 1_776_409_393))
@@ -256,6 +257,7 @@ final class RateLimitReaderTests: XCTestCase {
 
     func testObservationCanConvertToAccountQuotaState() throws {
         let observation = RateLimitObservation(
+            planType: "pro",
             primaryUsedPercent: 82,
             primaryWindowMinutes: 300,
             primaryResetsAt: Date(timeIntervalSince1970: 1_776_409_393),
@@ -270,6 +272,7 @@ final class RateLimitReaderTests: XCTestCase {
 
         XCTAssertEqual(state.accountId, "account-1")
         XCTAssertEqual(state.alias, "Main")
+        XCTAssertEqual(state.planType, "pro")
         XCTAssertEqual(state.primaryUsedPercent, 82)
         XCTAssertEqual(state.confidence, .fresh)
     }

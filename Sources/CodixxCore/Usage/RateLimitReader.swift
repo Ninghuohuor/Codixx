@@ -1,6 +1,7 @@
 import Foundation
 
 public struct RateLimitObservation: Codable, Equatable, Sendable {
+    public var planType: String?
     public var primaryUsedPercent: Double
     public var primaryWindowMinutes: Int
     public var primaryResetsAt: Date
@@ -11,6 +12,7 @@ public struct RateLimitObservation: Codable, Equatable, Sendable {
     public var sourceFile: String
 
     public init(
+        planType: String? = nil,
         primaryUsedPercent: Double,
         primaryWindowMinutes: Int,
         primaryResetsAt: Date,
@@ -20,6 +22,7 @@ public struct RateLimitObservation: Codable, Equatable, Sendable {
         observedAt: Date,
         sourceFile: String
     ) {
+        self.planType = planType
         self.primaryUsedPercent = primaryUsedPercent
         self.primaryWindowMinutes = primaryWindowMinutes
         self.primaryResetsAt = primaryResetsAt
@@ -34,6 +37,7 @@ public struct RateLimitObservation: Codable, Equatable, Sendable {
         AccountQuotaState(
             accountId: accountId,
             alias: alias,
+            planType: planType,
             primaryUsedPercent: primaryUsedPercent,
             primaryWindowMinutes: primaryWindowMinutes,
             primaryResetsAt: primaryResetsAt,
@@ -141,6 +145,7 @@ public struct RateLimitReader {
         }
 
         return RateLimitObservation(
+            planType: rateLimits.planType,
             primaryUsedPercent: rateLimits.primary.usedPercent,
             primaryWindowMinutes: rateLimits.primary.windowMinutes,
             primaryResetsAt: Date(timeIntervalSince1970: TimeInterval(rateLimits.primary.resetsAt)),
@@ -260,8 +265,15 @@ private struct RateLimitPayloadInfo: Decodable {
 }
 
 private struct RateLimits: Decodable {
+    var planType: String?
     var primary: RateLimitWindow
     var secondary: RateLimitWindow
+
+    enum CodingKeys: String, CodingKey {
+        case planType = "plan_type"
+        case primary
+        case secondary
+    }
 }
 
 private struct RateLimitWindow: Decodable {

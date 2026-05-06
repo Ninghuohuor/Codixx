@@ -23,20 +23,51 @@ struct QuotaView: View {
                     .monospacedDigit()
             }
 
-            ProgressView(value: primaryProgress)
-                .tint(progressTint)
+            quotaProgress(
+                title: strings.fiveHourQuota,
+                percentText: primaryPercentText,
+                resetText: resetText,
+                progress: primaryProgress,
+                tint: progressTint
+            )
 
-            HStack {
-                Label(secondaryPercentText, systemImage: "timer")
-                Spacer()
-                Label(resetText, systemImage: "clock")
-            }
-            .font(.caption)
-            .foregroundStyle(.secondary)
+            quotaProgress(
+                title: strings.weeklyQuota,
+                percentText: secondaryPercentText,
+                resetText: weeklyResetText,
+                progress: secondaryProgress,
+                tint: secondaryProgressTint
+            )
         }
         .padding(14)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 8))
+    }
+
+    private func quotaProgress(
+        title: String,
+        percentText: String,
+        resetText: String,
+        progress: Double,
+        tint: Color
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack {
+                Text(title)
+                Spacer()
+                Text(percentText)
+                    .monospacedDigit()
+            }
+            .font(.caption)
+            .foregroundStyle(.secondary)
+
+            ProgressView(value: progress)
+                .tint(tint)
+
+            Label(resetText, systemImage: "clock")
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+        }
     }
 
     private var quota: AccountQuotaState? {
@@ -45,6 +76,10 @@ struct QuotaView: View {
 
     private var primaryProgress: Double {
         min(max((quota?.primaryUsedPercent ?? 0) / 100, 0), 1)
+    }
+
+    private var secondaryProgress: Double {
+        min(max((quota?.secondaryUsedPercent ?? 0) / 100, 0), 1)
     }
 
     private var primaryPercentText: String {
@@ -60,6 +95,11 @@ struct QuotaView: View {
     private var resetText: String {
         guard let date = quota?.primaryResetsAt else { return strings.resetUnknown }
         return strings.resets(date)
+    }
+
+    private var weeklyResetText: String {
+        guard let date = quota?.secondaryResetsAt else { return strings.resetUnknown }
+        return strings.weeklyResets(date)
     }
 
     private var confidenceText: String {
@@ -91,5 +131,10 @@ struct QuotaView: View {
     private var progressTint: Color {
         guard let used = quota?.primaryUsedPercent else { return .secondary }
         return used >= config.primaryThresholdPercent ? .orange : .accentColor
+    }
+
+    private var secondaryProgressTint: Color {
+        guard let used = quota?.secondaryUsedPercent else { return .secondary }
+        return used >= 100 ? .red : .green
     }
 }

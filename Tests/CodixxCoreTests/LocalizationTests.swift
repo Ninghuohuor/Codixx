@@ -15,6 +15,7 @@ final class LocalizationTests: XCTestCase {
         XCTAssertEqual(strings.savedCurrentAccount(alias: "Main"), "Saved Main.")
         XCTAssertEqual(strings.couldNotSaveCurrentAccount("Missing token"), "Could not save current account: Missing token")
         XCTAssertEqual(strings.switchSuccessTitle(target: "Main"), "Switched to Main")
+        XCTAssertEqual(strings.addAccount, "Add Account")
         XCTAssertEqual(strings.logs, "Logs")
         XCTAssertEqual(strings.switchTriggerLabel(.autoPrimaryThreshold), "Automatic")
         XCTAssertEqual(strings.switchTriggerLabel(.manual), "Manual")
@@ -31,6 +32,11 @@ final class LocalizationTests: XCTestCase {
         XCTAssertEqual(strings.minutesInterval(5), "5m")
         XCTAssertEqual(strings.activeThread, "Active thread")
         XCTAssertEqual(strings.noActiveThread, "No active thread")
+        XCTAssertEqual(strings.fiveHourQuota, "5-hour quota")
+        XCTAssertEqual(strings.weeklyQuota, "Weekly quota")
+        XCTAssertEqual(strings.todayTokens, "Today")
+        XCTAssertEqual(strings.yesterdayTokens, "Yesterday")
+        XCTAssertEqual(strings.membership, "Membership")
     }
 
     func testChineseStringsExplainUnsavedCurrentAccount() {
@@ -46,6 +52,7 @@ final class LocalizationTests: XCTestCase {
         XCTAssertEqual(strings.savedCurrentAccount(alias: "Main"), "已保存 Main。")
         XCTAssertEqual(strings.couldNotSaveCurrentAccount("缺少令牌"), "无法保存当前账号：缺少令牌")
         XCTAssertEqual(strings.switchSuccessTitle(target: "Main"), "已切换到 Main")
+        XCTAssertEqual(strings.addAccount, "添加账号")
         XCTAssertEqual(strings.logs, "日志")
         XCTAssertEqual(strings.switchTriggerLabel(.autoPrimaryThreshold), "自动切换")
         XCTAssertEqual(strings.switchTriggerLabel(.manual), "手动切换")
@@ -62,5 +69,10 @@ final class LocalizationTests: XCTestCase {
         XCTAssertEqual(strings.minutesInterval(5), "5 分钟")
         XCTAssertEqual(strings.activeThread, "活跃会话")
         XCTAssertEqual(strings.noActiveThread, "暂无活跃会话")
+        XCTAssertEqual(strings.fiveHourQuota, "5 小时额度")
+        XCTAssertEqual(strings.weeklyQuota, "周额度")
+        XCTAssertEqual(strings.todayTokens, "今日 token 用量")
+        XCTAssertEqual(strings.yesterdayTokens, "昨日 token 用量")
+        XCTAssertEqual(strings.membership, "会员")
     }
 }

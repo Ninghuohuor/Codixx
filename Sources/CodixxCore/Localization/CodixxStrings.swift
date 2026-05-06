@@ -16,6 +16,7 @@ public struct CodixxStrings: Sendable {
     public var quitCodixx: String { text(en: "Quit Codixx", zh: "退出 Codixx") }
     public var notRefreshedYet: String { text(en: "Not refreshed yet", zh: "尚未刷新") }
     public var saveCurrentAuth: String { text(en: "Save Current Auth", zh: "保存当前登录") }
+    public var addAccount: String { text(en: "Add Account", zh: "添加账号") }
     public var alias: String { text(en: "Alias", zh: "别名") }
     public var save: String { text(en: "Save", zh: "保存") }
     public var saveCurrentCodexAuth: String { text(en: "Save current Codex auth", zh: "保存当前 Codex 登录") }
@@ -25,6 +26,11 @@ public struct CodixxStrings: Sendable {
     public var switchToThisAccount: String { text(en: "Switch to this account", zh: "切换到这个账号") }
     public var renameAccount: String { text(en: "Rename account", zh: "重命名账号") }
     public var deleteAccount: String { text(en: "Delete account", zh: "删除账号") }
+    public var membership: String { text(en: "Membership", zh: "会员") }
+    public var membershipExpires: String { text(en: "Membership expires", zh: "会员到期") }
+    public var setMembershipExpiration: String { text(en: "Set expiration", zh: "设置到期") }
+    public var clearMembershipExpiration: String { text(en: "Clear expiration", zh: "清除到期") }
+    public var neverExpires: String { text(en: "No expiration set", zh: "未设置到期时间") }
     public var enabled: String { text(en: "Enabled", zh: "启用") }
     public var autoSwitch: String { text(en: "Auto switch", zh: "自动切换") }
     public var autoSwitchNeedsTwoAccounts: String {
@@ -55,6 +61,8 @@ public struct CodixxStrings: Sendable {
     public var errorSummaryLabel: String { text(en: "Error", zh: "错误") }
     public var backupPathLabel: String { text(en: "Backup", zh: "备份") }
     public var total: String { text(en: "Total", zh: "总量") }
+    public var todayTokens: String { text(en: "Today", zh: "今日 token 用量") }
+    public var yesterdayTokens: String { text(en: "Yesterday", zh: "昨日 token 用量") }
     public var threads: String { text(en: "Threads", zh: "会话") }
     public var tokens: String { text(en: "Tokens", zh: "Token") }
     public var day: String { text(en: "Day", zh: "日期") }
@@ -70,6 +78,9 @@ public struct CodixxStrings: Sendable {
     }
     public var weeklyUnknown: String { text(en: "Weekly quota --", zh: "每周额度 --") }
     public var resetUnknown: String { text(en: "Reset unknown", zh: "重置时间未知") }
+    public var fiveHourQuota: String { text(en: "5-hour quota", zh: "5 小时额度") }
+    public var weeklyQuota: String { text(en: "Weekly quota", zh: "周额度") }
+    public var unknownPlan: String { text(en: "Unknown plan", zh: "未知会员") }
     public var freshQuota: String { text(en: "Fresh quota", zh: "额度信息新鲜") }
     public var recentQuota: String { text(en: "Recent quota", zh: "额度信息较新") }
     public var staleQuota: String { text(en: "Stale quota", zh: "额度信息已过期") }
@@ -122,6 +133,20 @@ public struct CodixxStrings: Sendable {
         text(
             en: "5-hour resets \(date.formatted(date: .omitted, time: .shortened))",
             zh: "5 小时 \(date.formatted(date: .omitted, time: .shortened)) 重置"
+        )
+    }
+
+    public func weeklyResets(_ date: Date) -> String {
+        text(
+            en: "Weekly resets \(date.formatted(date: .omitted, time: .shortened))",
+            zh: "周额度 \(date.formatted(date: .omitted, time: .shortened)) 重置"
+        )
+    }
+
+    public func expires(_ date: Date) -> String {
+        text(
+            en: "Expires \(date.formatted(date: .abbreviated, time: .omitted))",
+            zh: "\(date.formatted(date: .abbreviated, time: .omitted)) 到期"
         )
     }
 

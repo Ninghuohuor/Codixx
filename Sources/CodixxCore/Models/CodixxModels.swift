@@ -18,6 +18,7 @@ public enum QuotaConfidence: String, Codable, Sendable {
 public struct AccountQuotaState: Codable, Equatable, Sendable {
     public var accountId: String
     public var alias: String
+    public var planType: String?
     public var primaryUsedPercent: Double?
     public var primaryWindowMinutes: Int?
     public var primaryResetsAt: Date?
@@ -30,6 +31,7 @@ public struct AccountQuotaState: Codable, Equatable, Sendable {
     public init(
         accountId: String,
         alias: String,
+        planType: String? = nil,
         primaryUsedPercent: Double?,
         primaryWindowMinutes: Int?,
         primaryResetsAt: Date?,
@@ -41,6 +43,7 @@ public struct AccountQuotaState: Codable, Equatable, Sendable {
     ) {
         self.accountId = accountId
         self.alias = alias
+        self.planType = planType
         self.primaryUsedPercent = primaryUsedPercent
         self.primaryWindowMinutes = primaryWindowMinutes
         self.primaryResetsAt = primaryResetsAt
@@ -55,6 +58,7 @@ public struct AccountQuotaState: Codable, Equatable, Sendable {
         AccountQuotaState(
             accountId: accountId,
             alias: alias,
+            planType: nil,
             primaryUsedPercent: nil,
             primaryWindowMinutes: nil,
             primaryResetsAt: nil,
@@ -74,6 +78,7 @@ public struct CodixxAccount: Codable, Identifiable, Equatable, Sendable {
     public var createdAt: Date
     public var updatedAt: Date
     public var lastUsedAt: Date?
+    public var membershipExpiresAt: Date?
     public var quota: AccountQuotaState
     public var isEnabled: Bool
     public var priority: Int
@@ -85,6 +90,7 @@ public struct CodixxAccount: Codable, Identifiable, Equatable, Sendable {
         createdAt: Date,
         updatedAt: Date,
         lastUsedAt: Date?,
+        membershipExpiresAt: Date? = nil,
         quota: AccountQuotaState,
         isEnabled: Bool,
         priority: Int
@@ -95,6 +101,7 @@ public struct CodixxAccount: Codable, Identifiable, Equatable, Sendable {
         self.createdAt = createdAt
         self.updatedAt = updatedAt
         self.lastUsedAt = lastUsedAt
+        self.membershipExpiresAt = membershipExpiresAt
         self.quota = quota
         self.isEnabled = isEnabled
         self.priority = priority
