@@ -108,35 +108,85 @@ public struct SwitchAuditLog {
     }
 
     private func loadEventsWithoutPruning() throws -> [SwitchAuditEvent] {
-        guard fileManager.fileExists(atPath: paths.switchAuditJSONL.path) else { return [] }
-        let data = try Data(contentsOf: paths.switchAuditJSONL)
-        guard let text = String(data: data, encoding: .utf8) else { return [] }
-        return text
-            .split(separator: "\n", omittingEmptySubsequences: true)
-            .compactMap { line in
-                try? decoder.decode(SwitchAuditEvent.self, from: Data(line.utf8))
+        var events: [SwitchAuditEvent] = []
+        for url in logURLsForLoading() {
+            guard fileManager.fileExists(atPath: url.path) else { continue }
+            let data = try Data(contentsOf: url)
+            guard let text = String(data: data, encoding: .utf8) else { continue }
+            events.append(contentsOf: text
+                .split(separator: "\n", omittingEmptySubsequences: true)
+                .compactMap { line in
+                    try? decoder.decode(SwitchAuditEvent.self, from: Data(line.utf8))
+                }
+            )
+        }
+        return events.sorted { $0.timestamp < $1.timestamp }
+    }
+
+    private func logURLsForLoading() -> [URL] {
+        [3, 2, 1].map { historyURL(index: $0) } + [paths.switchAuditJSONL]
+    }
+
+    private func historyURL(index: Int) -> URL {
+        paths.applicationSupport.appendingPathComponent("switch_audit.\(index).jsonl")
+    }
+
+    private func logURLsForWriting() -> [URL] {
+        [paths.switchAuditJSONL] + (1...3).map { historyURL(index: $0) }
+    }
+
+    private func deleteAllLogFiles() throws {
+        for url in logURLsForWriting() {
+            if fileManager.fileExists(atPath: url.path) {
+                try fileManager.removeItem(at: url)
             }
+        }
     }
 
     private func prune(existingEvents: [SwitchAuditEvent]) throws {
         let cutoff = retention.now().addingTimeInterval(-retention.maximumAge)
-        var retained = existingEvents
+        let retained = existingEvents
             .filter { $0.timestamp >= cutoff }
             .sorted { $0.timestamp < $1.timestamp }
 
-        while encodedByteCount(for: retained) > retention.maximumBytes, retained.count > 1 {
-            retained.removeFirst()
-        }
-
         if retained.isEmpty {
-            if fileManager.fileExists(atPath: paths.switchAuditJSONL.path) {
-                try fileManager.removeItem(at: paths.switchAuditJSONL)
-            }
+            try deleteAllLogFiles()
             return
         }
 
-        let data = try encodedData(for: retained)
-        try SecureFilePermissions.writeOwnerOnlyFile(data, to: paths.switchAuditJSONL, fileManager: fileManager)
+        let chunks = Array(chunksWithinMaximumSize(for: retained).suffix(4))
+        let chunksForURLs = Array(chunks.reversed())
+        let urls = logURLsForWriting()
+
+        for (index, url) in urls.enumerated() {
+            if index < chunksForURLs.count {
+                let data = try encodedData(for: chunksForURLs[index])
+                try SecureFilePermissions.writeOwnerOnlyFile(data, to: url, fileManager: fileManager)
+            } else if fileManager.fileExists(atPath: url.path) {
+                try fileManager.removeItem(at: url)
+            }
+        }
+    }
+
+    private func chunksWithinMaximumSize(for events: [SwitchAuditEvent]) -> [[SwitchAuditEvent]] {
+        var chunks: [[SwitchAuditEvent]] = []
+        var currentChunk: [SwitchAuditEvent] = []
+
+        for event in events {
+            let candidate = currentChunk + [event]
+            if !currentChunk.isEmpty, encodedByteCount(for: candidate) > retention.maximumBytes {
+                chunks.append(currentChunk)
+                currentChunk = [event]
+            } else {
+                currentChunk = candidate
+            }
+        }
+
+        if !currentChunk.isEmpty {
+            chunks.append(currentChunk)
+        }
+
+        return chunks
     }
 
     private func encodedByteCount(for events: [SwitchAuditEvent]) -> Int {

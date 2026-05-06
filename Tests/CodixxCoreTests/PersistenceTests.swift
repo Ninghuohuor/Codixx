@@ -180,6 +180,31 @@ final class PersistenceTests: XCTestCase {
         XCTAssertEqual(loaded.last?.targetAlias, "Account 19")
     }
 
+    func testSwitchAuditLogRotatesToThreeHistoryFiles() throws {
+        let tempHome = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: tempHome) }
+        let paths = CodixxPaths(home: tempHome)
+        let log = SwitchAuditLog(paths: paths, retention: .init(maximumBytes: 900, now: { Date(timeIntervalSince1970: 1_000) }))
+
+        for index in 0..<30 {
+            try log.append(event(timestamp: Date(timeIntervalSince1970: Double(index)), alias: "Account \(index)"))
+        }
+
+        let historyURLs = (1...3).map { switchAuditHistoryURL(paths: paths, index: $0) }
+        let staleHistoryURL = switchAuditHistoryURL(paths: paths, index: 4)
+        let loaded = try log.loadEvents()
+
+        XCTAssertTrue(FileManager.default.fileExists(atPath: historyURLs[0].path))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: historyURLs[1].path))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: historyURLs[2].path))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: staleHistoryURL.path))
+        XCTAssertLessThanOrEqual(try Data(contentsOf: paths.switchAuditJSONL).count, 900)
+        for historyURL in historyURLs {
+            XCTAssertLessThanOrEqual(try Data(contentsOf: historyURL).count, 900)
+        }
+        XCTAssertEqual(loaded.last?.targetAlias, "Account 29")
+    }
+
     private func event(timestamp: Date, alias: String) -> SwitchAuditEvent {
         SwitchAuditEvent(
             timestamp: timestamp,
@@ -195,5 +220,9 @@ final class PersistenceTests: XCTestCase {
             errorSummary: nil,
             backupPath: nil
         )
+    }
+
+    private func switchAuditHistoryURL(paths: CodixxPaths, index: Int) -> URL {
+        paths.applicationSupport.appendingPathComponent("switch_audit.\(index).jsonl")
     }
 }
