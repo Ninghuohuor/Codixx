@@ -7,6 +7,7 @@ public enum AccountStoreError: Error, Equatable, LocalizedError {
     case missingFingerprintSource
     case snapshotNotFound(String)
     case keychainError(String)
+    case accountNotFound(UUID)
 
     public var errorDescription: String? {
         switch self {
@@ -22,6 +23,8 @@ public enum AccountStoreError: Error, Equatable, LocalizedError {
             return "No auth snapshot exists for fingerprint \(fingerprint)"
         case .keychainError(let message):
             return "Keychain operation failed. \(message)"
+        case .accountNotFound(let id):
+            return "No account exists with id \(id.uuidString)"
         }
     }
 }
@@ -83,5 +86,30 @@ public struct AccountStore {
         metadata.accounts.append(account)
         try metadataStore.save(metadata)
         return account
+    }
+
+    public func renameAccount(_ id: UUID, alias: String) throws -> CodixxAccount {
+        var metadata = try metadataStore.load()
+        guard let index = metadata.accounts.firstIndex(where: { $0.id == id }) else {
+            throw AccountStoreError.accountNotFound(id)
+        }
+
+        let trimmedAlias = alias.trimmingCharacters(in: .whitespacesAndNewlines)
+        metadata.accounts[index].alias = trimmedAlias.isEmpty ? metadata.accounts[index].alias : trimmedAlias
+        metadata.accounts[index].quota.alias = metadata.accounts[index].alias
+        metadata.accounts[index].updatedAt = now()
+        try metadataStore.save(metadata)
+        return metadata.accounts[index]
+    }
+
+    public func deleteAccount(_ id: UUID) throws {
+        var metadata = try metadataStore.load()
+        guard let index = metadata.accounts.firstIndex(where: { $0.id == id }) else {
+            throw AccountStoreError.accountNotFound(id)
+        }
+
+        let account = metadata.accounts.remove(at: index)
+        try vault.delete(fingerprint: account.fingerprint)
+        try metadataStore.save(metadata)
     }
 }

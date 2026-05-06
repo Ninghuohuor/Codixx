@@ -4,11 +4,22 @@ import CodixxCore
 struct AccountListView: View {
     @ObservedObject var state: AppState
     @State private var newAlias = ""
+    @State private var editedAliases: [UUID: String] = [:]
 
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 14) {
                 saveCurrentAccount
+
+                if !state.canEnableAutoSwitch {
+                    Label(state.strings.autoSwitchNeedsTwoAccounts, systemImage: "person.crop.circle.badge.plus")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .padding(10)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .background(Color.blue.opacity(0.08), in: RoundedRectangle(cornerRadius: 8))
+                }
 
                 Text(state.strings.accounts)
                     .font(.headline)
@@ -60,9 +71,23 @@ struct AccountListView: View {
         VStack(alignment: .leading, spacing: 10) {
             HStack(alignment: .firstTextBaseline) {
                 VStack(alignment: .leading, spacing: 3) {
-                    HStack(spacing: 6) {
-                        Text(account.alias)
-                            .font(.headline)
+                    HStack(spacing: 8) {
+                        TextField(state.strings.alias, text: Binding(
+                            get: { editedAliases[account.id] ?? account.alias },
+                            set: { editedAliases[account.id] = $0 }
+                        ))
+                        .textFieldStyle(.roundedBorder)
+
+                        Button {
+                            state.renameAccount(account, alias: editedAliases[account.id] ?? account.alias)
+                            editedAliases[account.id] = nil
+                        } label: {
+                            Label(state.strings.renameAccount, systemImage: "checkmark")
+                        }
+                        .labelStyle(.iconOnly)
+                        .help(state.strings.renameAccount)
+                        .disabled((editedAliases[account.id] ?? account.alias).trimmingCharacters(in: .whitespacesAndNewlines) == account.alias)
+
                         if account.id == state.currentAccount?.id {
                             Text(state.strings.current)
                                 .font(.caption2.weight(.semibold))
@@ -83,6 +108,15 @@ struct AccountListView: View {
                 }
                 .disabled(account.id == state.currentAccount?.id)
                 .help(state.strings.switchToThisAccount)
+
+                Button(role: .destructive) {
+                    state.deleteAccount(account)
+                    editedAliases[account.id] = nil
+                } label: {
+                    Label(state.strings.deleteAccount, systemImage: "trash")
+                }
+                .labelStyle(.iconOnly)
+                .help(state.strings.deleteAccount)
             }
 
             HStack {

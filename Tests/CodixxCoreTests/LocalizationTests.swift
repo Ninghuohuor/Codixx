@@ -22,6 +22,13 @@ final class LocalizationTests: XCTestCase {
         XCTAssertEqual(strings.switchResultLabel(.failedValidation), "Validation failed")
         XCTAssertEqual(strings.errorSummaryLabel, "Error")
         XCTAssertEqual(strings.backupPathLabel, "Backup")
+        XCTAssertEqual(strings.renameAccount, "Rename account")
+        XCTAssertEqual(strings.deleteAccount, "Delete account")
+        XCTAssertEqual(strings.autoSwitchNeedsTwoAccounts, "Save a second enabled account to use auto switch.")
+        XCTAssertEqual(strings.quotaRefresh, "Quota refresh")
+        XCTAssertEqual(strings.usageRefresh, "Usage refresh")
+        XCTAssertEqual(strings.secondsInterval(60), "60s")
+        XCTAssertEqual(strings.minutesInterval(5), "5m")
     }
 
     func testChineseStringsExplainUnsavedCurrentAccount() {
@@ -44,5 +51,12 @@ final class LocalizationTests: XCTestCase {
         XCTAssertEqual(strings.switchResultLabel(.failedValidation), "校验失败")
         XCTAssertEqual(strings.errorSummaryLabel, "错误")
         XCTAssertEqual(strings.backupPathLabel, "备份")
+        XCTAssertEqual(strings.renameAccount, "重命名账号")
+        XCTAssertEqual(strings.deleteAccount, "删除账号")
+        XCTAssertEqual(strings.autoSwitchNeedsTwoAccounts, "请先保存第二个已启用账号，再使用自动切换。")
+        XCTAssertEqual(strings.quotaRefresh, "额度刷新")
+        XCTAssertEqual(strings.usageRefresh, "用量刷新")
+        XCTAssertEqual(strings.secondsInterval(60), "60 秒")
+        XCTAssertEqual(strings.minutesInterval(5), "5 分钟")
     }
 }

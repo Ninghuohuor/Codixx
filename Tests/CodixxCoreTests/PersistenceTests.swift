@@ -15,6 +15,20 @@ final class PersistenceTests: XCTestCase {
         XCTAssertTrue(FileManager.default.fileExists(atPath: paths.logs.path))
     }
 
+    func testPathsChooseHighestVersionCodexStateDatabase() throws {
+        let tempHome = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: tempHome) }
+        let paths = CodixxPaths(home: tempHome)
+        try FileManager.default.createDirectory(at: paths.codexHome, withIntermediateDirectories: true)
+        try Data().write(to: paths.codexHome.appendingPathComponent("state_5.sqlite"))
+        try Data().write(to: paths.codexHome.appendingPathComponent("state_6.sqlite"))
+        try Data().write(to: paths.codexHome.appendingPathComponent("state_notes.sqlite"))
+
+        let selectedURL = paths.latestStateDatabaseURL()
+
+        XCTAssertEqual(selectedURL.lastPathComponent, "state_6.sqlite")
+    }
+
     func testConfigStoreLoadsDefaultConfigWhenFileIsAbsent() throws {
         let tempHome = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
         defer { try? FileManager.default.removeItem(at: tempHome) }

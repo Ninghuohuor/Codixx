@@ -70,6 +70,54 @@ final class AccountStoreTests: XCTestCase {
         }
     }
 
+    func testRenameAccountUpdatesAliasAndQuotaAlias() throws {
+        let home = try makeTempHome()
+        defer { try? FileManager.default.removeItem(at: home) }
+        let paths = CodixxPaths(home: home)
+        try FileManager.default.createDirectory(at: paths.codexHome, withIntermediateDirectories: true)
+        try Data(#"{"account_id":"acct_main","access_token":"secret"}"#.utf8).write(to: paths.authJSON)
+        let store = AccountStore(
+            paths: paths,
+            metadataStore: AccountMetadataStore(paths: paths),
+            vault: InMemoryAuthSnapshotVault(),
+            now: { Date(timeIntervalSince1970: 200) },
+            idGenerator: { UUID(uuidString: "11111111-1111-1111-1111-111111111111")! }
+        )
+        let account = try store.saveCurrentAuth(alias: "Main")
+
+        let renamed = try store.renameAccount(account.id, alias: "Work")
+        let metadata = try AccountMetadataStore(paths: paths).load()
+
+        XCTAssertEqual(renamed.alias, "Work")
+        XCTAssertEqual(renamed.quota.alias, "Work")
+        XCTAssertEqual(renamed.updatedAt, Date(timeIntervalSince1970: 200))
+        XCTAssertEqual(metadata.accounts.first?.alias, "Work")
+        XCTAssertEqual(metadata.accounts.first?.quota.alias, "Work")
+    }
+
+    func testDeleteAccountRemovesMetadataAndSnapshot() throws {
+        let home = try makeTempHome()
+        defer { try? FileManager.default.removeItem(at: home) }
+        let paths = CodixxPaths(home: home)
+        try FileManager.default.createDirectory(at: paths.codexHome, withIntermediateDirectories: true)
+        try Data(#"{"account_id":"acct_main","access_token":"secret"}"#.utf8).write(to: paths.authJSON)
+        let vault = InMemoryAuthSnapshotVault()
+        let store = AccountStore(
+            paths: paths,
+            metadataStore: AccountMetadataStore(paths: paths),
+            vault: vault,
+            now: { Date(timeIntervalSince1970: 200) },
+            idGenerator: { UUID(uuidString: "11111111-1111-1111-1111-111111111111")! }
+        )
+        let account = try store.saveCurrentAuth(alias: "Main")
+
+        try store.deleteAccount(account.id)
+        let metadata = try AccountMetadataStore(paths: paths).load()
+
+        XCTAssertEqual(metadata.accounts, [])
+        XCTAssertNil(vault.snapshotDataByFingerprint[account.fingerprint])
+    }
+
     private func makeTempHome() throws -> URL {
         let home = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
         try FileManager.default.createDirectory(at: home, withIntermediateDirectories: true)

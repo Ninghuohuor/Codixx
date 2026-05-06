@@ -23,6 +23,14 @@ struct SettingsView: View {
                 get: { state.config.autoSwitchEnabled },
                 set: { state.setAutoSwitchEnabled($0) }
             ))
+            .disabled(!state.canEnableAutoSwitch)
+
+            if !state.canEnableAutoSwitch {
+                Label(state.strings.autoSwitchNeedsTwoAccounts, systemImage: "person.crop.circle.badge.plus")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
 
             Toggle(state.strings.notifications, isOn: Binding(
                 get: { state.config.notificationsEnabled },
@@ -47,6 +55,26 @@ struct SettingsView: View {
                 )
             }
 
+            Stepper(
+                "\(state.strings.quotaRefresh): \(state.strings.secondsInterval(Int(state.config.quotaRefreshIntervalSeconds)))",
+                value: Binding(
+                    get: { state.config.quotaRefreshIntervalSeconds },
+                    set: { state.setQuotaRefreshIntervalSeconds($0) }
+                ),
+                in: 30...600,
+                step: 30
+            )
+
+            Stepper(
+                "\(state.strings.usageRefresh): \(state.strings.minutesInterval(Int(state.config.usageRefreshIntervalSeconds / 60)))",
+                value: Binding(
+                    get: { state.config.usageRefreshIntervalSeconds },
+                    set: { state.setUsageRefreshIntervalSeconds($0) }
+                ),
+                in: 60...1_800,
+                step: 60
+            )
+
             Divider()
 
             VStack(alignment: .leading, spacing: 4) {
@@ -58,6 +86,11 @@ struct SettingsView: View {
                     .textSelection(.enabled)
                     .lineLimit(2)
             }
+
+            Label(state.strings.restartCodexHint, systemImage: "arrow.clockwise.circle")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
         }
     }
 }

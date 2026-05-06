@@ -30,4 +30,27 @@ public struct CodixxPaths: Sendable {
         try SecureFilePermissions.secureDirectory(backups, fileManager: fileManager)
         try SecureFilePermissions.secureDirectory(logs, fileManager: fileManager)
     }
+
+    public func latestStateDatabaseURL(fileManager: FileManager = .default) -> URL {
+        let fallback = codexHome.appendingPathComponent("state_5.sqlite")
+        guard let entries = try? fileManager.contentsOfDirectory(
+            at: codexHome,
+            includingPropertiesForKeys: nil
+        ) else {
+            return fallback
+        }
+
+        return entries
+            .compactMap { url -> (version: Int, url: URL)? in
+                let name = url.lastPathComponent
+                guard name.hasPrefix("state_"), name.hasSuffix(".sqlite") else { return nil }
+                let versionText = name
+                    .dropFirst("state_".count)
+                    .dropLast(".sqlite".count)
+                guard let version = Int(versionText) else { return nil }
+                return (version, url)
+            }
+            .max { $0.version < $1.version }?
+            .url ?? fallback
+    }
 }

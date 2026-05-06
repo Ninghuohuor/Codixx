@@ -50,7 +50,7 @@ final class AppState: ObservableObject {
         self.configStore = CodixxConfigStore(paths: paths)
         self.metadataStore = AccountMetadataStore(paths: paths)
         self.rateLimitReader = RateLimitReader(paths: paths)
-        self.threadUsageReader = ThreadUsageReader(databaseURL: paths.codexHome.appendingPathComponent("state_5.sqlite"))
+        self.threadUsageReader = ThreadUsageReader(databaseURL: paths.latestStateDatabaseURL())
         self.auditLog = SwitchAuditLog(paths: paths)
         self.accountStore = AccountStore(paths: paths, metadataStore: metadataStore, vault: vault, now: now)
         self.switcher = AccountSwitcher(
@@ -84,6 +84,10 @@ final class AppState: ObservableObject {
     var candidateAccounts: [CodixxAccount] {
         SwitchPolicy(primaryThresholdPercent: config.primaryThresholdPercent)
             .orderedCandidates(from: accounts.filter { $0.id != currentAccount?.id }, snapshotExists: hasSnapshot)
+    }
+
+    var canEnableAutoSwitch: Bool {
+        accounts.filter(\.isEnabled).count >= 2
     }
 
     var strings: CodixxStrings {
@@ -272,8 +276,36 @@ final class AppState: ObservableObject {
         }
     }
 
+    func renameAccount(_ account: CodixxAccount, alias: String) {
+        do {
+            _ = try accountStore.renameAccount(account.id, alias: alias)
+            refresh(
+                applyRateLimitObservations: false,
+                allowAutoSwitch: false,
+                preservingError: nil,
+                throttled: false
+            )
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    func deleteAccount(_ account: CodixxAccount) {
+        do {
+            try accountStore.deleteAccount(account.id)
+            refresh(
+                applyRateLimitObservations: false,
+                allowAutoSwitch: false,
+                preservingError: nil,
+                throttled: false
+            )
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
     func setAutoSwitchEnabled(_ isEnabled: Bool) {
-        updateConfig { $0.autoSwitchEnabled = isEnabled }
+        updateConfig { $0.autoSwitchEnabled = isEnabled && canEnableAutoSwitch }
     }
 
     func setNotificationsEnabled(_ isEnabled: Bool) {
@@ -282,6 +314,14 @@ final class AppState: ObservableObject {
 
     func setPrimaryThresholdPercent(_ percent: Double) {
         updateConfig { $0.primaryThresholdPercent = percent }
+    }
+
+    func setQuotaRefreshIntervalSeconds(_ seconds: TimeInterval) {
+        updateConfig { $0.quotaRefreshIntervalSeconds = seconds }
+    }
+
+    func setUsageRefreshIntervalSeconds(_ seconds: TimeInterval) {
+        updateConfig { $0.usageRefreshIntervalSeconds = seconds }
     }
 
     func setLanguage(_ language: CodixxLanguage) {

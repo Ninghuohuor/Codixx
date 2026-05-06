@@ -23,10 +23,20 @@ public struct CodixxStrings: Sendable {
     public var current: String { text(en: "Current", zh: "当前") }
     public var switchAccount: String { text(en: "Switch", zh: "切换") }
     public var switchToThisAccount: String { text(en: "Switch to this account", zh: "切换到这个账号") }
+    public var renameAccount: String { text(en: "Rename account", zh: "重命名账号") }
+    public var deleteAccount: String { text(en: "Delete account", zh: "删除账号") }
     public var enabled: String { text(en: "Enabled", zh: "启用") }
     public var autoSwitch: String { text(en: "Auto switch", zh: "自动切换") }
+    public var autoSwitchNeedsTwoAccounts: String {
+        text(
+            en: "Save a second enabled account to use auto switch.",
+            zh: "请先保存第二个已启用账号，再使用自动切换。"
+        )
+    }
     public var notifications: String { text(en: "Notifications", zh: "通知") }
     public var threshold: String { text(en: "Threshold", zh: "阈值") }
+    public var quotaRefresh: String { text(en: "Quota refresh", zh: "额度刷新") }
+    public var usageRefresh: String { text(en: "Usage refresh", zh: "用量刷新") }
     public var codexHome: String { text(en: "Codex Home", zh: "Codex 目录") }
     public var languageLabel: String { text(en: "Language", zh: "语言") }
     public var topThreads: String { text(en: "Top Threads", zh: "高用量会话") }
@@ -80,6 +90,20 @@ public struct CodixxStrings: Sendable {
         )
     }
     public var textForAutoSwitchPaused: String { text(en: "Auto switch has been paused.", zh: "已暂停自动切换。") }
+    public var restartCodexHint: String {
+        text(
+            en: "If a switched account does not take effect immediately, restart Codex or open a new thread to verify it.",
+            zh: "如果切换账号后没有立即生效，请重启 Codex 或新开线程验证。"
+        )
+    }
+
+    public func secondsInterval(_ seconds: Int) -> String {
+        text(en: "\(seconds)s", zh: "\(seconds) 秒")
+    }
+
+    public func minutesInterval(_ minutes: Int) -> String {
+        text(en: "\(minutes)m", zh: "\(minutes) 分钟")
+    }
 
     public func updated(_ date: Date) -> String {
         text(
