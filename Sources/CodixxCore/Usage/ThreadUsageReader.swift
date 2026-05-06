@@ -142,14 +142,8 @@ public struct ThreadUsageReader: Sendable {
     }
 
     private func makeThread(from statement: OpaquePointer) throws -> ThreadUsage {
-        let createdAtText = try requiredTextColumn(statement, index: 5, name: "created_at")
-        let updatedAtText = try requiredTextColumn(statement, index: 6, name: "updated_at")
-        guard
-            let createdAt = parseISO8601Date(createdAtText),
-            let updatedAt = parseISO8601Date(updatedAtText)
-        else {
-            throw ThreadUsageReaderError.incompatibleSchema("Invalid ISO8601 timestamp in threads table")
-        }
+        let createdAt = try requiredTimestampColumn(statement, index: 5, name: "created_at")
+        let updatedAt = try requiredTimestampColumn(statement, index: 6, name: "updated_at")
         let tokenType = sqlite3_column_type(statement, 4)
         guard tokenType == SQLITE_INTEGER else {
             throw ThreadUsageReaderError.incompatibleSchema("Invalid tokens_used value in threads table")
@@ -172,6 +166,26 @@ public struct ThreadUsageReader: Sendable {
             return ""
         }
         return String(cString: text)
+    }
+
+    private func requiredTimestampColumn(_ statement: OpaquePointer, index: Int32, name: String) throws -> Date {
+        let columnType = sqlite3_column_type(statement, index)
+        switch columnType {
+        case SQLITE_INTEGER:
+            let value = sqlite3_column_int64(statement, index)
+            let seconds = value > 10_000_000_000 ? TimeInterval(value) / 1_000 : TimeInterval(value)
+            return Date(timeIntervalSince1970: seconds)
+        case SQLITE_TEXT:
+            let text = try requiredTextColumn(statement, index: index, name: name)
+            guard let date = parseISO8601Date(text) else {
+                throw ThreadUsageReaderError.incompatibleSchema("Invalid timestamp in \(name) column")
+            }
+            return date
+        case SQLITE_NULL:
+            throw ThreadUsageReaderError.incompatibleSchema("Missing \(name) value in threads table")
+        default:
+            throw ThreadUsageReaderError.incompatibleSchema("Invalid \(name) timestamp type in threads table")
+        }
     }
 
     private func requiredTextColumn(_ statement: OpaquePointer, index: Int32, name: String) throws -> String {

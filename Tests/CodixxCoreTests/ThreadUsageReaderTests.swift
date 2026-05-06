@@ -89,6 +89,41 @@ final class ThreadUsageReaderTests: XCTestCase {
         XCTAssertEqual(snapshot.activeThread?.id, "fractional")
     }
 
+    func testReadsUnixSecondIntegerTimestamps() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let databaseURL = directory.appendingPathComponent("state_5.sqlite")
+        try createDatabase(
+            at: databaseURL,
+            timestampColumnType: "INTEGER",
+            inserts: [
+                """
+                INSERT INTO threads VALUES(
+                    'integer-time',
+                    'Integer Time',
+                    'codex',
+                    'openai',
+                    'gpt-5',
+                    'medium',
+                    42,
+                    1772881214,
+                    1773255277,
+                    '/tmp/integer.jsonl'
+                );
+                """
+            ]
+        )
+        let reader = ThreadUsageReader(databaseURL: databaseURL)
+
+        let snapshot = reader.readSnapshot(now: Date(timeIntervalSince1970: 1_773_255_300))
+
+        XCTAssertFalse(snapshot.isDegraded)
+        XCTAssertEqual(snapshot.threads.first?.createdAt, Date(timeIntervalSince1970: 1_772_881_214))
+        XCTAssertEqual(snapshot.threads.first?.updatedAt, Date(timeIntervalSince1970: 1_773_255_277))
+        XCTAssertEqual(snapshot.activeThread?.id, "integer-time")
+    }
+
     func testNullRequiredColumnsReturnDegradedSnapshot() throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
         defer { try? FileManager.default.removeItem(at: directory) }
@@ -192,7 +227,7 @@ final class ThreadUsageReaderTests: XCTestCase {
         XCTAssertEqual(process.terminationStatus, 0)
     }
 
-    private func createDatabase(at url: URL, inserts: [String]) throws {
+    private func createDatabase(at url: URL, timestampColumnType: String = "TEXT", inserts: [String]) throws {
         let createSQL = """
         CREATE TABLE threads(
             id TEXT PRIMARY KEY,
@@ -202,8 +237,8 @@ final class ThreadUsageReaderTests: XCTestCase {
             model TEXT,
             reasoning_effort TEXT,
             tokens_used INTEGER,
-            created_at TEXT,
-            updated_at TEXT,
+            created_at \(timestampColumnType),
+            updated_at \(timestampColumnType),
             rollout_path TEXT
         );
         """
