@@ -387,6 +387,9 @@ final class AppState: ObservableObject {
             alias: accounts[currentIndex].alias,
             now: timestamp
         )
+        if let membershipExpiresAt = observation.membershipExpiresAt {
+            accounts[currentIndex].membershipExpiresAt = membershipExpiresAt
+        }
         accounts[currentIndex].updatedAt = timestamp
         try metadataStore.save(AccountMetadataList(accounts: accounts))
     }

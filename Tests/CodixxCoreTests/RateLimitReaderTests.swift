@@ -26,11 +26,38 @@ final class RateLimitReaderTests: XCTestCase {
         XCTAssertEqual(first.first?.primaryUsedPercent, 82)
         XCTAssertEqual(first.first?.primaryWindowMinutes, 300)
         XCTAssertEqual(first.first?.planType, "pro")
+        XCTAssertNil(first.first?.membershipExpiresAt)
         XCTAssertEqual(first.first?.secondaryUsedPercent, 41)
         XCTAssertEqual(first.first?.secondaryWindowMinutes, 10_080)
         XCTAssertEqual(first.first?.primaryResetsAt, Date(timeIntervalSince1970: 1_776_409_393))
         XCTAssertEqual(cursorAfterFirst, Int64(try Data(contentsOf: session).count))
         XCTAssertEqual(second, [])
+    }
+
+    func testReadsMembershipExpirationFromRateLimits() throws {
+        let home = try makeTempHome()
+        defer { try? FileManager.default.removeItem(at: home) }
+        let paths = CodixxPaths(home: home)
+        let session = paths.codexHome.appendingPathComponent("sessions/2026/05/06/session.jsonl")
+        try writeJSONLLines(
+            [
+                """
+                {"timestamp":"2026-05-06T03:30:00Z","rate_limits":{"limit_id":"codex","plan_type":"pro","membership_expires_at":1779000000,"primary":{"used_percent":82.0,"window_minutes":300,"resets_at":1776409393},"secondary":{"used_percent":41.0,"window_minutes":10080,"resets_at":1776937959}}}
+                """,
+                """
+                {"timestamp":"2026-05-06T03:31:00Z","rate_limits":{"limit_id":"codex","plan_type":"team","subscription_expires_at":"2026-06-01T00:00:00Z","primary":{"used_percent":12.0,"window_minutes":300,"resets_at":1776409393},"secondary":{"used_percent":9.0,"window_minutes":10080,"resets_at":1776937959}}}
+                """
+            ],
+            to: session
+        )
+        let reader = RateLimitReader(paths: paths, cursorStore: ParseCursorStore(paths: paths))
+
+        let observations = try reader.readNewObservations()
+
+        XCTAssertEqual(observations.map(\.membershipExpiresAt), [
+            Date(timeIntervalSince1970: 1_779_000_000),
+            ISO8601DateFormatter().date(from: "2026-06-01T00:00:00Z")
+        ])
     }
 
     func testMalformedLineBeforeValidRateLimitIsSkippedAndCursorAdvances() throws {

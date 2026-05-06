@@ -2,6 +2,7 @@ import Foundation
 
 public struct RateLimitObservation: Codable, Equatable, Sendable {
     public var planType: String?
+    public var membershipExpiresAt: Date?
     public var primaryUsedPercent: Double
     public var primaryWindowMinutes: Int
     public var primaryResetsAt: Date
@@ -13,6 +14,7 @@ public struct RateLimitObservation: Codable, Equatable, Sendable {
 
     public init(
         planType: String? = nil,
+        membershipExpiresAt: Date? = nil,
         primaryUsedPercent: Double,
         primaryWindowMinutes: Int,
         primaryResetsAt: Date,
@@ -23,6 +25,7 @@ public struct RateLimitObservation: Codable, Equatable, Sendable {
         sourceFile: String
     ) {
         self.planType = planType
+        self.membershipExpiresAt = membershipExpiresAt
         self.primaryUsedPercent = primaryUsedPercent
         self.primaryWindowMinutes = primaryWindowMinutes
         self.primaryResetsAt = primaryResetsAt
@@ -146,6 +149,7 @@ public struct RateLimitReader {
 
         return RateLimitObservation(
             planType: rateLimits.planType,
+            membershipExpiresAt: rateLimits.membershipExpiresAt,
             primaryUsedPercent: rateLimits.primary.usedPercent,
             primaryWindowMinutes: rateLimits.primary.windowMinutes,
             primaryResetsAt: Date(timeIntervalSince1970: TimeInterval(rateLimits.primary.resetsAt)),
@@ -208,7 +212,7 @@ public struct RateLimitReader {
         return max(0, fileSize - maxReadBytes)
     }
 
-    private static func parseISO8601Date(_ text: String?) -> Date? {
+    fileprivate static func parseISO8601Date(_ text: String?) -> Date? {
         guard let text else { return nil }
 
         let wholeSecondFormatter = ISO8601DateFormatter()
@@ -266,13 +270,48 @@ private struct RateLimitPayloadInfo: Decodable {
 
 private struct RateLimits: Decodable {
     var planType: String?
+    var membershipExpiresAt: Date?
     var primary: RateLimitWindow
     var secondary: RateLimitWindow
 
     enum CodingKeys: String, CodingKey {
         case planType = "plan_type"
+        case membershipExpiresAt = "membership_expires_at"
+        case subscriptionExpiresAt = "subscription_expires_at"
+        case planExpiresAt = "plan_expires_at"
+        case expiresAt = "expires_at"
+        case currentPeriodEnd = "current_period_end"
         case primary
         case secondary
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.planType = try container.decodeIfPresent(String.self, forKey: .planType)
+        self.membershipExpiresAt = try Self.decodeFirstDate(
+            from: container,
+            keys: [
+                .membershipExpiresAt,
+                .subscriptionExpiresAt,
+                .planExpiresAt,
+                .expiresAt,
+                .currentPeriodEnd
+            ]
+        )
+        self.primary = try container.decode(RateLimitWindow.self, forKey: .primary)
+        self.secondary = try container.decode(RateLimitWindow.self, forKey: .secondary)
+    }
+
+    private static func decodeFirstDate(
+        from container: KeyedDecodingContainer<CodingKeys>,
+        keys: [CodingKeys]
+    ) throws -> Date? {
+        for key in keys {
+            if let value = try container.decodeIfPresent(FlexibleDate.self, forKey: key)?.date {
+                return value
+            }
+        }
+        return nil
     }
 }
 
@@ -285,5 +324,35 @@ private struct RateLimitWindow: Decodable {
         case usedPercent = "used_percent"
         case windowMinutes = "window_minutes"
         case resetsAt = "resets_at"
+    }
+}
+
+private struct FlexibleDate: Decodable {
+    var date: Date
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.singleValueContainer()
+
+        if let timestamp = try? container.decode(Int64.self) {
+            self.date = Date(timeIntervalSince1970: TimeInterval(timestamp))
+            return
+        }
+
+        if let timestamp = try? container.decode(Double.self) {
+            self.date = Date(timeIntervalSince1970: timestamp)
+            return
+        }
+
+        let text = try container.decode(String.self)
+        if let timestamp = Double(text) {
+            self.date = Date(timeIntervalSince1970: timestamp)
+            return
+        }
+        if let date = RateLimitReader.parseISO8601Date(text) {
+            self.date = date
+            return
+        }
+
+        throw DecodingError.dataCorruptedError(in: container, debugDescription: "Unsupported date value")
     }
 }
