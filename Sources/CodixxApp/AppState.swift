@@ -145,11 +145,7 @@ final class AppState: ObservableObject {
             refreshErrors.append(error.localizedDescription)
         }
 
-        do {
-            try applyCurrentAuthProfile(to: &loadedAccounts)
-        } catch {
-            refreshErrors.append(error.localizedDescription)
-        }
+        applySavedAuthProfiles(to: &loadedAccounts)
 
         if applyRateLimitObservations {
             do {
@@ -388,7 +384,7 @@ final class AppState: ObservableObject {
             return
         }
 
-        let profile = currentAuthProfile()
+        let profile = authProfile(for: accounts[currentIndex]) ?? currentAuthProfile()
         var quota = observation.accountQuotaState(
             accountId: accounts[currentIndex].id.uuidString,
             alias: accounts[currentIndex].alias,
@@ -403,32 +399,43 @@ final class AppState: ObservableObject {
         try metadataStore.save(AccountMetadataList(accounts: accounts))
     }
 
-    private func applyCurrentAuthProfile(to accounts: inout [CodixxAccount]) throws {
+    private func applySavedAuthProfiles(to accounts: inout [CodixxAccount]) {
         let timestamp = now()
-        guard let current = currentAccount(in: accounts),
-              let currentIndex = accounts.firstIndex(where: { $0.id == current.id }),
-              let profile = currentAuthProfile()
-        else {
-            return
-        }
-
         var didChange = false
-        if let planType = profile.planType,
-           accounts[currentIndex].quota.planType != planType
-        {
-            accounts[currentIndex].quota.planType = planType
-            didChange = true
-        }
-        if let membershipExpiresAt = profile.membershipExpiresAt,
-           accounts[currentIndex].membershipExpiresAt != membershipExpiresAt
-        {
-            accounts[currentIndex].membershipExpiresAt = membershipExpiresAt
-            didChange = true
+
+        for index in accounts.indices {
+            guard let profile = authProfile(for: accounts[index]) else { continue }
+            didChange = apply(profile, to: &accounts[index], timestamp: timestamp) || didChange
         }
 
         guard didChange else { return }
-        accounts[currentIndex].updatedAt = timestamp
-        try metadataStore.save(AccountMetadataList(accounts: accounts))
+        do {
+            try metadataStore.save(AccountMetadataList(accounts: accounts))
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    private func apply(_ profile: AuthProfile, to account: inout CodixxAccount, timestamp: Date) -> Bool {
+        var didChange = false
+
+        if let planType = profile.planType,
+           account.quota.planType != planType
+        {
+            account.quota.planType = planType
+            didChange = true
+        }
+        if let membershipExpiresAt = profile.membershipExpiresAt,
+           account.membershipExpiresAt != membershipExpiresAt
+        {
+            account.membershipExpiresAt = membershipExpiresAt
+            didChange = true
+        }
+
+        if didChange {
+            account.updatedAt = timestamp
+        }
+        return didChange
     }
 
     private func refreshQuotaConfidence(in accounts: inout [CodixxAccount], timestamp: Date? = nil) {
@@ -455,6 +462,13 @@ final class AppState: ObservableObject {
         guard let data = try? Data(contentsOf: paths.authJSON),
               let snapshot = try? AuthSnapshot(jsonData: data)
         else {
+            return nil
+        }
+        return AuthProfileReader.profile(from: snapshot)
+    }
+
+    private func authProfile(for account: CodixxAccount) -> AuthProfile? {
+        guard let snapshot = try? vault.load(fingerprint: account.fingerprint) else {
             return nil
         }
         return AuthProfileReader.profile(from: snapshot)
