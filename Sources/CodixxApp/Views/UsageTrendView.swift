@@ -8,10 +8,8 @@ struct UsageTrendView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
-            HStack {
-                MetricTile(title: strings.total, value: snapshot.totalTokens.formatted(), systemImage: "sum")
-                MetricTile(title: strings.threads, value: snapshot.threads.count.formatted(), systemImage: "text.bubble")
-            }
+            MetricTile(title: strings.total, value: snapshot.totalTokens.formatted(), systemImage: "sum")
+            MetricTile(title: strings.threads, value: snapshot.threads.count.formatted(), systemImage: "text.bubble")
 
             chartSection(title: strings.threadsUpdatedSevenDays) {
                 Chart(dailyBuckets) { bucket in
