@@ -49,6 +49,12 @@ final class ThreadUsageReaderTests: XCTestCase {
         XCTAssertNotNil(snapshot.errorSummary)
     }
 
+    func testLockedRetryCountAllowsInitialAttemptPlusRetries() {
+        XCTAssertEqual(ThreadUsageReader.totalAttemptCount(lockedRetryCount: 3), 4)
+        XCTAssertEqual(ThreadUsageReader.totalAttemptCount(lockedRetryCount: 0), 1)
+        XCTAssertEqual(ThreadUsageReader.totalAttemptCount(lockedRetryCount: -1), 1)
+    }
+
     func testReadsFractionalSecondISO8601Timestamps() throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
         defer { try? FileManager.default.removeItem(at: directory) }

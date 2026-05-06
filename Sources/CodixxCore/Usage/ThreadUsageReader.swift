@@ -25,8 +25,12 @@ public struct ThreadUsageReader: Sendable {
         }
     }
 
+    public static func totalAttemptCount(lockedRetryCount: Int) -> Int {
+        max(0, lockedRetryCount) + 1
+    }
+
     private func readThreadsWithRetries() throws -> [ThreadUsage] {
-        let attempts = max(0, lockedRetryCount) + 1
+        let attempts = Self.totalAttemptCount(lockedRetryCount: lockedRetryCount)
         var lastError: Error?
 
         for attempt in 1...attempts {
