@@ -1,13 +1,44 @@
 import Foundation
 
+public struct SwitchSafetyContext: Equatable, Sendable {
+    public var now: Date
+    public var activeThreadUpdatedAt: Date?
+    public var lastAutoSwitchAt: Date?
+
+    public init(now: Date, activeThreadUpdatedAt: Date?, lastAutoSwitchAt: Date?) {
+        self.now = now
+        self.activeThreadUpdatedAt = activeThreadUpdatedAt
+        self.lastAutoSwitchAt = lastAutoSwitchAt
+    }
+
+    public static func idle(now: Date) -> SwitchSafetyContext {
+        SwitchSafetyContext(now: now, activeThreadUpdatedAt: nil, lastAutoSwitchAt: nil)
+    }
+}
+
 public struct SwitchPolicy: Sendable {
     public var primaryThresholdPercent: Double
+    public var autoSwitchCooldownSeconds: TimeInterval
+    public var activeThreadIdleSeconds: TimeInterval
 
-    public init(primaryThresholdPercent: Double = 93) {
+    public init(
+        primaryThresholdPercent: Double = 93,
+        autoSwitchCooldownSeconds: TimeInterval = 300,
+        activeThreadIdleSeconds: TimeInterval = 120
+    ) {
         self.primaryThresholdPercent = primaryThresholdPercent
+        self.autoSwitchCooldownSeconds = autoSwitchCooldownSeconds
+        self.activeThreadIdleSeconds = activeThreadIdleSeconds
     }
 
     public func shouldAutoSwitch(currentAccount: CodixxAccount?) -> Bool {
+        shouldAutoSwitch(currentAccount: currentAccount, context: .idle(now: Date()))
+    }
+
+    public func shouldAutoSwitch(currentAccount: CodixxAccount?, context: SwitchSafetyContext) -> Bool {
+        guard isSafeToAutoSwitch(context: context) else {
+            return false
+        }
         guard let currentAccount,
               currentAccount.quota.confidence == .fresh || currentAccount.quota.confidence == .recent,
               let primaryUsedPercent = currentAccount.quota.primaryUsedPercent
@@ -15,6 +46,22 @@ public struct SwitchPolicy: Sendable {
             return false
         }
         return primaryUsedPercent >= primaryThresholdPercent
+    }
+
+    public func isSafeToAutoSwitch(context: SwitchSafetyContext) -> Bool {
+        if let activeThreadUpdatedAt = context.activeThreadUpdatedAt,
+           context.now.timeIntervalSince(activeThreadUpdatedAt) < activeThreadIdleSeconds
+        {
+            return false
+        }
+
+        if let lastAutoSwitchAt = context.lastAutoSwitchAt,
+           context.now.timeIntervalSince(lastAutoSwitchAt) < autoSwitchCooldownSeconds
+        {
+            return false
+        }
+
+        return true
     }
 
     public func orderedCandidates(

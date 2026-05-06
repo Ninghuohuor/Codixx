@@ -68,10 +68,59 @@ final class SwitchPolicyTests: XCTestCase {
         let now = Date(timeIntervalSince1970: 1_000)
         let policy = SwitchPolicy(primaryThresholdPercent: 93)
 
-        XCTAssertTrue(policy.shouldAutoSwitch(currentAccount: account(alias: "Main", primary: 93, confidence: .fresh, now: now)))
+        XCTAssertTrue(policy.shouldAutoSwitch(
+            currentAccount: account(alias: "Main", primary: 93, confidence: .fresh, now: now),
+            context: .idle(now: now)
+        ))
         XCTAssertFalse(policy.shouldAutoSwitch(currentAccount: account(alias: "Main", primary: 92.9, confidence: .fresh, now: now)))
         XCTAssertFalse(policy.shouldAutoSwitch(currentAccount: account(alias: "Main", primary: 99, confidence: .stale, now: now)))
         XCTAssertFalse(policy.shouldAutoSwitch(currentAccount: nil))
+    }
+
+    func testAutoSwitchWaitsForActiveThreadToBecomeIdle() {
+        let now = Date(timeIntervalSince1970: 1_000)
+        let policy = SwitchPolicy(primaryThresholdPercent: 93, activeThreadIdleSeconds: 120)
+        let current = account(alias: "Main", primary: 93, confidence: .fresh, now: now)
+
+        XCTAssertFalse(policy.shouldAutoSwitch(
+            currentAccount: current,
+            context: SwitchSafetyContext(
+                now: now,
+                activeThreadUpdatedAt: now.addingTimeInterval(-119),
+                lastAutoSwitchAt: nil
+            )
+        ))
+        XCTAssertTrue(policy.shouldAutoSwitch(
+            currentAccount: current,
+            context: SwitchSafetyContext(
+                now: now,
+                activeThreadUpdatedAt: now.addingTimeInterval(-120),
+                lastAutoSwitchAt: nil
+            )
+        ))
+    }
+
+    func testAutoSwitchRespectsCooldownAfterLastAutomaticSwitch() {
+        let now = Date(timeIntervalSince1970: 1_000)
+        let policy = SwitchPolicy(primaryThresholdPercent: 93, autoSwitchCooldownSeconds: 300)
+        let current = account(alias: "Main", primary: 93, confidence: .fresh, now: now)
+
+        XCTAssertFalse(policy.shouldAutoSwitch(
+            currentAccount: current,
+            context: SwitchSafetyContext(
+                now: now,
+                activeThreadUpdatedAt: nil,
+                lastAutoSwitchAt: now.addingTimeInterval(-299)
+            )
+        ))
+        XCTAssertTrue(policy.shouldAutoSwitch(
+            currentAccount: current,
+            context: SwitchSafetyContext(
+                now: now,
+                activeThreadUpdatedAt: nil,
+                lastAutoSwitchAt: now.addingTimeInterval(-300)
+            )
+        ))
     }
 
     func testCandidateEligibilityUsesConfiguredThreshold() {

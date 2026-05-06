@@ -181,8 +181,14 @@ final class AppState: ObservableObject {
 
     func attemptAutoSwitchIfNeeded() {
         guard config.autoSwitchEnabled, !isSwitchInProgress else { return }
+        let timestamp = now()
         let policy = SwitchPolicy(primaryThresholdPercent: config.primaryThresholdPercent)
-        guard policy.shouldAutoSwitch(currentAccount: currentAccount),
+        let context = SwitchSafetyContext(
+            now: timestamp,
+            activeThreadUpdatedAt: usageSnapshot.activeThread?.updatedAt,
+            lastAutoSwitchAt: lastSuccessfulAutoSwitchAt
+        )
+        guard policy.shouldAutoSwitch(currentAccount: currentAccount, context: context),
               let target = candidateAccounts.first
         else {
             return
@@ -367,6 +373,13 @@ final class AppState: ObservableObject {
 
     private func hasSnapshot(for account: CodixxAccount) -> Bool {
         (try? vault.load(fingerprint: account.fingerprint)) != nil
+    }
+
+    private var lastSuccessfulAutoSwitchAt: Date? {
+        switchEvents
+            .filter { $0.trigger == .autoPrimaryThreshold && $0.result == .success }
+            .map(\.timestamp)
+            .max()
     }
 
     private static let percentFormatter: NumberFormatter = {

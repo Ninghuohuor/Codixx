@@ -19,6 +19,7 @@ final class AppLifecycleCoordinator: ObservableObject {
     }
 
     func stop() {
+        isStarted = false
         quotaTimer?.invalidate()
         usageTimer?.invalidate()
         authFileSource?.cancel()
@@ -41,23 +42,40 @@ final class AppLifecycleCoordinator: ObservableObject {
         quotaTimer?.invalidate()
         usageTimer?.invalidate()
 
-        quotaTimer = Timer.scheduledTimer(
-            withTimeInterval: max(10, state.config.quotaRefreshIntervalSeconds),
-            repeats: true
-        ) { [weak self] _ in
-            Task { @MainActor in
-                self?.refreshAndNotify()
-            }
-        }
+        scheduleQuotaTimer()
+        scheduleUsageTimer()
+    }
 
-        usageTimer = Timer.scheduledTimer(
-            withTimeInterval: max(60, state.config.usageRefreshIntervalSeconds),
-            repeats: true
+    private func scheduleQuotaTimer() {
+        quotaTimer?.invalidate()
+        quotaTimer = Timer.scheduledTimer(
+            withTimeInterval: jitteredInterval(base: max(10, state.config.quotaRefreshIntervalSeconds), minimum: 10),
+            repeats: false
         ) { [weak self] _ in
             Task { @MainActor in
-                self?.refreshAndNotify()
+                guard let self, self.isStarted else { return }
+                self.refreshAndNotify()
+                self.scheduleQuotaTimer()
             }
         }
+    }
+
+    private func scheduleUsageTimer() {
+        usageTimer?.invalidate()
+        usageTimer = Timer.scheduledTimer(
+            withTimeInterval: jitteredInterval(base: max(60, state.config.usageRefreshIntervalSeconds), minimum: 60),
+            repeats: false
+        ) { [weak self] _ in
+            Task { @MainActor in
+                guard let self, self.isStarted else { return }
+                self.refreshAndNotify()
+                self.scheduleUsageTimer()
+            }
+        }
+    }
+
+    private func jitteredInterval(base: TimeInterval, minimum: TimeInterval) -> TimeInterval {
+        max(minimum, base + TimeInterval.random(in: -15...15))
     }
 
     private func observeSystemEvents() {
