@@ -70,6 +70,9 @@ public struct AccountStore {
 
         let timestamp = now()
         let id = idGenerator()
+        let profile = AuthProfileReader.profile(from: snapshot)
+        var quota = AccountQuotaState.unknown(accountId: id.uuidString, alias: alias)
+        quota.planType = profile?.planType
         let account = CodixxAccount(
             id: id,
             alias: alias,
@@ -77,7 +80,8 @@ public struct AccountStore {
             createdAt: timestamp,
             updatedAt: timestamp,
             lastUsedAt: timestamp,
-            quota: .unknown(accountId: id.uuidString, alias: alias),
+            membershipExpiresAt: profile?.membershipExpiresAt,
+            quota: quota,
             isEnabled: true,
             priority: metadata.accounts.count
         )

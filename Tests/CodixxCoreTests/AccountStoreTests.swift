@@ -49,6 +49,42 @@ final class AccountStoreTests: XCTestCase {
         XCTAssertFalse(String(decoding: metadataData, as: UTF8.self).contains("secret"))
     }
 
+    func testSaveCurrentAuthStoresLocalJWTMembershipProfile() throws {
+        let home = try makeTempHome()
+        defer { try? FileManager.default.removeItem(at: home) }
+        let paths = CodixxPaths(home: home)
+        try FileManager.default.createDirectory(at: paths.codexHome, withIntermediateDirectories: true)
+        let authData = Data(
+            """
+            {
+              "tokens": {
+                "account_id": "acct_main",
+                "id_token": "\(Self.jwt(auth: [
+                    "chatgpt_plan_type": "pro",
+                    "chatgpt_subscription_active_until": "2026-06-01T00:00:00Z"
+                ]))"
+              }
+            }
+            """.utf8
+        )
+        try authData.write(to: paths.authJSON)
+        let store = AccountStore(
+            paths: paths,
+            metadataStore: AccountMetadataStore(paths: paths),
+            vault: InMemoryAuthSnapshotVault(),
+            now: { Date(timeIntervalSince1970: 100) },
+            idGenerator: { UUID(uuidString: "11111111-1111-1111-1111-111111111111")! }
+        )
+
+        let account = try store.saveCurrentAuth(alias: "Main")
+        let metadata = try AccountMetadataStore(paths: paths).load()
+
+        XCTAssertEqual(account.quota.planType, "pro")
+        XCTAssertEqual(account.membershipExpiresAt, ISO8601DateFormatter().date(from: "2026-06-01T00:00:00Z"))
+        XCTAssertEqual(metadata.accounts.first?.quota.planType, "pro")
+        XCTAssertEqual(metadata.accounts.first?.membershipExpiresAt, ISO8601DateFormatter().date(from: "2026-06-01T00:00:00Z"))
+    }
+
     func testSaveCurrentAuthRejectsDuplicateFingerprint() throws {
         let home = try makeTempHome()
         defer { try? FileManager.default.removeItem(at: home) }
@@ -130,6 +166,25 @@ final class AccountStoreTests: XCTestCase {
             .joined()
             .prefix(16)
             .description
+    }
+
+    private static func jwt(auth: [String: Any]) -> String {
+        let header = ["alg": "none"]
+        let payload = ["https://api.openai.com/auth": auth]
+        return [
+            base64URL(header),
+            base64URL(payload),
+            "signature"
+        ].joined(separator: ".")
+    }
+
+    private static func base64URL(_ object: [String: Any]) -> String {
+        let data = try! JSONSerialization.data(withJSONObject: object, options: [.sortedKeys])
+        return data
+            .base64EncodedString()
+            .replacingOccurrences(of: "+", with: "-")
+            .replacingOccurrences(of: "/", with: "_")
+            .replacingOccurrences(of: "=", with: "")
     }
 }
 
