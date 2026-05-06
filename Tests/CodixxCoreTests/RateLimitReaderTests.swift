@@ -108,6 +108,32 @@ final class RateLimitReaderTests: XCTestCase {
         XCTAssertEqual(observations.map(\.primaryUsedPercent), [82])
     }
 
+    func testLargeUnreadSessionStartsNearTailAndAdvancesCursor() throws {
+        let home = try makeTempHome()
+        defer { try? FileManager.default.removeItem(at: home) }
+        let paths = CodixxPaths(home: home)
+        let session = paths.codexHome.appendingPathComponent("sessions/2026/05/06/session.jsonl")
+        let oldLine = """
+        {"timestamp":"2026-05-06T03:30:00Z","rate_limits":{"primary":{"used_percent":10.0,"window_minutes":300,"resets_at":1776409393},"secondary":{"used_percent":11.0,"window_minutes":10080,"resets_at":1776937959}}}
+        """
+        let tailLine = """
+        {"timestamp":"2026-05-06T03:35:00Z","rate_limits":{"primary":{"used_percent":90.0,"window_minutes":300,"resets_at":1776409393},"secondary":{"used_percent":91.0,"window_minutes":10080,"resets_at":1776937959}}}
+        """
+        let padding = (0..<40)
+            .map { #"{"timestamp":"2026-05-06T03:31:00Z","message":"padding-\#($0)-abcdefghijklmnopqrstuvwxyz"}"# }
+            .joined(separator: "\n")
+        try FileManager.default.createDirectory(at: session.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try Data((oldLine + "\n" + padding + "\n" + tailLine + "\n").utf8).write(to: session)
+        let cursorStore = ParseCursorStore(paths: paths)
+        let reader = RateLimitReader(paths: paths, cursorStore: cursorStore, maxReadBytesPerFile: 512)
+
+        let observations = try reader.readNewObservations()
+        let cursor = try cursorStore.load().offset(for: session)
+
+        XCTAssertEqual(observations.map(\.primaryUsedPercent), [90])
+        XCTAssertEqual(cursor, Int64(try Data(contentsOf: session).count))
+    }
+
     func testPartialFinalLineIsReadAfterItCompletes() throws {
         let home = try makeTempHome()
         defer { try? FileManager.default.removeItem(at: home) }

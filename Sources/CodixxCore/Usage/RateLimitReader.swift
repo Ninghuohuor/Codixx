@@ -50,17 +50,20 @@ public struct RateLimitReader {
     public let paths: CodixxPaths
     public let cursorStore: ParseCursorStore
 
+    private let maxReadBytesPerFile: Int64
     private let fileManager: FileManager
     private let decoder: JSONDecoder
 
     public init(
         paths: CodixxPaths = CodixxPaths(),
         cursorStore: ParseCursorStore? = nil,
-        fileManager: FileManager = .default
+        fileManager: FileManager = .default,
+        maxReadBytesPerFile: Int64 = 2 * 1_024 * 1_024
     ) {
         self.paths = paths
         self.cursorStore = cursorStore ?? ParseCursorStore(paths: paths, fileManager: fileManager)
         self.fileManager = fileManager
+        self.maxReadBytesPerFile = maxReadBytesPerFile
         self.decoder = JSONDecoder()
     }
 
@@ -73,14 +76,16 @@ public struct RateLimitReader {
             let fileSize = try sizeOfFile(at: file)
             let previousOffset = storedOffset > fileSize ? 0 : storedOffset
             guard previousOffset < fileSize else { continue }
+            let readOffset = Self.readOffset(previousOffset: previousOffset, fileSize: fileSize, maxReadBytes: maxReadBytesPerFile)
+            let byteCount = min(fileSize - readOffset, maxReadBytesPerFile)
 
             let readResult = try Self.readCompleteObservations(
                 from: file,
-                offset: previousOffset,
-                byteCount: fileSize - previousOffset
+                offset: readOffset,
+                byteCount: byteCount
             )
             observations.append(contentsOf: readResult.observations)
-            cursorState.setOffset(previousOffset + readResult.consumedByteCount, for: file)
+            cursorState.setOffset(readOffset + readResult.consumedByteCount, for: file)
         }
 
         try cursorStore.save(cursorState)
@@ -125,7 +130,8 @@ public struct RateLimitReader {
 
     private static func parseLine(_ line: String, sourceFile: String) -> RateLimitObservation? {
         let decoder = JSONDecoder()
-        guard let data = line.data(using: .utf8),
+        guard line.contains(#""rate_limits""#),
+              let data = line.data(using: .utf8),
               let event = try? decoder.decode(RateLimitEvent.self, from: data),
               let rateLimits = event.rateLimits
         else {
@@ -186,6 +192,13 @@ public struct RateLimitReader {
     private func sizeOfFile(at url: URL) throws -> Int64 {
         let attributes = try fileManager.attributesOfItem(atPath: url.path)
         return attributes[.size] as? Int64 ?? Int64((attributes[.size] as? Int) ?? 0)
+    }
+
+    private static func readOffset(previousOffset: Int64, fileSize: Int64, maxReadBytes: Int64) -> Int64 {
+        guard previousOffset == 0, fileSize > maxReadBytes else {
+            return previousOffset
+        }
+        return max(0, fileSize - maxReadBytes)
     }
 
     private static func parseISO8601Date(_ text: String?) -> Date? {
