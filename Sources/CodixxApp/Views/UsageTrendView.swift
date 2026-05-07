@@ -34,12 +34,12 @@ struct UsageTrendView: View {
                         x: .value(strings.hour, bucket.hour, unit: .hour),
                         y: .value(strings.tokens, bucket.tokens)
                     )
-                    .foregroundStyle(.green)
+                    .foregroundStyle(.blue)
                     AreaMark(
                         x: .value(strings.hour, bucket.hour, unit: .hour),
                         y: .value(strings.tokens, bucket.tokens)
                     )
-                    .foregroundStyle(.green.opacity(0.18))
+                    .foregroundStyle(.blue.opacity(0.18))
                 }
                 .chartXAxis {
                     AxisMarks(values: .stride(by: .hour, count: 6)) { _ in
@@ -55,8 +55,8 @@ struct UsageTrendView: View {
             Text(title)
                 .font(.headline)
             content()
-                .frame(height: 132)
-                .padding(10)
+                .frame(minHeight: 100, idealHeight: 132)
+                .padding(12)
                 .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 8))
         }
     }
@@ -97,7 +97,7 @@ private struct MetricTile: View {
     var body: some View {
         HStack(spacing: 10) {
             Image(systemName: systemImage)
-                .frame(width: 24, height: 24)
+                .imageScale(.medium)
                 .foregroundStyle(.secondary)
             VStack(alignment: .leading, spacing: 2) {
                 Text(title)
@@ -109,7 +109,7 @@ private struct MetricTile: View {
             }
             Spacer()
         }
-        .padding(10)
+        .padding(12)
         .frame(maxWidth: .infinity)
         .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 8))
     }

@@ -12,15 +12,17 @@ struct QuotaView: View {
                 VStack(alignment: .leading, spacing: 3) {
                     Text(account?.alias ?? strings.noActiveAccountTitle)
                         .font(.headline)
-                    Text(account == nil ? strings.noActiveAccountDetail : strings.fiveHourQuotaWithConfidence(confidenceText))
-                        .font(.caption)
-                        .foregroundStyle(confidenceColor)
-                        .fixedSize(horizontal: false, vertical: true)
+                    if account == nil {
+                        Text(strings.noActiveAccountDetail)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
                 }
                 Spacer()
-                Text(primaryPercentText)
-                    .font(.system(size: 30, weight: .semibold, design: .rounded))
-                    .monospacedDigit()
+                Text(confidenceText)
+                    .font(.caption)
+                    .foregroundStyle(confidenceColor)
             }
 
             quotaProgress(

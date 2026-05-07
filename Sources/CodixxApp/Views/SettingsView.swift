@@ -5,108 +5,145 @@ struct SettingsView: View {
     @ObservedObject var state: AppState
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            Text(state.strings.settings)
-                .font(.headline)
+        ScrollView {
+            VStack(alignment: .leading, spacing: 16) {
+                Text(state.strings.settings)
+                    .font(.headline)
 
-            Picker(state.strings.languageLabel, selection: Binding(
-                get: { state.config.language },
-                set: { state.setLanguage($0) }
-            )) {
-                ForEach(CodixxLanguage.allCases) { language in
-                    Text(language.displayName).tag(language)
+                settingsSection(title: state.strings.generalSection) {
+                    Picker(state.strings.languageLabel, selection: Binding(
+                        get: { state.config.language },
+                        set: { state.setLanguage($0) }
+                    )) {
+                        ForEach(CodixxLanguage.allCases) { language in
+                            Text(language.displayName).tag(language)
+                        }
+                    }
+                    .pickerStyle(.segmented)
+
+                    Divider()
+
+                    Toggle(state.strings.notifications, isOn: Binding(
+                        get: { state.config.notificationsEnabled },
+                        set: { state.setNotificationsEnabled($0) }
+                    ))
                 }
-            }
-            .pickerStyle(.segmented)
 
-            Toggle(state.strings.autoSwitch, isOn: Binding(
-                get: { state.config.autoSwitchEnabled },
-                set: { state.setAutoSwitchEnabled($0) }
-            ))
-            .disabled(!state.canEnableAutoSwitch)
+                settingsSection(title: state.strings.autoSwitchSection) {
+                    Toggle(state.strings.autoSwitch, isOn: Binding(
+                        get: { state.config.autoSwitchEnabled },
+                        set: { state.setAutoSwitchEnabled($0) }
+                    ))
+                    .disabled(!state.canEnableAutoSwitch)
 
-            if !state.canEnableAutoSwitch {
-                Label(state.strings.autoSwitchNeedsTwoAccounts, systemImage: "person.crop.circle.badge.plus")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
+                    if !state.canEnableAutoSwitch {
+                        Label(state.strings.autoSwitchNeedsTwoAccounts, systemImage: "person.crop.circle.badge.plus")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
 
-            Toggle(state.strings.notifications, isOn: Binding(
-                get: { state.config.notificationsEnabled },
-                set: { state.setNotificationsEnabled($0) }
-            ))
+                    Divider()
 
-            VStack(alignment: .leading, spacing: 6) {
-                HStack {
-                    Text(state.strings.threshold)
-                    Spacer()
-                    Text("\(Int(state.config.primaryThresholdPercent.rounded()))%")
-                        .monospacedDigit()
+                    VStack(alignment: .leading, spacing: 6) {
+                        HStack {
+                            Text(state.strings.threshold)
+                            Spacer()
+                            Text("\(Int(state.config.primaryThresholdPercent.rounded()))%")
+                                .monospacedDigit()
+                                .foregroundStyle(.secondary)
+                        }
+                        Slider(
+                            value: Binding(
+                                get: { state.config.primaryThresholdPercent },
+                                set: { state.setPrimaryThresholdPercent($0) }
+                            ),
+                            in: 50...99,
+                            step: 1
+                        )
+                        Text(state.strings.thresholdHint)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+
+                    Divider()
+
+                    Picker(state.strings.postSwitchAction, selection: Binding(
+                        get: { state.config.postSwitchAction },
+                        set: { state.setPostSwitchAction($0) }
+                    )) {
+                        ForEach(PostSwitchAction.allCases) { action in
+                            Text(state.strings.postSwitchActionLabel(action)).tag(action)
+                        }
+                    }
+                    .pickerStyle(.menu)
+                }
+
+                settingsSection(title: state.strings.refreshIntervalSection) {
+                    Stepper(
+                        "\(state.strings.quotaRefresh): \(state.strings.secondsInterval(Int(state.config.quotaRefreshIntervalSeconds)))",
+                        value: Binding(
+                            get: { state.config.quotaRefreshIntervalSeconds },
+                            set: { state.setQuotaRefreshIntervalSeconds($0) }
+                        ),
+                        in: 30...600,
+                        step: 30
+                    )
+
+                    Divider()
+
+                    Stepper(
+                        "\(state.strings.usageRefresh): \(state.strings.minutesInterval(Int(state.config.usageRefreshIntervalSeconds / 60)))",
+                        value: Binding(
+                            get: { state.config.usageRefreshIntervalSeconds },
+                            set: { state.setUsageRefreshIntervalSeconds($0) }
+                        ),
+                        in: 60...1_800,
+                        step: 60
+                    )
+                }
+
+                settingsSection(title: "Codex") {
+                    Button {
+                        state.restartCodexNow()
+                    } label: {
+                        Label(state.strings.restartCodexNow, systemImage: "arrow.clockwise")
+                    }
+
+                    Label(state.strings.restartCodexHint, systemImage: "arrow.clockwise.circle")
+                        .font(.caption)
                         .foregroundStyle(.secondary)
-                }
-                Slider(
-                    value: Binding(
-                        get: { state.config.primaryThresholdPercent },
-                        set: { state.setPrimaryThresholdPercent($0) }
-                    ),
-                    in: 50...99,
-                    step: 1
-                )
-            }
+                        .fixedSize(horizontal: false, vertical: true)
 
-            Stepper(
-                "\(state.strings.quotaRefresh): \(state.strings.secondsInterval(Int(state.config.quotaRefreshIntervalSeconds)))",
-                value: Binding(
-                    get: { state.config.quotaRefreshIntervalSeconds },
-                    set: { state.setQuotaRefreshIntervalSeconds($0) }
-                ),
-                in: 30...600,
-                step: 30
-            )
+                    Divider()
 
-            Stepper(
-                "\(state.strings.usageRefresh): \(state.strings.minutesInterval(Int(state.config.usageRefreshIntervalSeconds / 60)))",
-                value: Binding(
-                    get: { state.config.usageRefreshIntervalSeconds },
-                    set: { state.setUsageRefreshIntervalSeconds($0) }
-                ),
-                in: 60...1_800,
-                step: 60
-            )
-
-            Picker(state.strings.postSwitchAction, selection: Binding(
-                get: { state.config.postSwitchAction },
-                set: { state.setPostSwitchAction($0) }
-            )) {
-                ForEach(PostSwitchAction.allCases) { action in
-                    Text(state.strings.postSwitchActionLabel(action)).tag(action)
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(state.strings.codexHome)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        Text(state.paths.codexHome.path)
+                            .font(.caption.monospaced())
+                            .textSelection(.enabled)
+                            .lineLimit(2)
+                    }
                 }
             }
-            .pickerStyle(.menu)
+            .padding(4)
+        }
+    }
 
-            Button {
-                state.restartCodexNow()
-            } label: {
-                Label(state.strings.restartCodexNow, systemImage: "arrow.clockwise")
-            }
-
-            Divider()
-
-            VStack(alignment: .leading, spacing: 4) {
-                Text(state.strings.codexHome)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                Text(state.paths.codexHome.path)
-                    .font(.caption.monospaced())
-                    .textSelection(.enabled)
-                    .lineLimit(2)
-            }
-
-            Label(state.strings.restartCodexHint, systemImage: "arrow.clockwise.circle")
-                .font(.caption)
+    private func settingsSection<Content: View>(title: String, @ViewBuilder content: () -> Content) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text(title)
+                .font(.subheadline.weight(.semibold))
                 .foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
+            VStack(alignment: .leading, spacing: 10) {
+                content()
+            }
+            .padding(12)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 8))
         }
     }
 }

@@ -6,20 +6,26 @@ struct AccountListView: View {
     @State private var newAlias = ""
     @State private var editedAliases: [UUID: String] = [:]
     @State private var editingAccountIds: Set<UUID> = []
-    @State private var expandedSettingsAccountIds: Set<UUID> = []
+    @State private var accountToDelete: CodixxAccount?
     @State private var isShowingSaveAccount = false
 
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 14) {
-                Button {
-                    withAnimation(.easeInOut(duration: 0.18)) {
-                        isShowingSaveAccount.toggle()
+                HStack {
+                    Text(state.strings.accounts)
+                        .font(.headline)
+                    Spacer()
+                    Button {
+                        withAnimation(.easeInOut(duration: 0.18)) {
+                            isShowingSaveAccount.toggle()
+                        }
+                    } label: {
+                        Label(state.strings.addAccount, systemImage: isShowingSaveAccount ? "chevron.up" : "person.badge.plus")
                     }
-                } label: {
-                    Label(state.strings.addAccount, systemImage: isShowingSaveAccount ? "chevron.up" : "person.badge.plus")
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.small)
                 }
-                .buttonStyle(.borderedProminent)
 
                 if isShowingSaveAccount {
                     saveCurrentAccount
@@ -30,13 +36,10 @@ struct AccountListView: View {
                         .font(.caption)
                         .foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
-                        .padding(10)
+                        .padding(12)
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .background(Color.blue.opacity(0.08), in: RoundedRectangle(cornerRadius: 8))
                 }
-
-                Text(state.strings.accounts)
-                    .font(.headline)
 
                 if state.accounts.isEmpty {
                     Text(state.strings.noSavedAccounts)
@@ -50,6 +53,29 @@ struct AccountListView: View {
                         accountRow(account)
                     }
                 }
+            }
+        }
+        .alert(
+            state.strings.confirmDeleteTitle,
+            isPresented: Binding(
+                get: { accountToDelete != nil },
+                set: { if !$0 { accountToDelete = nil } }
+            )
+        ) {
+            Button(state.strings.cancel, role: .cancel) {
+                accountToDelete = nil
+            }
+            Button(state.strings.delete, role: .destructive) {
+                if let account = accountToDelete {
+                    state.deleteAccount(account)
+                    editedAliases[account.id] = nil
+                    editingAccountIds.remove(account.id)
+                }
+                accountToDelete = nil
+            }
+        } message: {
+            if let account = accountToDelete {
+                Text(state.strings.confirmDeleteMessage(alias: account.alias))
             }
         }
     }
@@ -103,19 +129,10 @@ struct AccountListView: View {
                     Spacer(minLength: 0)
                 }
 
-                Text(membershipText(for: account))
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-
                 Text(membershipExpirationText(for: account))
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
-            }
-
-            if expandedSettingsAccountIds.contains(account.id) {
-                accountSettings(for: account)
             }
 
             quotaProgressRows(for: account)
@@ -135,6 +152,7 @@ struct AccountListView: View {
                     ), in: 0...100)
                     .labelsHidden()
                 }
+                .help(state.strings.priorityHint)
             }
             .font(.caption)
         }
@@ -145,10 +163,48 @@ struct AccountListView: View {
     @ViewBuilder
     private func accountHeader(for account: CodixxAccount) -> some View {
         HStack(spacing: 8) {
-            Text(account.alias)
+            if editingAccountIds.contains(account.id) {
+                TextField(state.strings.alias, text: Binding(
+                    get: { editedAliases[account.id] ?? account.alias },
+                    set: { editedAliases[account.id] = $0 }
+                ))
+                .textFieldStyle(.roundedBorder)
                 .font(.headline)
-                .lineLimit(1)
+                .frame(maxWidth: .infinity)
+
+                Button {
+                    state.renameAccount(account, alias: editedAliases[account.id] ?? account.alias)
+                    editedAliases[account.id] = nil
+                    editingAccountIds.remove(account.id)
+                } label: {
+                    Image(systemName: "checkmark")
+                }
+                .buttonStyle(.borderless)
+                .help(state.strings.renameAccount)
+                .disabled((editedAliases[account.id] ?? account.alias).trimmingCharacters(in: .whitespacesAndNewlines) == account.alias)
+
+                Button {
+                    editedAliases[account.id] = nil
+                    editingAccountIds.remove(account.id)
+                } label: {
+                    Image(systemName: "xmark")
+                }
+                .buttonStyle(.borderless)
+                .help(state.strings.cancelEdit)
+            } else {
+                HStack(spacing: 6) {
+                    Text(account.alias)
+                        .font(.headline)
+                        .lineLimit(1)
+                    Text(planLabel(for: account))
+                        .font(.caption2.weight(.medium))
+                        .foregroundStyle(.secondary)
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 2)
+                        .background(Color.secondary.opacity(0.12), in: Capsule())
+                }
                 .frame(maxWidth: .infinity, alignment: .leading)
+            }
 
             Button {
                 state.switchToAccount(account)
@@ -160,104 +216,29 @@ struct AccountListView: View {
             .disabled(account.id == state.currentAccount?.id)
             .help(state.strings.switchToThisAccount)
 
-            Button {
-                withAnimation(.easeInOut(duration: 0.18)) {
-                    if expandedSettingsAccountIds.contains(account.id) {
-                        expandedSettingsAccountIds.remove(account.id)
-                        editedAliases[account.id] = nil
-                        editingAccountIds.remove(account.id)
-                    } else {
-                        expandedSettingsAccountIds.insert(account.id)
-                    }
+            Menu {
+                Button {
+                    editedAliases[account.id] = account.alias
+                    editingAccountIds.insert(account.id)
+                } label: {
+                    Label(state.strings.renameAccount, systemImage: "pencil")
+                }
+
+                Divider()
+
+                Button(role: .destructive) {
+                    accountToDelete = account
+                } label: {
+                    Label(state.strings.deleteAccount, systemImage: "trash")
                 }
             } label: {
-                Label(state.strings.settings, systemImage: expandedSettingsAccountIds.contains(account.id) ? "gearshape.fill" : "gearshape")
+                Label(state.strings.settings, systemImage: "gearshape")
+                    .labelStyle(.iconOnly)
             }
-            .labelStyle(.iconOnly)
-            .buttonStyle(.borderless)
+            .menuStyle(.borderlessButton)
+            .fixedSize()
             .help(state.strings.settings)
         }
-    }
-
-    @ViewBuilder
-    private func accountSettings(for account: CodixxAccount) -> some View {
-        if editingAccountIds.contains(account.id) {
-            VStack(alignment: .leading, spacing: 10) {
-                HStack(spacing: 8) {
-                    TextField(state.strings.alias, text: Binding(
-                        get: { editedAliases[account.id] ?? account.alias },
-                        set: { editedAliases[account.id] = $0 }
-                    ))
-                    .textFieldStyle(.roundedBorder)
-                    .frame(minWidth: 0, maxWidth: .infinity)
-
-                    Button {
-                        state.renameAccount(account, alias: editedAliases[account.id] ?? account.alias)
-                        editedAliases[account.id] = nil
-                        editingAccountIds.remove(account.id)
-                    } label: {
-                        Label(state.strings.renameAccount, systemImage: "checkmark")
-                    }
-                    .labelStyle(.iconOnly)
-                    .buttonStyle(.borderless)
-                    .help(state.strings.renameAccount)
-                    .disabled((editedAliases[account.id] ?? account.alias).trimmingCharacters(in: .whitespacesAndNewlines) == account.alias)
-
-                    Button {
-                        editedAliases[account.id] = nil
-                        editingAccountIds.remove(account.id)
-                    } label: {
-                        Label(state.strings.cancelEdit, systemImage: "xmark")
-                    }
-                    .labelStyle(.iconOnly)
-                    .buttonStyle(.borderless)
-                    .help(state.strings.cancelEdit)
-                }
-
-                deleteAccountButton(account)
-            }
-            .padding(10)
-            .background(Color.secondary.opacity(0.08), in: RoundedRectangle(cornerRadius: 8))
-        } else {
-            VStack(alignment: .leading, spacing: 10) {
-                HStack(spacing: 8) {
-                    Text(state.strings.alias)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-
-                    Text(account.alias)
-                        .font(.caption)
-                        .lineLimit(1)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-
-                    Button {
-                        editedAliases[account.id] = account.alias
-                        editingAccountIds.insert(account.id)
-                    } label: {
-                        Label(state.strings.renameAccount, systemImage: "pencil")
-                    }
-                    .labelStyle(.iconOnly)
-                    .buttonStyle(.borderless)
-                    .help(state.strings.renameAccount)
-                }
-
-                deleteAccountButton(account)
-            }
-            .padding(10)
-            .background(Color.secondary.opacity(0.08), in: RoundedRectangle(cornerRadius: 8))
-        }
-    }
-
-    private func deleteAccountButton(_ account: CodixxAccount) -> some View {
-        Button(role: .destructive) {
-            state.deleteAccount(account)
-            editedAliases[account.id] = nil
-            editingAccountIds.remove(account.id)
-            expandedSettingsAccountIds.remove(account.id)
-        } label: {
-            Label(state.strings.deleteAccount, systemImage: "trash")
-        }
-        .help(state.strings.deleteAccount)
     }
 
     private func quotaProgressRows(for account: CodixxAccount) -> some View {
@@ -310,9 +291,8 @@ struct AccountListView: View {
         return state.strings.primaryQuota(primary: primary, confidence: confidence)
     }
 
-    private func membershipText(for account: CodixxAccount) -> String {
-        let plan = account.quota.planType?.isEmpty == false ? account.quota.planType! : state.strings.unknownPlan
-        return "\(state.strings.membership): \(plan)"
+    private func planLabel(for account: CodixxAccount) -> String {
+        account.quota.planType?.isEmpty == false ? account.quota.planType! : state.strings.unknownPlan
     }
 
     private func membershipExpirationText(for account: CodixxAccount) -> String {

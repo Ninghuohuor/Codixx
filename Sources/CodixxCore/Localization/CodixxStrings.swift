@@ -13,6 +13,9 @@ public struct CodixxStrings: Sendable {
     public var logs: String { text(en: "Logs", zh: "日志") }
     public var refresh: String { text(en: "Refresh", zh: "刷新") }
     public var settings: String { text(en: "Settings", zh: "设置") }
+    public var generalSection: String { text(en: "General", zh: "通用") }
+    public var autoSwitchSection: String { text(en: "Auto Switch", zh: "自动切换") }
+    public var refreshIntervalSection: String { text(en: "Refresh Intervals", zh: "刷新频率") }
     public var quitCodixx: String { text(en: "Quit Codixx", zh: "退出 Codixx") }
     public var notRefreshedYet: String { text(en: "Not refreshed yet", zh: "尚未刷新") }
     public var saveCurrentAuth: String { text(en: "Save Current Auth", zh: "保存当前登录") }
@@ -48,6 +51,12 @@ public struct CodixxStrings: Sendable {
     }
     public var notifications: String { text(en: "Notifications", zh: "通知") }
     public var threshold: String { text(en: "Threshold", zh: "阈值") }
+    public var thresholdHint: String {
+        text(
+            en: "Auto switch triggers when the 5-hour quota reaches this percentage.",
+            zh: "当 5 小时额度达到此百分比时，自动切换将触发。"
+        )
+    }
     public var quotaRefresh: String { text(en: "Quota refresh", zh: "额度刷新") }
     public var usageRefresh: String { text(en: "Usage refresh", zh: "用量刷新") }
     public var codexHome: String { text(en: "Codex Home", zh: "Codex 目录") }
@@ -71,7 +80,7 @@ public struct CodixxStrings: Sendable {
     public var validationFailed: String { text(en: "Validation failed", zh: "校验失败") }
     public var errorSummaryLabel: String { text(en: "Error", zh: "错误") }
     public var backupPathLabel: String { text(en: "Backup", zh: "备份") }
-    public var total: String { text(en: "Total", zh: "总量") }
+    public var total: String { text(en: "Total Tokens", zh: "Token 总量") }
     public var todayTokens: String { text(en: "Today", zh: "今日 token 用量") }
     public var yesterdayTokens: String { text(en: "Yesterday", zh: "昨日 token 用量") }
     public var threads: String { text(en: "Threads", zh: "会话") }
@@ -161,6 +170,9 @@ public struct CodixxStrings: Sendable {
         )
     }
 
+    public var priorityHint: String {
+        text(en: "Higher = preferred for auto switch", zh: "数值越高，自动切换时越优先")
+    }
     public func priority(_ value: Int) -> String {
         text(en: "Priority \(value)", zh: "优先级 \(value)")
     }

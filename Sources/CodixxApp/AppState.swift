@@ -1,4 +1,5 @@
 import AppKit
+import Combine
 import Foundation
 import SwiftUI
 import CodixxCore
@@ -38,6 +39,8 @@ final class AppState: ObservableObject {
     private let now: () -> Date
     private var isRefreshInProgress = false
     private var isSwitchInProgress = false
+    private var errorDismissTask: Task<Void, Never>?
+    private var cancellables = Set<AnyCancellable>()
     private var lastRefreshStartedAt: Date?
     private let menuRefreshThrottleSeconds: TimeInterval = 30
 
@@ -64,6 +67,18 @@ final class AppState: ObservableObject {
             now: now
         )
         self.config = (try? configStore.load()) ?? .default(paths: paths)
+
+        $errorMessage
+            .compactMap { $0 }
+            .sink { [weak self] _ in
+                self?.errorDismissTask?.cancel()
+                self?.errorDismissTask = Task { @MainActor [weak self] in
+                    try? await Task.sleep(nanoseconds: 5_000_000_000)
+                    guard !Task.isCancelled else { return }
+                    self?.errorMessage = nil
+                }
+            }
+            .store(in: &cancellables)
     }
 
     var menuBarTitle: String {
@@ -75,8 +90,9 @@ final class AppState: ObservableObject {
     }
 
     var menuBarSystemImage: String {
-        guard let used = currentAccount?.quota.primaryUsedPercent else { return "bolt.circle" }
-        return used >= config.primaryThresholdPercent ? "bolt.trianglebadge.exclamationmark" : "bolt.circle"
+        guard currentAccount != nil else { return "bolt.slash.circle.fill" }
+        guard let used = currentAccount?.quota.primaryUsedPercent else { return "bolt.circle.fill" }
+        return used >= config.primaryThresholdPercent ? "exclamationmark.triangle.fill" : "bolt.circle.fill"
     }
 
     var topThreads: [ThreadUsage] {

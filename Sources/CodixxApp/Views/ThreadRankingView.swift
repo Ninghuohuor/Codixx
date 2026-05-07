@@ -6,7 +6,7 @@ struct ThreadRankingView: View {
     var strings: CodixxStrings
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: 14) {
             Text(strings.topThreads)
                 .font(.headline)
 
@@ -31,11 +31,11 @@ struct ThreadRankingView: View {
                                     .lineLimit(1)
                             }
                             Spacer()
-                            Text(thread.tokensUsed.formatted())
+                            Text("\(thread.tokensUsed.formatted()) \(strings.tokens)")
                                 .font(.caption.monospacedDigit())
                                 .foregroundStyle(.secondary)
                         }
-                        .padding(10)
+                        .padding(12)
                         .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 8))
                     }
                 }

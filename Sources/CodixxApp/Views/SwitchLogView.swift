@@ -6,7 +6,7 @@ struct SwitchLogView: View {
     var strings: CodixxStrings
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: 14) {
             Text(strings.switchLog)
                 .font(.headline)
 
@@ -30,6 +30,7 @@ struct SwitchLogView: View {
             Image(systemName: iconName(for: event.result))
                 .foregroundStyle(color(for: event.result))
                 .frame(width: 20)
+                .accessibilityLabel(strings.switchResultLabel(event.result))
 
             VStack(alignment: .leading, spacing: 7) {
                 HStack(alignment: .firstTextBaseline, spacing: 8) {
@@ -66,7 +67,7 @@ struct SwitchLogView: View {
                 }
             }
         }
-        .padding(10)
+        .padding(12)
         .background(backgroundColor(for: event.result), in: RoundedRectangle(cornerRadius: 8))
     }
 

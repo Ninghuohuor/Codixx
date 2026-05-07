@@ -6,6 +6,7 @@ struct DashboardView: View {
     @ObservedObject var state: AppState
     @State private var selectedTab = 0
     @State private var isShowingSettings = false
+    @State private var refreshRotation: Double = 0
 
     var body: some View {
         VStack(spacing: 0) {
@@ -39,10 +40,22 @@ struct DashboardView: View {
                 Button {
                     state.refreshNow()
                 } label: {
-                    Label(state.strings.refresh, systemImage: state.isRefreshing ? "arrow.triangle.2.circlepath" : "arrow.clockwise")
+                    Label(state.strings.refresh, systemImage: "arrow.clockwise")
                 }
                 .labelStyle(.iconOnly)
+                .rotationEffect(.degrees(refreshRotation))
                 .help(state.strings.refresh)
+                .onChange(of: state.isRefreshing) { refreshing in
+                    if refreshing {
+                        withAnimation(.linear(duration: 0.8).repeatForever(autoreverses: false)) {
+                            refreshRotation = 360
+                        }
+                    } else {
+                        withAnimation(.easeOut(duration: 0.3)) {
+                            refreshRotation = 0
+                        }
+                    }
+                }
 
                 Button {
                     isShowingSettings.toggle()
@@ -100,9 +113,10 @@ struct DashboardView: View {
                         .font(.caption)
                         .foregroundStyle(.orange)
                         .lineLimit(4)
-                        .padding(10)
+                        .padding(12)
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .background(Color.orange.opacity(0.10), in: RoundedRectangle(cornerRadius: 8))
+                        .transition(.opacity)
                 }
             }
             .padding(14)
