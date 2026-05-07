@@ -178,6 +178,53 @@ final class ThreadUsageReaderTests: XCTestCase {
         XCTAssertEqual(snapshot.hourlyTokenUsage.first { $0.start == calendar.dateInterval(of: .hour, for: today.addingTimeInterval(3_600))?.start }?.tokens, 300)
     }
 
+    func testDailyUsageDoesNotAttributeHistoricalSessionTotalToTodayWithoutBaselineEvent() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let databaseURL = directory.appendingPathComponent("state_5.sqlite")
+        let rolloutURL = directory.appendingPathComponent("rollout.jsonl")
+        let calendar = Calendar.current
+        let now = try XCTUnwrap(calendar.date(from: DateComponents(year: 2026, month: 5, day: 8, hour: 0, minute: 20)))
+        let today = calendar.startOfDay(for: now)
+        let yesterday = calendar.date(byAdding: .day, value: -1, to: today) ?? today.addingTimeInterval(-86_400)
+
+        try writeTokenUsageEvents(
+            [
+                (today.addingTimeInterval(300), 4_000_000),
+                (today.addingTimeInterval(900), 4_050_000)
+            ],
+            to: rolloutURL
+        )
+        try createDatabase(
+            at: databaseURL,
+            timestampColumnType: "INTEGER",
+            inserts: [
+                """
+                INSERT INTO threads VALUES(
+                    'usage',
+                    'Usage',
+                    'codex',
+                    'openai',
+                    'gpt-5',
+                    'medium',
+                    4050000,
+                    '\(directory.path)',
+                    \(Int(yesterday.addingTimeInterval(3_600).timeIntervalSince1970)),
+                    \(Int(today.addingTimeInterval(900).timeIntervalSince1970)),
+                    '\(rolloutURL.path)'
+                );
+                """
+            ]
+        )
+        let reader = ThreadUsageReader(databaseURL: databaseURL)
+
+        let snapshot = reader.readSnapshot(now: now)
+
+        XCTAssertEqual(snapshot.dailyTokenUsage.first { calendar.isDate($0.start, inSameDayAs: today) }?.tokens, 50_000)
+        XCTAssertEqual(snapshot.hourlyTokenUsage.first { $0.start == calendar.dateInterval(of: .hour, for: today.addingTimeInterval(300))?.start }?.tokens, 50_000)
+    }
+
     func testNullRequiredColumnsReturnDegradedSnapshot() throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
         defer { try? FileManager.default.removeItem(at: directory) }
