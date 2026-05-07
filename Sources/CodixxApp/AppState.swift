@@ -110,9 +110,10 @@ final class AppState: ObservableObject {
     func refreshFromMenuOpen() {
         refresh(
             applyRateLimitObservations: true,
-            allowAutoSwitch: true,
+            allowAutoSwitch: false,
             preservingError: nil,
-            throttled: true
+            throttled: true,
+            refreshUsage: false
         )
     }
 
