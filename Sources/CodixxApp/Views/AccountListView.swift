@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 import CodixxCore
 
@@ -265,8 +266,14 @@ struct AccountListView: View {
                 }
                 Spacer()
                 Button(state.strings.switchAndRestartCodex) {
-                    state.switchToAccountAndRestartCodex(account)
-                    accountToSwitch = nil
+                    let targetAccount = account
+                    withAnimation(.easeInOut(duration: 0.12)) {
+                        accountToSwitch = nil
+                    }
+                    NSApplication.shared.keyWindow?.close()
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+                        state.switchToAccountAndRestartCodex(targetAccount)
+                    }
                 }
                 .buttonStyle(.borderedProminent)
             }
