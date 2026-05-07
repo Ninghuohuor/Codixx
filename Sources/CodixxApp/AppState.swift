@@ -408,10 +408,8 @@ final class AppState: ObservableObject {
             break
         case .notifyRestartRecommended:
             postSwitchRestartMessage = strings.restartCodexHint
-            errorMessage = strings.restartCodexHint
         case .restartCodexApp:
             postSwitchRestartMessage = strings.restartCodexHint
-            errorMessage = strings.restartCodexHint
         }
     }
 

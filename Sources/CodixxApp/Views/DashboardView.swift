@@ -71,22 +71,6 @@ struct DashboardView: View {
         .onAppear {
             state.refreshFromMenuOpen()
         }
-        .alert(
-            state.strings.codexRestartRequired,
-            isPresented: Binding(
-                get: { state.postSwitchRestartMessage != nil },
-                set: { if !$0 { state.dismissPostSwitchRestartMessage() } }
-            )
-        ) {
-            Button(state.strings.cancel, role: .cancel) {
-                state.dismissPostSwitchRestartMessage()
-            }
-            Button(state.strings.restartCodexNow) {
-                state.restartCodexNow()
-            }
-        } message: {
-            Text(state.postSwitchRestartMessage ?? state.strings.restartCodexHint)
-        }
     }
 
     private var overview: some View {
@@ -94,6 +78,7 @@ struct DashboardView: View {
             VStack(alignment: .leading, spacing: 14) {
                 QuotaView(account: state.currentAccount, config: state.config, strings: state.strings)
                 activeThreadCard
+                restartReminderCard
 
                 if let error = state.errorMessage {
                     Label(error, systemImage: "exclamationmark.triangle")
@@ -107,6 +92,33 @@ struct DashboardView: View {
                 }
             }
             .padding(14)
+        }
+    }
+
+    @ViewBuilder
+    private var restartReminderCard: some View {
+        if let message = state.postSwitchRestartMessage {
+            VStack(alignment: .leading, spacing: 10) {
+                Label(state.strings.codexRestartRequired, systemImage: "arrow.clockwise.circle")
+                    .font(.subheadline.weight(.semibold))
+                Text(message)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                HStack {
+                    Button(state.strings.cancel) {
+                        state.dismissPostSwitchRestartMessage()
+                    }
+                    Spacer()
+                    Button(state.strings.restartCodexNow) {
+                        state.restartCodexNow()
+                    }
+                }
+                .font(.caption)
+            }
+            .padding(12)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(Color.blue.opacity(0.10), in: RoundedRectangle(cornerRadius: 8))
         }
     }
 
