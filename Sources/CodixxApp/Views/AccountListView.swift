@@ -267,7 +267,8 @@ struct AccountListView: View {
     ) -> some View {
         VStack(alignment: .leading, spacing: 4) {
             HStack {
-                Text(title)
+                Text("\(title) · \(resetText)")
+                    .lineLimit(1)
                 Spacer()
                 Text(percent.map { "\(Int($0.rounded()))%" } ?? "--")
                     .monospacedDigit()
@@ -277,11 +278,6 @@ struct AccountListView: View {
 
             ProgressView(value: min(max((percent ?? 0) / 100, 0), 1))
                 .tint(tint)
-
-            Text(resetText)
-                .font(.caption2)
-                .foregroundStyle(.secondary)
-                .lineLimit(1)
         }
     }
 

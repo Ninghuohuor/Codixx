@@ -55,7 +55,7 @@ struct QuotaView: View {
     ) -> some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack {
-                Text(title)
+                Text("\(title) · \(resetText)")
                 Spacer()
                 Text(percentText)
                     .monospacedDigit()
@@ -65,10 +65,6 @@ struct QuotaView: View {
 
             ProgressView(value: progress)
                 .tint(tint)
-
-            Label(resetText, systemImage: "clock")
-                .font(.caption2)
-                .foregroundStyle(.secondary)
         }
     }
 
