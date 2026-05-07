@@ -24,6 +24,7 @@ final class AppState: ObservableObject {
         totalTokens: 0,
         activeThread: nil
     )
+    @Published private(set) var topThreads: [ThreadUsage] = []
     @Published private(set) var switchEvents: [SwitchAuditEvent] = []
     @Published private(set) var lastUpdatedAt: Date?
     @Published private(set) var isRefreshing = false
@@ -87,10 +88,6 @@ final class AppState: ObservableObject {
         return used >= config.primaryThresholdPercent ? "exclamationmark.triangle.fill" : "bolt.circle.fill"
     }
 
-    var topThreads: [ThreadUsage] {
-        Array(usageSnapshot.threads.sorted { $0.tokensUsed > $1.tokensUsed }.prefix(10))
-    }
-
     var candidateAccounts: [CodixxAccount] {
         SwitchPolicy(primaryThresholdPercent: config.primaryThresholdPercent)
             .orderedCandidates(from: accounts.filter { $0.id != currentAccount?.id }) { _ in true }
@@ -119,7 +116,8 @@ final class AppState: ObservableObject {
             allowAutoSwitch: false,
             preservingError: nil,
             throttled: true,
-            refreshUsage: false
+            refreshUsage: false,
+            refreshUsageIfEmpty: false
         )
     }
 
@@ -128,7 +126,8 @@ final class AppState: ObservableObject {
         allowAutoSwitch: Bool,
         preservingError preservedError: String?,
         throttled: Bool,
-        refreshUsage: Bool = true
+        refreshUsage: Bool = true,
+        refreshUsageIfEmpty: Bool = true
     ) {
         guard !isRefreshInProgress else { return }
         let refreshStartedAt = now()
@@ -176,12 +175,12 @@ final class AppState: ObservableObject {
 
         accounts = loadedAccounts
         currentAccount = currentAccount(in: loadedAccounts)
-        if refreshUsage || usageSnapshot.threads.isEmpty {
+        if refreshUsage || (refreshUsageIfEmpty && usageSnapshot.threads.isEmpty) {
             let latestUsageSnapshot = threadUsageReader.readSnapshot(now: now())
             if latestUsageSnapshot.isDegraded, !usageSnapshot.threads.isEmpty {
                 refreshErrors.append(latestUsageSnapshot.errorSummary ?? strings.usageReadFailed)
             } else {
-                usageSnapshot = latestUsageSnapshot
+                applyUsageSnapshot(latestUsageSnapshot)
             }
         }
 
@@ -216,6 +215,11 @@ final class AppState: ObservableObject {
         if allowAutoSwitch {
             attemptAutoSwitchIfNeeded()
         }
+    }
+
+    private func applyUsageSnapshot(_ snapshot: ThreadUsageSnapshot) {
+        usageSnapshot = snapshot
+        topThreads = Array(snapshot.threads.sorted { $0.tokensUsed > $1.tokensUsed }.prefix(10))
     }
 
     func attemptAutoSwitchIfNeeded() {
