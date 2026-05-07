@@ -240,7 +240,7 @@ public struct CodixxStrings: Sendable {
         case .notifyRestartRecommended:
             return text(en: "Remind to restart", zh: "提醒重启")
         case .restartCodexApp:
-            return text(en: "Restart Codex", zh: "重启 Codex")
+            return text(en: "Show restart button", zh: "显示重启按钮")
         }
     }
 
