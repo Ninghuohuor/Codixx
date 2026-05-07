@@ -19,7 +19,18 @@ public struct ThreadUsageReader: Sendable {
     public func readSnapshot(now: Date) -> ThreadUsageSnapshot {
         do {
             let threads = try readThreadsWithRetries()
-            return UsageAggregator.snapshot(threads: threads, now: now)
+            return UsageAggregator.snapshot(
+                threads: threads,
+                now: now,
+                dailyTokenUsage: tokenUsageBuckets(
+                    for: threads,
+                    intervals: dailyIntervals(now: now)
+                ),
+                hourlyTokenUsage: tokenUsageBuckets(
+                    for: threads,
+                    intervals: hourlyIntervals(now: now)
+                )
+            )
         } catch {
             return .degraded(error.localizedDescription)
         }
@@ -210,6 +221,92 @@ public struct ThreadUsageReader: Sendable {
         return fractionalFormatter.date(from: text)
     }
 
+    private func dailyIntervals(now: Date) -> [DateInterval] {
+        let calendar = Calendar.current
+        let today = calendar.startOfDay(for: now)
+        let start = calendar.date(byAdding: .day, value: -6, to: today) ?? today.addingTimeInterval(-6 * 86_400)
+        return (0..<7).map { offset in
+            let day = calendar.date(byAdding: .day, value: offset, to: start) ?? start.addingTimeInterval(TimeInterval(offset * 86_400))
+            let nextDay = calendar.date(byAdding: .day, value: 1, to: day) ?? day.addingTimeInterval(86_400)
+            return DateInterval(start: day, end: nextDay)
+        }
+    }
+
+    private func hourlyIntervals(now: Date) -> [DateInterval] {
+        let calendar = Calendar.current
+        let currentHour = calendar.dateInterval(of: .hour, for: now)?.start ?? now
+        let start = calendar.date(byAdding: .hour, value: -23, to: currentHour) ?? currentHour.addingTimeInterval(-23 * 3_600)
+        return (0..<24).map { offset in
+            let hour = calendar.date(byAdding: .hour, value: offset, to: start) ?? start.addingTimeInterval(TimeInterval(offset * 3_600))
+            let nextHour = calendar.date(byAdding: .hour, value: 1, to: hour) ?? hour.addingTimeInterval(3_600)
+            return DateInterval(start: hour, end: nextHour)
+        }
+    }
+
+    private func tokenUsageBuckets(for threads: [ThreadUsage], intervals: [DateInterval]) -> [TokenUsageBucket] {
+        guard let firstInterval = intervals.first else { return [] }
+        var totals = Dictionary(uniqueKeysWithValues: intervals.map { ($0.start, 0) })
+
+        for thread in threads where thread.updatedAt >= firstInterval.start {
+            let events = readTokenEvents(from: URL(fileURLWithPath: thread.rolloutPath))
+            guard !events.isEmpty else { continue }
+
+            for interval in intervals {
+                let maxInInterval = events
+                    .filter { $0.timestamp >= interval.start && $0.timestamp < interval.end }
+                    .map(\.totalTokens)
+                    .max()
+                guard let maxInInterval else { continue }
+
+                let baseline = events.last { $0.timestamp < interval.start }?.totalTokens ?? 0
+                totals[interval.start, default: 0] += max(0, maxInInterval - baseline)
+            }
+        }
+
+        return intervals.map { TokenUsageBucket(start: $0.start, tokens: totals[$0.start] ?? 0) }
+    }
+
+    private func readTokenEvents(from url: URL) -> [TokenUsageEvent] {
+        guard let content = try? String(contentsOf: url, encoding: .utf8) else { return [] }
+        return content
+            .split(separator: "\n")
+            .compactMap { parseTokenUsageEvent(String($0)) }
+            .sorted { $0.timestamp < $1.timestamp }
+    }
+
+    private func parseTokenUsageEvent(_ line: String) -> TokenUsageEvent? {
+        guard let data = line.data(using: .utf8),
+              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              object["type"] as? String == "event_msg",
+              let timestampText = object["timestamp"] as? String,
+              let timestamp = parseISO8601Date(timestampText),
+              let payload = object["payload"] as? [String: Any],
+              payload["type"] as? String == "token_count",
+              let info = payload["info"] as? [String: Any],
+              let totalTokenUsage = info["total_token_usage"] as? [String: Any],
+              let totalTokens = integerValue(totalTokenUsage["total_tokens"])
+        else {
+            return nil
+        }
+
+        return TokenUsageEvent(timestamp: timestamp, totalTokens: totalTokens)
+    }
+
+    private func integerValue(_ value: Any?) -> Int? {
+        switch value {
+        case let int as Int:
+            return int
+        case let int64 as Int64:
+            return Int(int64)
+        case let double as Double where double.rounded() == double:
+            return Int(double)
+        case let number as NSNumber:
+            return number.intValue
+        default:
+            return nil
+        }
+    }
+
     private func errorMessage(_ database: OpaquePointer) -> String {
         guard let message = sqlite3_errmsg(database) else {
             return "Unknown SQLite error"
@@ -221,6 +318,11 @@ public struct ThreadUsageReader: Sendable {
         code == SQLITE_BUSY || code == SQLITE_LOCKED
     }
 
+}
+
+private struct TokenUsageEvent {
+    var timestamp: Date
+    var totalTokens: Int
 }
 
 private enum ThreadUsageReaderError: LocalizedError {

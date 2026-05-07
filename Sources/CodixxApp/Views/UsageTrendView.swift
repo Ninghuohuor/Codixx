@@ -62,15 +62,8 @@ struct UsageTrendView: View {
     }
 
     private var dailyBuckets: [TokenBucket] {
-        let calendar = Calendar.current
-        let start = calendar.startOfDay(for: Date()).addingTimeInterval(-6 * 86_400)
-        return (0..<7).map { offset in
-            let day = calendar.date(byAdding: .day, value: offset, to: start) ?? start
-            let nextDay = calendar.date(byAdding: .day, value: 1, to: day) ?? day.addingTimeInterval(86_400)
-            let tokens = snapshot.threads
-                .filter { $0.updatedAt >= day && $0.updatedAt < nextDay }
-                .reduce(0) { $0 + $1.tokensUsed }
-            return TokenBucket(id: day.timeIntervalSince1970, date: day, tokens: tokens)
+        snapshot.dailyTokenUsage.map { bucket in
+            TokenBucket(id: bucket.start.timeIntervalSince1970, date: bucket.start, tokens: bucket.tokens)
         }
     }
 
@@ -86,23 +79,12 @@ struct UsageTrendView: View {
         let calendar = Calendar.current
         let today = calendar.startOfDay(for: Date())
         let day = calendar.date(byAdding: .day, value: offset, to: today) ?? today
-        let nextDay = calendar.date(byAdding: .day, value: 1, to: day) ?? day.addingTimeInterval(86_400)
-        return snapshot.threads
-            .filter { $0.updatedAt >= day && $0.updatedAt < nextDay }
-            .reduce(0) { $0 + $1.tokensUsed }
+        return snapshot.dailyTokenUsage.first { calendar.isDate($0.start, inSameDayAs: day) }?.tokens ?? 0
     }
 
     private var hourlyBuckets: [TokenBucket] {
-        let calendar = Calendar.current
-        let currentHour = calendar.dateInterval(of: .hour, for: Date())?.start ?? Date()
-        let start = calendar.date(byAdding: .hour, value: -23, to: currentHour) ?? currentHour
-        return (0..<24).map { offset in
-            let hour = calendar.date(byAdding: .hour, value: offset, to: start) ?? start
-            let nextHour = calendar.date(byAdding: .hour, value: 1, to: hour) ?? hour.addingTimeInterval(3_600)
-            let tokens = snapshot.threads
-                .filter { $0.updatedAt >= hour && $0.updatedAt < nextHour }
-                .reduce(0) { $0 + $1.tokensUsed }
-            return TokenBucket(id: hour.timeIntervalSince1970, date: hour, tokens: tokens)
+        snapshot.hourlyTokenUsage.map { bucket in
+            TokenBucket(id: bucket.start.timeIntervalSince1970, date: bucket.start, tokens: bucket.tokens)
         }
     }
 }

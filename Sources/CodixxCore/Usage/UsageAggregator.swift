@@ -31,10 +31,22 @@ public struct ThreadUsage: Equatable, Sendable {
     }
 }
 
+public struct TokenUsageBucket: Equatable, Sendable {
+    public var start: Date
+    public var tokens: Int
+
+    public init(start: Date, tokens: Int) {
+        self.start = start
+        self.tokens = tokens
+    }
+}
+
 public struct ThreadUsageSnapshot: Equatable, Sendable {
     public var threads: [ThreadUsage]
     public var totalTokens: Int
     public var activeThread: ThreadUsage?
+    public var dailyTokenUsage: [TokenUsageBucket]
+    public var hourlyTokenUsage: [TokenUsageBucket]
     public var errorSummary: String?
 
     public var isDegraded: Bool {
@@ -45,11 +57,15 @@ public struct ThreadUsageSnapshot: Equatable, Sendable {
         threads: [ThreadUsage],
         totalTokens: Int,
         activeThread: ThreadUsage?,
+        dailyTokenUsage: [TokenUsageBucket] = [],
+        hourlyTokenUsage: [TokenUsageBucket] = [],
         errorSummary: String? = nil
     ) {
         self.threads = threads
         self.totalTokens = totalTokens
         self.activeThread = activeThread
+        self.dailyTokenUsage = dailyTokenUsage
+        self.hourlyTokenUsage = hourlyTokenUsage
         self.errorSummary = errorSummary
     }
 
@@ -62,7 +78,9 @@ public enum UsageAggregator {
     public static func snapshot(
         threads: [ThreadUsage],
         now: Date,
-        activeWindow: TimeInterval = 600
+        activeWindow: TimeInterval = 600,
+        dailyTokenUsage: [TokenUsageBucket] = [],
+        hourlyTokenUsage: [TokenUsageBucket] = []
     ) -> ThreadUsageSnapshot {
         let sortedThreads = threads.sorted {
             if $0.updatedAt == $1.updatedAt {
@@ -79,7 +97,9 @@ public enum UsageAggregator {
         return ThreadUsageSnapshot(
             threads: sortedThreads,
             totalTokens: totalTokens,
-            activeThread: activeThread
+            activeThread: activeThread,
+            dailyTokenUsage: dailyTokenUsage,
+            hourlyTokenUsage: hourlyTokenUsage
         )
     }
 }
