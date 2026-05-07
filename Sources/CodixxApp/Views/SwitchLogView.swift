@@ -79,8 +79,6 @@ struct SwitchLogView: View {
             Text(value)
                 .font(.caption2.monospaced())
                 .foregroundStyle(.secondary)
-                .lineLimit(3)
-                .truncationMode(.middle)
                 .textSelection(.enabled)
         }
         .padding(8)
