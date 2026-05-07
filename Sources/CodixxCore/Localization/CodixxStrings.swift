@@ -142,15 +142,15 @@ public struct CodixxStrings: Sendable {
 
     public func resets(_ date: Date) -> String {
         text(
-            en: "5-hour resets \(date.formatted(date: .omitted, time: .shortened))",
-            zh: "5 小时 \(date.formatted(date: .omitted, time: .shortened)) 重置"
+            en: "Resets \(date.formatted(date: .omitted, time: .shortened))",
+            zh: "\(date.formatted(date: .omitted, time: .shortened)) 重置"
         )
     }
 
     public func weeklyResets(_ date: Date) -> String {
         text(
-            en: "Weekly resets \(date.formatted(date: .numeric, time: .shortened))",
-            zh: "周额度 \(date.formatted(date: .numeric, time: .shortened)) 重置"
+            en: "Resets \(date.formatted(date: .numeric, time: .shortened))",
+            zh: "\(date.formatted(date: .numeric, time: .shortened)) 重置"
         )
     }
 

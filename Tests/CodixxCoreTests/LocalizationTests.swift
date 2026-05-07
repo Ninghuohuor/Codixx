@@ -44,6 +44,8 @@ final class LocalizationTests: XCTestCase {
         XCTAssertEqual(strings.codexRestartRequired, "Restart Codex required")
         XCTAssertEqual(strings.postSwitchActionLabel(.restartCodexApp), "Restart Codex")
         XCTAssertEqual(strings.restartCodexNow, "Restart Codex now")
+        XCTAssertFalse(strings.resets(Date(timeIntervalSince1970: 1_777_000_000)).contains("5-hour quota"))
+        XCTAssertFalse(strings.weeklyResets(Date(timeIntervalSince1970: 1_777_000_000)).contains("Weekly quota"))
         XCTAssertTrue(strings.weeklyResets(Date(timeIntervalSince1970: 1_777_000_000)).contains("2026"))
     }
 
@@ -89,6 +91,8 @@ final class LocalizationTests: XCTestCase {
         XCTAssertEqual(strings.codexRestartRequired, "需要重启 Codex")
         XCTAssertEqual(strings.postSwitchActionLabel(.restartCodexApp), "重启 Codex")
         XCTAssertEqual(strings.restartCodexNow, "立即重启 Codex")
+        XCTAssertFalse(strings.resets(Date(timeIntervalSince1970: 1_777_000_000)).contains("5 小时额度"))
+        XCTAssertFalse(strings.weeklyResets(Date(timeIntervalSince1970: 1_777_000_000)).contains("周额度"))
         XCTAssertTrue(strings.weeklyResets(Date(timeIntervalSince1970: 1_777_000_000)).contains("2026"))
     }
 }

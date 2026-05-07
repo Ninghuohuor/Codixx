@@ -88,8 +88,8 @@ struct QuotaView: View {
     }
 
     private var secondaryPercentText: String {
-        guard let used = quota?.secondaryUsedPercent else { return strings.weeklyUnknown }
-        return strings.weeklyPercent(Int(used.rounded()))
+        guard let used = quota?.secondaryUsedPercent else { return "--" }
+        return "\(Int(used.rounded()))%"
     }
 
     private var resetText: String {
