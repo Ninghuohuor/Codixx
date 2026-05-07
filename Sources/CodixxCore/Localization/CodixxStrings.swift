@@ -81,8 +81,8 @@ public struct CodixxStrings: Sendable {
     public var errorSummaryLabel: String { text(en: "Error", zh: "错误") }
     public var backupPathLabel: String { text(en: "Backup", zh: "备份") }
     public var total: String { text(en: "Total Tokens", zh: "Token 总量") }
-    public var todayTokens: String { text(en: "Today", zh: "今日 token 用量") }
-    public var yesterdayTokens: String { text(en: "Yesterday", zh: "昨日 token 用量") }
+    public var todayTokens: String { text(en: "Today", zh: "今日 Token 用量") }
+    public var yesterdayTokens: String { text(en: "Yesterday", zh: "昨日 Token 用量") }
     public var threads: String { text(en: "Threads", zh: "会话") }
     public var tokens: String { text(en: "Tokens", zh: "Token") }
     public var day: String { text(en: "Day", zh: "日期") }

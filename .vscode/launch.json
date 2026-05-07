@@ -1,0 +1,24 @@
+{
+    "configurations": [
+        {
+            "type": "swift",
+            "request": "launch",
+            "args": [],
+            "cwd": "${workspaceFolder:Codixx}",
+            "name": "Debug Codixx",
+            "target": "Codixx",
+            "configuration": "debug",
+            "preLaunchTask": "swift: Build Debug Codixx"
+        },
+        {
+            "type": "swift",
+            "request": "launch",
+            "args": [],
+            "cwd": "${workspaceFolder:Codixx}",
+            "name": "Release Codixx",
+            "target": "Codixx",
+            "configuration": "release",
+            "preLaunchTask": "swift: Build Release Codixx"
+        }
+    ]
+}
