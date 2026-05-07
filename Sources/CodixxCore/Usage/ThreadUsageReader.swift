@@ -256,13 +256,21 @@ public struct ThreadUsageReader: Sendable {
             guard !events.isEmpty else { continue }
 
             for interval in intervals {
-                let maxInInterval = events
+                let eventsInInterval = events
                     .filter { $0.timestamp >= interval.start && $0.timestamp < interval.end }
+                let maxInInterval = eventsInInterval
                     .map(\.totalTokens)
                     .max()
                 guard let maxInInterval else { continue }
 
-                let baseline = events.last { $0.timestamp < interval.start }?.totalTokens ?? 0
+                let baseline: Int
+                if let previousEvent = events.last(where: { $0.timestamp < interval.start }) {
+                    baseline = previousEvent.totalTokens
+                } else if thread.createdAt >= interval.start {
+                    baseline = 0
+                } else {
+                    baseline = eventsInInterval.first?.totalTokens ?? maxInInterval
+                }
                 totals[interval.start, default: 0] += max(0, maxInInterval - baseline)
             }
         }
