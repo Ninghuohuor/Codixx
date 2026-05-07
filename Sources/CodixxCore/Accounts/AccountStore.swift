@@ -64,13 +64,20 @@ public struct AccountStore {
         let snapshot = try AuthSnapshot(jsonData: Data(contentsOf: paths.authJSON))
         let fingerprint = try AccountFingerprint.generate(from: snapshot)
         var metadata = try metadataStore.load()
-        guard !metadata.accounts.contains(where: { $0.fingerprint == fingerprint }) else {
-            throw AccountStoreError.duplicateFingerprint(fingerprint)
+        let timestamp = now()
+        let profile = AuthProfileReader.profile(from: snapshot)
+
+        if let existingIndex = metadata.accounts.firstIndex(where: { $0.fingerprint == fingerprint }) {
+            try vault.save(snapshot: snapshot, fingerprint: fingerprint)
+            metadata.accounts[existingIndex].updatedAt = timestamp
+            metadata.accounts[existingIndex].lastUsedAt = timestamp
+            metadata.accounts[existingIndex].membershipExpiresAt = profile?.membershipExpiresAt ?? metadata.accounts[existingIndex].membershipExpiresAt
+            metadata.accounts[existingIndex].quota.planType = profile?.planType ?? metadata.accounts[existingIndex].quota.planType
+            try metadataStore.save(metadata)
+            return metadata.accounts[existingIndex]
         }
 
-        let timestamp = now()
         let id = idGenerator()
-        let profile = AuthProfileReader.profile(from: snapshot)
         var quota = AccountQuotaState.unknown(accountId: id.uuidString, alias: alias)
         quota.planType = profile?.planType
         let account = CodixxAccount(

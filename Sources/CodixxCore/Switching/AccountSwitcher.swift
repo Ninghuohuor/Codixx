@@ -8,6 +8,8 @@ public enum AccountSwitchResult: Equatable, Sendable {
 public enum AccountSwitchError: Error, Equatable, LocalizedError, Sendable {
     case rollbackFailed(String)
     case insufficientDiskSpace(minimumBytes: Int64)
+    case expiredAuthSnapshot(alias: String)
+    case couldNotRefreshSourceSnapshot(String)
 
     public var errorDescription: String? {
         switch self {
@@ -15,6 +17,10 @@ public enum AccountSwitchError: Error, Equatable, LocalizedError, Sendable {
             return "Rollback failed after an account switch error. \(message)"
         case .insufficientDiskSpace(let minimumBytes):
             return "Not enough free disk space to switch accounts safely. At least \(minimumBytes) bytes are required."
+        case .expiredAuthSnapshot(let alias):
+            return "Saved auth for \(alias) is expired. Log out and sign in to this account in Codex, then save the account again in Codixx."
+        case .couldNotRefreshSourceSnapshot(let message):
+            return "Could not refresh the current account snapshot before switching. \(message)"
         }
     }
 }
@@ -39,6 +45,7 @@ public struct FileManagerDiskSpaceChecker: DiskSpaceChecking {
 
 public struct AccountSwitcher {
     public static let minimumFreeDiskSpaceBytes: Int64 = 50 * 1024 * 1024
+    private static let minimumTargetAccessTokenLifetime: TimeInterval = 60
 
     public let paths: CodixxPaths
     private let metadataStore: AccountMetadataStore
@@ -93,6 +100,7 @@ public struct AccountSwitcher {
         }
         let target = metadata.accounts[targetIndex]
         let source = currentAccount(in: metadata)
+        try refreshSourceSnapshotIfCurrentAuthMatches(source)
 
         guard diskSpaceChecker.hasAvailableSpace(
             at: paths.applicationSupport,
@@ -128,6 +136,20 @@ public struct AccountSwitcher {
         do {
             targetSnapshot = try vault.load(fingerprint: target.fingerprint)
         } catch {
+            try auditLog.append(event(
+                trigger: trigger,
+                source: source,
+                target: target,
+                result: .failedBeforeWrite,
+                error: error,
+                backupURL: backupURL
+            ))
+            throw error
+        }
+        if let accessTokenExpiresAt = targetSnapshot.accessTokenExpiresAt,
+           accessTokenExpiresAt <= now().addingTimeInterval(Self.minimumTargetAccessTokenLifetime)
+        {
+            let error = AccountSwitchError.expiredAuthSnapshot(alias: target.alias)
             try auditLog.append(event(
                 trigger: trigger,
                 source: source,
@@ -195,6 +217,22 @@ public struct AccountSwitcher {
             backupURL: backupURL
         ))
         return .success(target: metadata.accounts[targetIndex])
+    }
+
+    private func refreshSourceSnapshotIfCurrentAuthMatches(_ source: CodixxAccount?) throws {
+        guard let source,
+              let authData = try? Data(contentsOf: paths.authJSON),
+              let snapshot = try? AuthSnapshot(jsonData: authData),
+              (try? fingerprintGenerator(snapshot)) == source.fingerprint
+        else {
+            return
+        }
+
+        do {
+            try vault.save(snapshot: snapshot, fingerprint: source.fingerprint)
+        } catch {
+            throw AccountSwitchError.couldNotRefreshSourceSnapshot(error.localizedDescription)
+        }
     }
 
     private func restoreAfterFailure(

@@ -85,25 +85,33 @@ final class AccountStoreTests: XCTestCase {
         XCTAssertEqual(metadata.accounts.first?.membershipExpiresAt, ISO8601DateFormatter().date(from: "2026-06-01T00:00:00Z"))
     }
 
-    func testSaveCurrentAuthRejectsDuplicateFingerprint() throws {
+    func testSaveCurrentAuthUpdatesExistingSnapshotForDuplicateFingerprint() throws {
         let home = try makeTempHome()
         defer { try? FileManager.default.removeItem(at: home) }
         let paths = CodixxPaths(home: home)
         try FileManager.default.createDirectory(at: paths.codexHome, withIntermediateDirectories: true)
         try Data(#"{"account_id":"acct_main","access_token":"secret"}"#.utf8).write(to: paths.authJSON)
+        let vault = InMemoryAuthSnapshotVault()
         let store = AccountStore(
             paths: paths,
             metadataStore: AccountMetadataStore(paths: paths),
-            vault: InMemoryAuthSnapshotVault(),
+            vault: vault,
             now: { Date(timeIntervalSince1970: 100) },
             idGenerator: { UUID() }
         )
 
-        _ = try store.saveCurrentAuth(alias: "Main")
+        let original = try store.saveCurrentAuth(alias: "Main")
+        let refreshedData = Data(#"{"account_id":"acct_main","access_token":"fresh-secret"}"#.utf8)
+        try refreshedData.write(to: paths.authJSON)
 
-        XCTAssertThrowsError(try store.saveCurrentAuth(alias: "Duplicate")) { error in
-            XCTAssertEqual(error as? AccountStoreError, .duplicateFingerprint("account:acct_main"))
-        }
+        let refreshed = try store.saveCurrentAuth(alias: "Duplicate")
+        let metadata = try AccountMetadataStore(paths: paths).load()
+
+        XCTAssertEqual(refreshed.id, original.id)
+        XCTAssertEqual(refreshed.alias, "Main")
+        XCTAssertEqual(refreshed.updatedAt, Date(timeIntervalSince1970: 100))
+        XCTAssertEqual(metadata.accounts.count, 1)
+        XCTAssertEqual(vault.snapshotDataByFingerprint[original.fingerprint], refreshedData)
     }
 
     func testRenameAccountUpdatesAliasAndQuotaAlias() throws {

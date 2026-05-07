@@ -39,6 +39,39 @@ final class AccountSwitcherTests: XCTestCase {
         XCTAssertEqual(auditEvents.first?.targetAlias, "Backup")
     }
 
+    func testSwitchRefreshesSourceSnapshotBeforeWritingTarget() throws {
+        let fixture = try SwitchFixture()
+        defer { fixture.cleanup() }
+        let updatedSourceAuth = try AuthSnapshot(jsonData: Data(#"{"account_id":"source","access_token":"fresh-source-secret"}"#.utf8))
+        try updatedSourceAuth.jsonData.write(to: fixture.paths.authJSON)
+        let switcher = fixture.switcher()
+
+        _ = try switcher.switchToAccount(fixture.target.id, trigger: .manual)
+
+        XCTAssertEqual(fixture.vault.snapshots[fixture.source.fingerprint]?.jsonData, updatedSourceAuth.jsonData)
+    }
+
+    func testSwitchRejectsExpiredTargetAccessTokenBeforeWritingAuth() throws {
+        let fixture = try SwitchFixture()
+        defer { fixture.cleanup() }
+        let expiredTargetAuth = try AuthSnapshot(jsonData: Data(
+            """
+            {"account_id":"target","access_token":"\(Self.jwt(expiration: 900))"}
+            """.utf8
+        ))
+        try fixture.vault.save(snapshot: expiredTargetAuth, fingerprint: fixture.target.fingerprint)
+        let switcher = fixture.switcher()
+
+        XCTAssertThrowsError(try switcher.switchToAccount(fixture.target.id, trigger: .manual)) { error in
+            XCTAssertEqual(error as? AccountSwitchError, .expiredAuthSnapshot(alias: "Backup"))
+        }
+        let writtenAuth = try Data(contentsOf: fixture.paths.authJSON)
+        let auditEvents = try fixture.auditLog.loadEvents()
+
+        XCTAssertEqual(writtenAuth, fixture.sourceAuth.jsonData)
+        XCTAssertEqual(auditEvents.map(\.result), [.failedBeforeWrite])
+    }
+
     func testSwitchWritesAuthAndBackupWithOwnerOnlyPermissions() throws {
         let fixture = try SwitchFixture()
         defer { fixture.cleanup() }
@@ -178,6 +211,22 @@ final class AccountSwitcherTests: XCTestCase {
 
         XCTAssertEqual(backupFiles.count, 20)
         XCTAssertFalse(backupFiles.contains { $0.lastPathComponent.contains("1970-01-01T02-46-40Z") })
+    }
+
+    private static func jwt(expiration: Int) -> String {
+        [
+            base64URL(["alg": "none"]),
+            base64URL(["exp": expiration]),
+            "signature"
+        ].joined(separator: ".")
+    }
+
+    private static func base64URL(_ object: [String: Any]) -> String {
+        let data = try! JSONSerialization.data(withJSONObject: object, options: [.sortedKeys])
+        return data.base64EncodedString()
+            .replacingOccurrences(of: "+", with: "-")
+            .replacingOccurrences(of: "/", with: "_")
+            .replacingOccurrences(of: "=", with: "")
     }
 }
 
