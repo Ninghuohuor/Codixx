@@ -6,6 +6,7 @@ public struct ThreadUsage: Equatable, Sendable {
     public var model: String
     public var reasoningEffort: String
     public var tokensUsed: Int
+    public var cwd: String
     public var createdAt: Date
     public var updatedAt: Date
     public var rolloutPath: String
@@ -16,6 +17,7 @@ public struct ThreadUsage: Equatable, Sendable {
         model: String,
         reasoningEffort: String,
         tokensUsed: Int,
+        cwd: String,
         createdAt: Date,
         updatedAt: Date,
         rolloutPath: String
@@ -25,6 +27,7 @@ public struct ThreadUsage: Equatable, Sendable {
         self.model = model
         self.reasoningEffort = reasoningEffort
         self.tokensUsed = tokensUsed
+        self.cwd = cwd
         self.createdAt = createdAt
         self.updatedAt = updatedAt
         self.rolloutPath = rolloutPath

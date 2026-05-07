@@ -62,10 +62,11 @@ public struct ThreadUsageReader: Sendable {
         let database = try openDatabase()
         defer { sqlite3_close(database) }
 
-        try validateSchema(database)
+        let columns = try validateSchema(database)
+        let cwdSelection = columns.contains("cwd") ? "cwd" : "'' AS cwd"
 
         let sql = """
-        SELECT id, title, model, reasoning_effort, tokens_used, created_at, updated_at, rollout_path
+        SELECT id, title, model, reasoning_effort, tokens_used, \(cwdSelection), created_at, updated_at, rollout_path
         FROM threads
         ORDER BY updated_at DESC
         """
@@ -105,7 +106,7 @@ public struct ThreadUsageReader: Sendable {
         return openedDatabase
     }
 
-    private func validateSchema(_ database: OpaquePointer) throws {
+    private func validateSchema(_ database: OpaquePointer) throws -> Set<String> {
         let statement = try prepare(database, sql: "PRAGMA table_info(threads)")
         defer { sqlite3_finalize(statement) }
 
@@ -137,6 +138,8 @@ public struct ThreadUsageReader: Sendable {
         if !missing.isEmpty {
             throw ThreadUsageReaderError.incompatibleSchema("Missing threads columns: \(missing.joined(separator: ", "))")
         }
+
+        return columns
     }
 
     private func prepare(_ database: OpaquePointer, sql: String) throws -> OpaquePointer {
@@ -153,8 +156,8 @@ public struct ThreadUsageReader: Sendable {
     }
 
     private func makeThread(from statement: OpaquePointer) throws -> ThreadUsage {
-        let createdAt = try requiredTimestampColumn(statement, index: 5, name: "created_at")
-        let updatedAt = try requiredTimestampColumn(statement, index: 6, name: "updated_at")
+        let createdAt = try requiredTimestampColumn(statement, index: 6, name: "created_at")
+        let updatedAt = try requiredTimestampColumn(statement, index: 7, name: "updated_at")
         let tokenType = sqlite3_column_type(statement, 4)
         guard tokenType == SQLITE_INTEGER else {
             throw ThreadUsageReaderError.incompatibleSchema("Invalid tokens_used value in threads table")
@@ -166,9 +169,10 @@ public struct ThreadUsageReader: Sendable {
             model: try requiredTextColumn(statement, index: 2, name: "model"),
             reasoningEffort: try requiredTextColumn(statement, index: 3, name: "reasoning_effort"),
             tokensUsed: Int(sqlite3_column_int64(statement, 4)),
+            cwd: try requiredTextColumn(statement, index: 5, name: "cwd"),
             createdAt: createdAt,
             updatedAt: updatedAt,
-            rolloutPath: try requiredTextColumn(statement, index: 7, name: "rollout_path")
+            rolloutPath: try requiredTextColumn(statement, index: 8, name: "rollout_path")
         )
     }
 

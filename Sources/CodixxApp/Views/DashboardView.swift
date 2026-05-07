@@ -124,7 +124,7 @@ struct DashboardView: View {
                     Text(thread.title)
                         .font(.subheadline.weight(.semibold))
                         .lineLimit(1)
-                    Text("\(thread.tokensUsed.formatted()) \(state.strings.tokens) / \(thread.model)")
+                    Text(activeThreadDetail(thread))
                         .font(.caption)
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
@@ -140,6 +140,23 @@ struct DashboardView: View {
         .padding(12)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 8))
+    }
+
+    private func activeThreadDetail(_ thread: ThreadUsage) -> String {
+        let projectName = projectFolderName(from: thread.cwd)
+        let usage = "\(thread.tokensUsed.formatted()) \(state.strings.tokens)"
+        if let projectName {
+            return "\(projectName) / \(usage) / \(thread.model)"
+        }
+        return "\(usage) / \(thread.model)"
+    }
+
+    private func projectFolderName(from cwd: String) -> String? {
+        let trimmed = cwd.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+        let url = URL(fileURLWithPath: trimmed, isDirectory: true)
+        let name = url.lastPathComponent.trimmingCharacters(in: .whitespacesAndNewlines)
+        return name.isEmpty ? trimmed : name
     }
 
     private var trends: some View {

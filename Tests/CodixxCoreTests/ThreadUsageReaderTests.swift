@@ -18,6 +18,7 @@ final class ThreadUsageReaderTests: XCTestCase {
         XCTAssertEqual(snapshot.threads.first?.model, "gpt-5")
         XCTAssertEqual(snapshot.threads.first?.reasoningEffort, "high")
         XCTAssertEqual(snapshot.threads.first?.tokensUsed, 3_400)
+        XCTAssertEqual(snapshot.threads.first?.cwd, "")
         XCTAssertEqual(snapshot.threads.first?.rolloutPath, "/tmp/t2.jsonl")
     }
 
@@ -72,6 +73,7 @@ final class ThreadUsageReaderTests: XCTestCase {
                     'gpt-5',
                     'medium',
                     42,
+                    '/tmp/project',
                     '2026-05-06T03:20:00.123Z',
                     '2026-05-06T03:30:00.456Z',
                     '/tmp/fractional.jsonl'
@@ -86,6 +88,7 @@ final class ThreadUsageReaderTests: XCTestCase {
 
         XCTAssertFalse(snapshot.isDegraded)
         XCTAssertEqual(snapshot.threads.first?.id, "fractional")
+        XCTAssertEqual(snapshot.threads.first?.cwd, "/tmp/project")
         XCTAssertEqual(snapshot.activeThread?.id, "fractional")
     }
 
@@ -107,6 +110,7 @@ final class ThreadUsageReaderTests: XCTestCase {
                     'gpt-5',
                     'medium',
                     42,
+                    '/tmp/project',
                     1772881214,
                     1773255277,
                     '/tmp/integer.jsonl'
@@ -156,6 +160,7 @@ final class ThreadUsageReaderTests: XCTestCase {
                     'gpt-5',
                     'medium',
                     1800,
+                    '\(directory.path)',
                     \(Int(yesterday.timeIntervalSince1970)),
                     \(Int(today.addingTimeInterval(3_600).timeIntervalSince1970)),
                     '\(rolloutURL.path)'
@@ -190,6 +195,7 @@ final class ThreadUsageReaderTests: XCTestCase {
                     'gpt-5',
                     'medium',
                     42,
+                    '/tmp/project',
                     '2026-05-06T03:20:00Z',
                     '2026-05-06T03:30:00Z',
                     '/tmp/bad.jsonl'
@@ -222,6 +228,7 @@ final class ThreadUsageReaderTests: XCTestCase {
                     'gpt-5',
                     'medium',
                     'not-a-number',
+                    '/tmp/project',
                     '2026-05-06T03:20:00Z',
                     '2026-05-06T03:30:00Z',
                     '/tmp/bad-tokens.jsonl'
@@ -244,6 +251,7 @@ final class ThreadUsageReaderTests: XCTestCase {
             model: "gpt-5",
             reasoningEffort: "medium",
             tokensUsed: 100,
+            cwd: "/tmp/project",
             createdAt: Date(timeIntervalSince1970: 100),
             updatedAt: Date(timeIntervalSince1970: 200),
             rolloutPath: "/tmp/future.jsonl"
@@ -286,6 +294,7 @@ final class ThreadUsageReaderTests: XCTestCase {
             model TEXT,
             reasoning_effort TEXT,
             tokens_used INTEGER,
+            cwd TEXT,
             created_at \(timestampColumnType),
             updated_at \(timestampColumnType),
             rollout_path TEXT
