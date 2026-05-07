@@ -121,7 +121,7 @@ struct DashboardView: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
                 if let thread = state.usageSnapshot.activeThread {
-                    Text(thread.title)
+                    Text(activeThreadTitle(thread))
                         .font(.subheadline.weight(.semibold))
                         .lineLimit(1)
                     Text(activeThreadDetail(thread))
@@ -142,13 +142,15 @@ struct DashboardView: View {
         .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 8))
     }
 
-    private func activeThreadDetail(_ thread: ThreadUsage) -> String {
-        let projectName = projectFolderName(from: thread.cwd)
-        let usage = "\(thread.tokensUsed.formatted()) \(state.strings.tokens)"
-        if let projectName {
-            return "\(projectName) / \(usage) / \(thread.model)"
+    private func activeThreadTitle(_ thread: ThreadUsage) -> String {
+        if let projectName = projectFolderName(from: thread.cwd) {
+            return "\(projectName) - \(thread.title)"
         }
-        return "\(usage) / \(thread.model)"
+        return thread.title
+    }
+
+    private func activeThreadDetail(_ thread: ThreadUsage) -> String {
+        "\(thread.tokensUsed.formatted()) \(state.strings.tokens) / \(thread.model)"
     }
 
     private func projectFolderName(from cwd: String) -> String? {
