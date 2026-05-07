@@ -87,7 +87,7 @@ final class AppState: ObservableObject {
 
     var candidateAccounts: [CodixxAccount] {
         SwitchPolicy(primaryThresholdPercent: config.primaryThresholdPercent)
-            .orderedCandidates(from: accounts.filter { $0.id != currentAccount?.id }, snapshotExists: hasSnapshot)
+            .orderedCandidates(from: accounts.filter { $0.id != currentAccount?.id }) { _ in true }
     }
 
     var canEnableAutoSwitch: Bool {
@@ -109,7 +109,7 @@ final class AppState: ObservableObject {
 
     func refreshFromMenuOpen() {
         refresh(
-            applyRateLimitObservations: true,
+            applyRateLimitObservations: false,
             allowAutoSwitch: false,
             preservingError: nil,
             throttled: true,
@@ -150,8 +150,6 @@ final class AppState: ObservableObject {
         } catch {
             refreshErrors.append(error.localizedDescription)
         }
-
-        applySavedAuthProfiles(to: &loadedAccounts)
 
         if applyRateLimitObservations {
             do {
@@ -469,7 +467,7 @@ final class AppState: ObservableObject {
             return
         }
 
-        let profile = authProfile(for: accounts[currentIndex]) ?? currentAuthProfile()
+        let profile = currentAuthProfile()
         var quota = observation.accountQuotaState(
             accountId: accounts[currentIndex].id.uuidString,
             alias: accounts[currentIndex].alias,
@@ -482,45 +480,6 @@ final class AppState: ObservableObject {
         }
         accounts[currentIndex].updatedAt = timestamp
         try metadataStore.save(AccountMetadataList(accounts: accounts))
-    }
-
-    private func applySavedAuthProfiles(to accounts: inout [CodixxAccount]) {
-        let timestamp = now()
-        var didChange = false
-
-        for index in accounts.indices {
-            guard let profile = authProfile(for: accounts[index]) else { continue }
-            didChange = apply(profile, to: &accounts[index], timestamp: timestamp) || didChange
-        }
-
-        guard didChange else { return }
-        do {
-            try metadataStore.save(AccountMetadataList(accounts: accounts))
-        } catch {
-            errorMessage = error.localizedDescription
-        }
-    }
-
-    private func apply(_ profile: AuthProfile, to account: inout CodixxAccount, timestamp: Date) -> Bool {
-        var didChange = false
-
-        if let planType = profile.planType,
-           account.quota.planType != planType
-        {
-            account.quota.planType = planType
-            didChange = true
-        }
-        if let membershipExpiresAt = profile.membershipExpiresAt,
-           account.membershipExpiresAt != membershipExpiresAt
-        {
-            account.membershipExpiresAt = membershipExpiresAt
-            didChange = true
-        }
-
-        if didChange {
-            account.updatedAt = timestamp
-        }
-        return didChange
     }
 
     @discardableResult
@@ -559,17 +518,6 @@ final class AppState: ObservableObject {
             return nil
         }
         return AuthProfileReader.profile(from: snapshot)
-    }
-
-    private func authProfile(for account: CodixxAccount) -> AuthProfile? {
-        guard let snapshot = try? vault.load(fingerprint: account.fingerprint) else {
-            return nil
-        }
-        return AuthProfileReader.profile(from: snapshot)
-    }
-
-    private func hasSnapshot(for account: CodixxAccount) -> Bool {
-        (try? vault.load(fingerprint: account.fingerprint)) != nil
     }
 
     private var lastSuccessfulSwitchAt: Date? {
