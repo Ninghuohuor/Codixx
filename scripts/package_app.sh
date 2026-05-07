@@ -4,6 +4,9 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT_DIR"
 
+DEFAULT_SIGN_IDENTITY="Codixx Local Code Signing"
+SIGN_IDENTITY="${CODE_SIGN_IDENTITY:-$DEFAULT_SIGN_IDENTITY}"
+
 swift build -c release
 
 BIN_DIR="$(swift build -c release --show-bin-path)"
@@ -50,5 +53,12 @@ cat > "$CONTENTS_DIR/Info.plist" <<'PLIST'
 </dict>
 </plist>
 PLIST
+
+if security find-identity -v -p codesigning | grep -Fq "\"$SIGN_IDENTITY\""; then
+  codesign --force --deep --timestamp=none --sign "$SIGN_IDENTITY" "$APP_DIR"
+  echo "Signed $APP_DIR with $SIGN_IDENTITY"
+else
+  echo "Code signing identity '$SIGN_IDENTITY' not found; leaving app unsigned"
+fi
 
 echo "Created $APP_DIR"

@@ -266,12 +266,41 @@ public struct ThreadUsageReader: Sendable {
         return intervals.map { TokenUsageBucket(start: $0.start, tokens: totals[$0.start] ?? 0) }
     }
 
+    private static let maxTokenEventFileSize: UInt64 = 50_000_000
+
     private func readTokenEvents(from url: URL) -> [TokenUsageEvent] {
-        guard let content = try? String(contentsOf: url, encoding: .utf8) else { return [] }
-        return content
-            .split(separator: "\n")
-            .compactMap { parseTokenUsageEvent(String($0)) }
-            .sorted { $0.timestamp < $1.timestamp }
+        guard let attrs = try? FileManager.default.attributesOfItem(atPath: url.path),
+              let fileSize = attrs[.size] as? UInt64,
+              fileSize <= Self.maxTokenEventFileSize,
+              let handle = try? FileHandle(forReadingFrom: url)
+        else { return [] }
+        defer { try? handle.close() }
+
+        var events: [TokenUsageEvent] = []
+        var buffer = Data()
+        let newline = UInt8(ascii: "\n")
+
+        while autoreleasepool(invoking: {
+            guard let chunk = try? handle.read(upToCount: 65_536), !chunk.isEmpty else { return false }
+            buffer.append(chunk)
+            while let newlineIndex = buffer.firstIndex(of: newline) {
+                let lineData = buffer[buffer.startIndex..<newlineIndex]
+                buffer = buffer[(newlineIndex + 1)...]
+                if let line = String(data: Data(lineData), encoding: .utf8),
+                   let event = parseTokenUsageEvent(line) {
+                    events.append(event)
+                }
+            }
+            return true
+        }) {}
+
+        if !buffer.isEmpty,
+           let line = String(data: Data(buffer), encoding: .utf8),
+           let event = parseTokenUsageEvent(line) {
+            events.append(event)
+        }
+        events.sort { $0.timestamp < $1.timestamp }
+        return events
     }
 
     private func parseTokenUsageEvent(_ line: String) -> TokenUsageEvent? {

@@ -1,5 +1,4 @@
 import AppKit
-import Combine
 import Foundation
 import SwiftUI
 import CodixxCore
@@ -39,8 +38,7 @@ final class AppState: ObservableObject {
     private let now: () -> Date
     private var isRefreshInProgress = false
     private var isSwitchInProgress = false
-    private var errorDismissTask: Task<Void, Never>?
-    private var cancellables = Set<AnyCancellable>()
+    private var errorDismissWork: DispatchWorkItem?
     private var lastRefreshStartedAt: Date?
     private let menuRefreshThrottleSeconds: TimeInterval = 30
 
@@ -67,18 +65,6 @@ final class AppState: ObservableObject {
             now: now
         )
         self.config = (try? configStore.load()) ?? .default(paths: paths)
-
-        $errorMessage
-            .compactMap { $0 }
-            .sink { [weak self] _ in
-                self?.errorDismissTask?.cancel()
-                self?.errorDismissTask = Task { @MainActor [weak self] in
-                    try? await Task.sleep(nanoseconds: 5_000_000_000)
-                    guard !Task.isCancelled else { return }
-                    self?.errorMessage = nil
-                }
-            }
-            .store(in: &cancellables)
     }
 
     var menuBarTitle: String {
@@ -134,7 +120,8 @@ final class AppState: ObservableObject {
         applyRateLimitObservations: Bool,
         allowAutoSwitch: Bool,
         preservingError preservedError: String?,
-        throttled: Bool
+        throttled: Bool,
+        refreshUsage: Bool = true
     ) {
         guard !isRefreshInProgress else { return }
         let refreshStartedAt = now()
@@ -183,7 +170,9 @@ final class AppState: ObservableObject {
 
         accounts = loadedAccounts
         currentAccount = currentAccount(in: loadedAccounts)
-        usageSnapshot = threadUsageReader.readSnapshot(now: now())
+        if refreshUsage {
+            usageSnapshot = threadUsageReader.readSnapshot(now: now())
+        }
 
         do {
             switchEvents = try auditLog.loadEvents().sorted { $0.timestamp > $1.timestamp }
@@ -199,7 +188,16 @@ final class AppState: ObservableObject {
             refreshErrors.insert(preservedError, at: 0)
         }
 
-        errorMessage = refreshErrors.isEmpty ? nil : refreshErrors.joined(separator: "\n")
+        let newError = refreshErrors.isEmpty ? nil : refreshErrors.joined(separator: "\n")
+        errorMessage = newError
+        if newError != nil {
+            errorDismissWork?.cancel()
+            let work = DispatchWorkItem { [weak self] in
+                self?.errorMessage = nil
+            }
+            errorDismissWork = work
+            DispatchQueue.main.asyncAfter(deadline: .now() + 5, execute: work)
+        }
         lastUpdatedAt = now()
         isRefreshing = false
         isRefreshInProgress = false
@@ -233,7 +231,8 @@ final class AppState: ObservableObject {
                 applyRateLimitObservations: false,
                 allowAutoSwitch: false,
                 preservingError: nil,
-                throttled: false
+                throttled: false,
+                refreshUsage: false
             )
             handlePostSwitchAction()
         } catch {
@@ -242,7 +241,8 @@ final class AppState: ObservableObject {
                 applyRateLimitObservations: false,
                 allowAutoSwitch: false,
                 preservingError: preservedError,
-                throttled: false
+                throttled: false,
+                refreshUsage: false
             )
         }
     }
@@ -269,7 +269,8 @@ final class AppState: ObservableObject {
             applyRateLimitObservations: true,
             allowAutoSwitch: false,
             preservingError: nil,
-            throttled: false
+            throttled: false,
+            refreshUsage: false
         )
 
         do {
@@ -278,7 +279,8 @@ final class AppState: ObservableObject {
                 applyRateLimitObservations: false,
                 allowAutoSwitch: false,
                 preservingError: nil,
-                throttled: false
+                throttled: false,
+                refreshUsage: false
             )
             handlePostSwitchAction()
         } catch {
@@ -287,7 +289,8 @@ final class AppState: ObservableObject {
                 applyRateLimitObservations: false,
                 allowAutoSwitch: false,
                 preservingError: preservedError,
-                throttled: false
+                throttled: false,
+                refreshUsage: false
             )
         }
     }
