@@ -59,6 +59,7 @@ public struct CodixxStrings: Sendable {
     }
     public var quotaRefresh: String { text(en: "Quota refresh", zh: "额度刷新") }
     public var usageRefresh: String { text(en: "Usage refresh", zh: "用量刷新") }
+    public var usageReadFailed: String { text(en: "Could not refresh usage data", zh: "无法刷新用量数据") }
     public var codexHome: String { text(en: "Codex Home", zh: "Codex 目录") }
     public var languageLabel: String { text(en: "Language", zh: "语言") }
     public var postSwitchAction: String { text(en: "After switch", zh: "切换后动作") }

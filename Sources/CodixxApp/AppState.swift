@@ -127,6 +127,7 @@ final class AppState: ObservableObject {
         guard !isRefreshInProgress else { return }
         let refreshStartedAt = now()
         if throttled,
+           !usageSnapshot.threads.isEmpty,
            let lastRefreshStartedAt,
            refreshStartedAt.timeIntervalSince(lastRefreshStartedAt) < menuRefreshThrottleSeconds
         {
@@ -169,8 +170,13 @@ final class AppState: ObservableObject {
 
         accounts = loadedAccounts
         currentAccount = currentAccount(in: loadedAccounts)
-        if refreshUsage {
-            usageSnapshot = threadUsageReader.readSnapshot(now: now())
+        if refreshUsage || usageSnapshot.threads.isEmpty {
+            let latestUsageSnapshot = threadUsageReader.readSnapshot(now: now())
+            if latestUsageSnapshot.isDegraded, !usageSnapshot.threads.isEmpty {
+                refreshErrors.append(latestUsageSnapshot.errorSummary ?? strings.usageReadFailed)
+            } else {
+                usageSnapshot = latestUsageSnapshot
+            }
         }
 
         do {
