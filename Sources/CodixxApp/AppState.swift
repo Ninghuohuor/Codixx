@@ -462,11 +462,11 @@ final class AppState: ObservableObject {
             return
         }
 
-        waitForCodexExitThenOpen(applicationURL: applicationURL, remainingAttempts: 20)
+        waitForCodexExitThenOpen(applicationURL: applicationURL, remainingAttempts: 25)
     }
 
     private func waitForCodexExitThenOpen(applicationURL: URL, remainingAttempts: Int) {
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) { [weak self] in
             guard let self else { return }
             let runningApplications = NSRunningApplication.runningApplications(withBundleIdentifier: CodexActivation.bundleIdentifier)
             guard !runningApplications.isEmpty, remainingAttempts > 0 else {
@@ -474,7 +474,7 @@ final class AppState: ObservableObject {
                 return
             }
 
-            if remainingAttempts == 10 {
+            if remainingAttempts == 15 {
                 runningApplications.forEach { $0.forceTerminate() }
             }
 
@@ -499,7 +499,7 @@ final class AppState: ObservableObject {
     }
 
     private func verifyCodexLaunchFallback(applicationURL: URL) {
-        DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [weak self] in
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1) { [weak self] in
             let runningApplications = NSRunningApplication.runningApplications(withBundleIdentifier: CodexActivation.bundleIdentifier)
             guard runningApplications.isEmpty else { return }
             self?.launchCodexWithOpenCommand(applicationURL: applicationURL, previousError: nil)
