@@ -149,8 +149,8 @@ public struct CodixxStrings: Sendable {
 
     public func weeklyResets(_ date: Date) -> String {
         text(
-            en: "Weekly resets \(date.formatted(date: .omitted, time: .shortened))",
-            zh: "周额度 \(date.formatted(date: .omitted, time: .shortened)) 重置"
+            en: "Weekly resets \(date.formatted(date: .numeric, time: .shortened))",
+            zh: "周额度 \(date.formatted(date: .numeric, time: .shortened)) 重置"
         )
     }
 

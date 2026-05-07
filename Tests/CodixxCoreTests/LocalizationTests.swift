@@ -44,6 +44,7 @@ final class LocalizationTests: XCTestCase {
         XCTAssertEqual(strings.codexRestartRequired, "Restart Codex required")
         XCTAssertEqual(strings.postSwitchActionLabel(.restartCodexApp), "Restart Codex")
         XCTAssertEqual(strings.restartCodexNow, "Restart Codex now")
+        XCTAssertTrue(strings.weeklyResets(Date(timeIntervalSince1970: 1_777_000_000)).contains("2026"))
     }
 
     func testChineseStringsExplainUnsavedCurrentAccount() {
@@ -88,5 +89,6 @@ final class LocalizationTests: XCTestCase {
         XCTAssertEqual(strings.codexRestartRequired, "需要重启 Codex")
         XCTAssertEqual(strings.postSwitchActionLabel(.restartCodexApp), "重启 Codex")
         XCTAssertEqual(strings.restartCodexNow, "立即重启 Codex")
+        XCTAssertTrue(strings.weeklyResets(Date(timeIntervalSince1970: 1_777_000_000)).contains("2026"))
     }
 }
