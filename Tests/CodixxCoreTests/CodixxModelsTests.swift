@@ -41,7 +41,7 @@ final class CodixxModelsTests: XCTestCase {
                 primaryUsedPercent: 92.9,
                 primaryWindowMinutes: 300,
                 primaryResetsAt: nil,
-                secondaryUsedPercent: 99.9,
+                secondaryUsedPercent: 89.9,
                 secondaryWindowMinutes: 10_080,
                 secondaryResetsAt: nil,
                 lastObservedAt: Date(timeIntervalSince1970: 1),
@@ -62,8 +62,10 @@ final class CodixxModelsTests: XCTestCase {
         XCTAssertFalse(primaryAtThreshold.isEligibleForSwitch(hasSnapshot: true))
 
         var secondaryFull = account
-        secondaryFull.quota.secondaryUsedPercent = 100
+        secondaryFull.quota.secondaryUsedPercent = 90
         XCTAssertFalse(secondaryFull.isEligibleForSwitch(hasSnapshot: true))
+
+        XCTAssertTrue(account.isEligibleForSwitch(hasSnapshot: true, secondaryThresholdPercent: 100))
     }
 
     func testQuotaStateRollsForwardExpiredWindows() {

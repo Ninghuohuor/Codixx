@@ -4,19 +4,22 @@ import CodixxCore
 struct SwitchLogView: View {
     var events: [SwitchAuditEvent]
     var strings: CodixxStrings
+    var showsTitle = true
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
-            Text(strings.switchLog)
-                .font(.headline)
+            if showsTitle {
+                Text(strings.switchLog)
+                    .font(.headline)
+            }
 
             if events.isEmpty {
                 Text(strings.noSwitchEvents)
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(12)
-                    .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 8))
+                    .padding(showsTitle ? 12 : 0)
+                    .background(showsTitle ? Color(nsColor: .controlBackgroundColor) : .clear, in: RoundedRectangle(cornerRadius: 8))
             } else {
                 ForEach(events) { event in
                     eventRow(event)
@@ -67,8 +70,8 @@ struct SwitchLogView: View {
                 }
             }
         }
-        .padding(12)
-        .background(backgroundColor(for: event.result), in: RoundedRectangle(cornerRadius: 8))
+        .padding(showsTitle ? 12 : 0)
+        .background(showsTitle ? backgroundColor(for: event.result) : .clear, in: RoundedRectangle(cornerRadius: 8))
     }
 
     private func detailLine(label: String, value: String, color: Color) -> some View {

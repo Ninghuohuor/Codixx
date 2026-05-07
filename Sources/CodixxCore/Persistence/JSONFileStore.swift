@@ -1,6 +1,6 @@
 import Foundation
 
-public struct JSONFileStore<Value: Codable> {
+public struct JSONFileStore<Value: Codable>: @unchecked Sendable {
     public var url: URL
 
     private let fileManager: FileManager

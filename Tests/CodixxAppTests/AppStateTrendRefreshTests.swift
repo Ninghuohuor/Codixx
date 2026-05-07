@@ -1,0 +1,102 @@
+import XCTest
+@testable import CodixxApp
+import CodixxCore
+
+@MainActor
+final class AppStateTrendRefreshTests: XCTestCase {
+    func testMenuOpenRefreshAppliesLatestQuotaObservationWithoutFullUsageRefresh() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let paths = CodixxPaths(home: directory)
+        try FileManager.default.createDirectory(at: paths.codexHome, withIntermediateDirectories: true)
+
+        let authData = Data(#"{"account_id":"acct_main","access_token":"secret"}"#.utf8)
+        try authData.write(to: paths.authJSON)
+        let fingerprint = try AccountFingerprint.generate(from: AuthSnapshot(jsonData: authData))
+        let accountId = UUID()
+        let oldReset = Date(timeIntervalSince1970: 1_778_200_000)
+        let observedReset = Date(timeIntervalSince1970: 1_778_206_586)
+        let account = CodixxAccount(
+            id: accountId,
+            alias: "main",
+            fingerprint: fingerprint,
+            createdAt: oldReset,
+            updatedAt: oldReset,
+            lastUsedAt: nil,
+            quota: AccountQuotaState(
+                accountId: accountId.uuidString,
+                alias: "main",
+                primaryUsedPercent: 80,
+                primaryWindowMinutes: 300,
+                primaryResetsAt: oldReset,
+                secondaryUsedPercent: 20,
+                secondaryWindowMinutes: 10_080,
+                secondaryResetsAt: Date(timeIntervalSince1970: 1_778_700_000),
+                lastObservedAt: oldReset,
+                confidence: .recent
+            ),
+            isEnabled: true,
+            priority: 0
+        )
+        try AccountMetadataStore(paths: paths).save(AccountMetadataList(accounts: [account]))
+
+        let sessionDirectory = paths.codexHome.appendingPathComponent("sessions/2026/05/08", isDirectory: true)
+        try FileManager.default.createDirectory(at: sessionDirectory, withIntermediateDirectories: true)
+        let sessionFile = sessionDirectory.appendingPathComponent("rollout.jsonl")
+        let observationLine = """
+        {"timestamp":"2026-05-08T01:00:00Z","type":"event_msg","payload":{"type":"token_count"},"rate_limits":{"primary":{"used_percent":62.0,"window_minutes":300,"resets_at":\(Int(observedReset.timeIntervalSince1970))},"secondary":{"used_percent":72.0,"window_minutes":10080,"resets_at":1778700000},"plan_type":"plus"}}
+        """
+        try (observationLine + "\n").write(to: sessionFile, atomically: true, encoding: .utf8)
+
+        let state = AppState(paths: paths, vault: InMemoryVault())
+
+        state.refreshFromMenuOpen()
+
+        XCTAssertEqual(state.currentAccount?.quota.primaryUsedPercent, 62)
+        XCTAssertEqual(state.currentAccount?.quota.primaryResetsAt, observedReset)
+        XCTAssertFalse(state.isLoadingFullUsageSnapshot)
+        XCTAssertFalse(state.hasLoadedFullUsageSnapshot)
+    }
+
+    func testTrendRefreshMarksFullUsageSnapshotLoaded() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let state = AppState(paths: CodixxPaths(home: directory), vault: InMemoryVault())
+
+        XCTAssertFalse(state.hasLoadedFullUsageSnapshot)
+        XCTAssertFalse(state.isLoadingFullUsageSnapshot)
+
+        state.refreshTrendsIfNeeded()
+
+        XCTAssertTrue(state.isLoadingFullUsageSnapshot)
+        try await waitUntil { state.hasLoadedFullUsageSnapshot }
+        XCTAssertFalse(state.isLoadingFullUsageSnapshot)
+    }
+
+    private func waitUntil(
+        timeout: TimeInterval = 2,
+        predicate: @escaping @MainActor @Sendable () -> Bool
+    ) async throws {
+        let deadline = Date().addingTimeInterval(timeout)
+        while Date() < deadline {
+            if await MainActor.run(body: predicate) { return }
+            try await Task.sleep(nanoseconds: 20_000_000)
+        }
+        XCTFail("Timed out waiting for predicate")
+    }
+}
+
+private final class InMemoryVault: AuthSnapshotVault {
+    func save(snapshot: AuthSnapshot, fingerprint: String) throws {}
+
+    func load(fingerprint: String) throws -> AuthSnapshot {
+        throw InMemoryVaultError.missingSnapshot
+    }
+
+    func delete(fingerprint: String) throws {}
+}
+
+private enum InMemoryVaultError: Error {
+    case missingSnapshot
+}

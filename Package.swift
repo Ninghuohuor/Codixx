@@ -28,6 +28,10 @@ let package = Package(
         .testTarget(
             name: "CodixxCorePublicAPITests",
             dependencies: ["CodixxCore"]
+        ),
+        .testTarget(
+            name: "CodixxAppTests",
+            dependencies: ["CodixxApp"]
         )
     ]
 )

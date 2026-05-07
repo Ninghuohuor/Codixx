@@ -282,6 +282,50 @@ final class RateLimitReaderTests: XCTestCase {
         XCTAssertEqual(observations.first?.primaryUsedPercent, 50)
     }
 
+    func testArchivedSessionsAreCachedUntilArchiveDirectoryChanges() throws {
+        let home = try makeTempHome()
+        defer { try? FileManager.default.removeItem(at: home) }
+        let paths = CodixxPaths(home: home)
+        let archivedDirectory = paths.codexHome.appendingPathComponent("archived_sessions", isDirectory: true)
+        let firstArchived = archivedDirectory.appendingPathComponent("first.jsonl")
+        let secondArchived = archivedDirectory.appendingPathComponent("second.jsonl")
+        try writeJSONLLines(
+            [
+                """
+                {"timestamp":"2026-05-06T04:00:00Z","rate_limits":{"primary":{"used_percent":50.0,"window_minutes":300,"resets_at":1776411193},"secondary":{"used_percent":12.0,"window_minutes":10080,"resets_at":1776937959}}}
+                """
+            ],
+            to: firstArchived
+        )
+        let cursorStore = ParseCursorStore(paths: paths)
+        let reader = RateLimitReader(paths: paths, cursorStore: cursorStore)
+
+        let first = try reader.readNewObservations()
+        let second = try reader.readNewObservations()
+        let cachedState = try cursorStore.load()
+
+        XCTAssertEqual(first.map(\.primaryUsedPercent), [50])
+        XCTAssertEqual(second, [])
+        XCTAssertEqual(cachedState.archivedSessionPaths, [firstArchived.resolvingSymlinksInPath().path])
+
+        try writeJSONLLines(
+            [
+                """
+                {"timestamp":"2026-05-06T05:00:00Z","rate_limits":{"primary":{"used_percent":70.0,"window_minutes":300,"resets_at":1776414793},"secondary":{"used_percent":14.0,"window_minutes":10080,"resets_at":1776937959}}}
+                """
+            ],
+            to: secondArchived
+        )
+        try FileManager.default.setAttributes(
+            [.modificationDate: Date(timeIntervalSince1970: 2_000_000_000)],
+            ofItemAtPath: archivedDirectory.path
+        )
+
+        let third = try reader.readNewObservations()
+
+        XCTAssertEqual(third.map(\.primaryUsedPercent), [70])
+    }
+
     func testObservationCanConvertToAccountQuotaState() throws {
         let observation = RateLimitObservation(
             planType: "pro",

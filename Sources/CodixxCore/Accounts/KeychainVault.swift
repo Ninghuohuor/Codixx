@@ -36,7 +36,6 @@ public struct KeychainVault: AuthSnapshotVault {
             }
             throw AccountStoreError.keychainError(Self.message(for: status))
         }
-        refreshCurrentApplicationAccess(fingerprint: fingerprint, data: data)
         return try AuthSnapshot(jsonData: data)
     }
 
@@ -53,15 +52,6 @@ public struct KeychainVault: AuthSnapshotVault {
             kSecAttrService as String: service,
             kSecAttrAccount as String: fingerprint
         ]
-    }
-
-    private func refreshCurrentApplicationAccess(fingerprint: String, data: Data) {
-        guard let access = Self.currentApplicationAccess(descriptor: service) else { return }
-        let attributes: [String: Any] = [
-            kSecValueData as String: data,
-            kSecAttrAccess as String: access
-        ]
-        _ = SecItemUpdate(baseQuery(fingerprint: fingerprint) as CFDictionary, attributes as CFDictionary)
     }
 
     private static func currentApplicationAccess(descriptor: String) -> SecAccess? {

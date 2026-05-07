@@ -66,6 +66,7 @@ struct QuotaView: View {
             ProgressView(value: progress)
                 .tint(tint)
         }
+        .help("\(title): \(percentText) · \(resetText)")
     }
 
     private var quota: AccountQuotaState? {
@@ -133,6 +134,6 @@ struct QuotaView: View {
 
     private var secondaryProgressTint: Color {
         guard let used = quota?.secondaryUsedPercent else { return .secondary }
-        return used >= 100 ? .red : .green
+        return used >= config.secondaryThresholdPercent ? .orange : .green
     }
 }

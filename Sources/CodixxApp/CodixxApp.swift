@@ -27,8 +27,30 @@ struct CodixxApp: App {
         MenuBarExtra {
             DashboardView(state: state)
         } label: {
-            Label(state.menuBarTitle, systemImage: state.menuBarSystemImage)
+            Label {
+                Text(state.menuBarTitle)
+            } icon: {
+                if let image = Self.menuBarIconImage {
+                    Image(nsImage: image)
+                        .resizable()
+                        .frame(width: 18, height: 18)
+                } else {
+                    Image(systemName: state.menuBarSystemImage)
+                }
+            }
+                .help(state.menuBarHelpText)
         }
         .menuBarExtraStyle(.window)
     }
+
+    private static let menuBarIconImage: NSImage? = {
+        guard let url = Bundle.main.url(forResource: "MenuBarIcon", withExtension: "png"),
+              let image = NSImage(contentsOf: url)
+        else {
+            return nil
+        }
+        image.size = NSSize(width: 18, height: 18)
+        image.isTemplate = false
+        return image
+    }()
 }
