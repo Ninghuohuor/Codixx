@@ -69,6 +69,44 @@ public struct AccountQuotaState: Codable, Equatable, Sendable {
             confidence: .unknown
         )
     }
+
+    @discardableResult
+    public mutating func rollForwardExpiredWindows(now: Date) -> Bool {
+        var didChange = false
+        didChange = rollForwardExpiredWindow(
+            usedPercent: &primaryUsedPercent,
+            windowMinutes: primaryWindowMinutes,
+            resetsAt: &primaryResetsAt,
+            now: now
+        ) || didChange
+        didChange = rollForwardExpiredWindow(
+            usedPercent: &secondaryUsedPercent,
+            windowMinutes: secondaryWindowMinutes,
+            resetsAt: &secondaryResetsAt,
+            now: now
+        ) || didChange
+        return didChange
+    }
+
+    private func rollForwardExpiredWindow(
+        usedPercent: inout Double?,
+        windowMinutes: Int?,
+        resetsAt: inout Date?,
+        now: Date
+    ) -> Bool {
+        guard let reset = resetsAt, reset <= now else { return false }
+
+        usedPercent = 0
+        guard let windowMinutes, windowMinutes > 0 else { return true }
+
+        let windowSeconds = TimeInterval(windowMinutes * 60)
+        var nextReset = reset
+        while nextReset <= now {
+            nextReset = nextReset.addingTimeInterval(windowSeconds)
+        }
+        resetsAt = nextReset
+        return true
+    }
 }
 
 public struct CodixxAccount: Codable, Identifiable, Equatable, Sendable {

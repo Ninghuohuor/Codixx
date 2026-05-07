@@ -65,4 +65,48 @@ final class CodixxModelsTests: XCTestCase {
         secondaryFull.quota.secondaryUsedPercent = 100
         XCTAssertFalse(secondaryFull.isEligibleForSwitch(hasSnapshot: true))
     }
+
+    func testQuotaStateRollsForwardExpiredWindows() {
+        let now = Date(timeIntervalSince1970: 10_000)
+        var quota = AccountQuotaState(
+            accountId: "account-1",
+            alias: "Work",
+            primaryUsedPercent: 100,
+            primaryWindowMinutes: 300,
+            primaryResetsAt: now.addingTimeInterval(-60),
+            secondaryUsedPercent: 31,
+            secondaryWindowMinutes: 10_080,
+            secondaryResetsAt: now.addingTimeInterval(600),
+            lastObservedAt: now.addingTimeInterval(-3_600),
+            confidence: .fresh
+        )
+
+        XCTAssertTrue(quota.rollForwardExpiredWindows(now: now))
+        XCTAssertEqual(quota.primaryUsedPercent, 0)
+        XCTAssertEqual(quota.primaryResetsAt, now.addingTimeInterval(-60 + 300 * 60))
+        XCTAssertEqual(quota.secondaryUsedPercent, 31)
+        XCTAssertEqual(quota.secondaryResetsAt, now.addingTimeInterval(600))
+    }
+
+    func testQuotaStateRollsForwardMultipleElapsedWindows() {
+        let now = Date(timeIntervalSince1970: 100_000)
+        var quota = AccountQuotaState(
+            accountId: "account-1",
+            alias: "Work",
+            primaryUsedPercent: 90,
+            primaryWindowMinutes: 300,
+            primaryResetsAt: now.addingTimeInterval(-301 * 60),
+            secondaryUsedPercent: 100,
+            secondaryWindowMinutes: 10_080,
+            secondaryResetsAt: now.addingTimeInterval(-10_081 * 60),
+            lastObservedAt: now.addingTimeInterval(-90_000),
+            confidence: .stale
+        )
+
+        XCTAssertTrue(quota.rollForwardExpiredWindows(now: now))
+        XCTAssertEqual(quota.primaryUsedPercent, 0)
+        XCTAssertGreaterThan(quota.primaryResetsAt ?? .distantPast, now)
+        XCTAssertEqual(quota.secondaryUsedPercent, 0)
+        XCTAssertGreaterThan(quota.secondaryResetsAt ?? .distantPast, now)
+    }
 }

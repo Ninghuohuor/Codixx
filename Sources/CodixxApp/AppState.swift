@@ -154,7 +154,13 @@ final class AppState: ObservableObject {
                 refreshErrors.append(error.localizedDescription)
             }
         } else {
-            refreshQuotaConfidence(in: &loadedAccounts)
+            do {
+                if refreshQuotaConfidence(in: &loadedAccounts) {
+                    try metadataStore.save(AccountMetadataList(accounts: loadedAccounts))
+                }
+            } catch {
+                refreshErrors.append(error.localizedDescription)
+            }
         }
 
         accounts = loadedAccounts
@@ -373,14 +379,20 @@ final class AppState: ObservableObject {
 
     private func applyLatestRateLimitObservation(to accounts: inout [CodixxAccount]) throws {
         let timestamp = now()
-        refreshQuotaConfidence(in: &accounts, timestamp: timestamp)
+        let didRefreshCachedQuota = refreshQuotaConfidence(in: &accounts, timestamp: timestamp)
 
         guard let current = currentAccount(in: accounts),
               let currentIndex = accounts.firstIndex(where: { $0.id == current.id })
         else {
+            if didRefreshCachedQuota {
+                try metadataStore.save(AccountMetadataList(accounts: accounts))
+            }
             return
         }
         guard let observation = try rateLimitReader.readNewObservations().last else {
+            if didRefreshCachedQuota {
+                try metadataStore.save(AccountMetadataList(accounts: accounts))
+            }
             return
         }
 
@@ -438,14 +450,23 @@ final class AppState: ObservableObject {
         return didChange
     }
 
-    private func refreshQuotaConfidence(in accounts: inout [CodixxAccount], timestamp: Date? = nil) {
+    @discardableResult
+    private func refreshQuotaConfidence(in accounts: inout [CodixxAccount], timestamp: Date? = nil) -> Bool {
         let refreshTime = timestamp ?? now()
+        var didChange = false
         for index in accounts.indices {
+            let previousQuota = accounts[index].quota
+            accounts[index].quota.rollForwardExpiredWindows(now: refreshTime)
             accounts[index].quota.confidence = QuotaConfidence.observed(
                 at: accounts[index].quota.lastObservedAt,
                 now: refreshTime
             )
+            if accounts[index].quota != previousQuota {
+                accounts[index].updatedAt = refreshTime
+                didChange = true
+            }
         }
+        return didChange
     }
 
     private func currentAccount(in accounts: [CodixxAccount]) -> CodixxAccount? {
