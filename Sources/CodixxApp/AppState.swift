@@ -8,6 +8,12 @@ enum AccountSaveStatus: Equatable {
     case failure(message: String)
 }
 
+private struct CodexActivation {
+    static let bundleIdentifier = "com.openai.codex"
+
+    var processIdentifier: pid_t?
+}
+
 @MainActor
 final class AppState: ObservableObject {
     @Published private(set) var config: CodixxConfig
@@ -230,6 +236,7 @@ final class AppState: ObservableObject {
         isSwitchInProgress = true
         defer { isSwitchInProgress = false }
 
+        let codexActivation = currentCodexActivation()
         do {
             _ = try switcher.switchToAccount(target.id, trigger: .autoPrimaryThreshold)
             refresh(
@@ -240,6 +247,7 @@ final class AppState: ObservableObject {
                 refreshUsage: false
             )
             handlePostSwitchAction()
+            restoreCodexActivationIfNeeded(codexActivation)
         } catch {
             let preservedError = pauseAutoSwitchIfRollbackFailed(error)
             refresh(
@@ -270,6 +278,7 @@ final class AppState: ObservableObject {
         isSwitchInProgress = true
         defer { isSwitchInProgress = false }
 
+        let codexActivation = currentCodexActivation()
         refresh(
             applyRateLimitObservations: true,
             allowAutoSwitch: false,
@@ -288,6 +297,7 @@ final class AppState: ObservableObject {
                 refreshUsage: false
             )
             handlePostSwitchAction()
+            restoreCodexActivationIfNeeded(codexActivation)
         } catch {
             let preservedError = pauseAutoSwitchIfRollbackFailed(error)
             refresh(
@@ -422,6 +432,21 @@ final class AppState: ObservableObject {
                     self?.errorMessage = "\(self?.strings.restartCodexFailed ?? "Could not restart Codex"): \(error.localizedDescription)"
                 }
             }
+        }
+    }
+
+    private func currentCodexActivation() -> CodexActivation {
+        let applications = NSRunningApplication.runningApplications(withBundleIdentifier: CodexActivation.bundleIdentifier)
+        let activeApplication = applications.first { $0.isActive }
+        return CodexActivation(processIdentifier: activeApplication?.processIdentifier)
+    }
+
+    private func restoreCodexActivationIfNeeded(_ activation: CodexActivation) {
+        guard let processIdentifier = activation.processIdentifier else { return }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
+            let applications = NSRunningApplication.runningApplications(withBundleIdentifier: CodexActivation.bundleIdentifier)
+            let application = applications.first { $0.processIdentifier == processIdentifier } ?? applications.first
+            application?.activate(options: [.activateAllWindows, .activateIgnoringOtherApps])
         }
     }
 
