@@ -75,6 +75,22 @@ struct SettingsView: View {
                 step: 60
             )
 
+            Picker(state.strings.postSwitchAction, selection: Binding(
+                get: { state.config.postSwitchAction },
+                set: { state.setPostSwitchAction($0) }
+            )) {
+                ForEach(PostSwitchAction.allCases) { action in
+                    Text(state.strings.postSwitchActionLabel(action)).tag(action)
+                }
+            }
+            .pickerStyle(.menu)
+
+            Button {
+                state.restartCodexNow()
+            } label: {
+                Label(state.strings.restartCodexNow, systemImage: "arrow.clockwise")
+            }
+
             Divider()
 
             VStack(alignment: .leading, spacing: 4) {

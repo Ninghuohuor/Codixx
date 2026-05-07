@@ -45,6 +45,7 @@ final class PersistenceTests: XCTestCase {
         XCTAssertEqual(config.quotaRefreshIntervalSeconds, 60)
         XCTAssertEqual(config.usageRefreshIntervalSeconds, 300)
         XCTAssertEqual(config.language, .english)
+        XCTAssertEqual(config.postSwitchAction, .notifyRestartRecommended)
     }
 
     func testConfigStoreSavesAndLoadsConfigJSON() throws {
@@ -60,7 +61,8 @@ final class PersistenceTests: XCTestCase {
             detailedSwitchLoggingEnabled: false,
             quotaRefreshIntervalSeconds: 30,
             usageRefreshIntervalSeconds: 120,
-            language: .chinese
+            language: .chinese,
+            postSwitchAction: .restartCodexApp
         )
 
         try store.save(config)
@@ -94,6 +96,7 @@ final class PersistenceTests: XCTestCase {
 
         XCTAssertEqual(loaded.codexDirectoryPath, "/tmp/codex")
         XCTAssertEqual(loaded.language, .english)
+        XCTAssertEqual(loaded.postSwitchAction, .notifyRestartRecommended)
     }
 
     func testConfigStorePathsCannotBeMutatedAfterInitialization() throws {

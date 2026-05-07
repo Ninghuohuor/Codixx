@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 import SwiftUI
 import CodixxCore
@@ -217,6 +218,7 @@ final class AppState: ObservableObject {
                 preservingError: nil,
                 throttled: false
             )
+            handlePostSwitchAction()
         } catch {
             let preservedError = pauseAutoSwitchIfRollbackFailed(error)
             refresh(
@@ -261,6 +263,7 @@ final class AppState: ObservableObject {
                 preservingError: nil,
                 throttled: false
             )
+            handlePostSwitchAction()
         } catch {
             let preservedError = pauseAutoSwitchIfRollbackFailed(error)
             refresh(
@@ -336,6 +339,18 @@ final class AppState: ObservableObject {
         updateConfig { $0.language = language }
     }
 
+    func setPostSwitchAction(_ action: PostSwitchAction) {
+        updateConfig { $0.postSwitchAction = action }
+    }
+
+    func restartCodexNow() {
+        do {
+            try restartCodexDesktop()
+        } catch {
+            errorMessage = "\(strings.restartCodexFailed): \(error.localizedDescription)"
+        }
+    }
+
     private func updateConfig(_ mutate: (inout CodixxConfig) -> Void) {
         var updated = config
         mutate(&updated)
@@ -344,6 +359,37 @@ final class AppState: ObservableObject {
             config = updated
         } catch {
             errorMessage = error.localizedDescription
+        }
+    }
+
+    private func handlePostSwitchAction() {
+        switch config.postSwitchAction {
+        case .none:
+            break
+        case .notifyRestartRecommended:
+            errorMessage = strings.restartCodexHint
+        case .restartCodexApp:
+            restartCodexNow()
+        }
+    }
+
+    private func restartCodexDesktop() throws {
+        let bundleIdentifier = "com.openai.codex"
+        let applicationURL = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleIdentifier)
+            ?? URL(fileURLWithPath: "/Applications/Codex.app", isDirectory: true)
+
+        NSRunningApplication.runningApplications(withBundleIdentifier: bundleIdentifier).forEach { application in
+            application.terminate()
+        }
+
+        let configuration = NSWorkspace.OpenConfiguration()
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in
+            NSWorkspace.shared.openApplication(at: applicationURL, configuration: configuration) { _, error in
+                guard let error else { return }
+                Task { @MainActor in
+                    self?.errorMessage = "\(self?.strings.restartCodexFailed ?? "Could not restart Codex"): \(error.localizedDescription)"
+                }
+            }
         }
     }
 

@@ -27,6 +27,14 @@ public struct CodixxStrings: Sendable {
     public var renameAccount: String { text(en: "Rename account", zh: "重命名账号") }
     public var cancelEdit: String { text(en: "Cancel edit", zh: "取消编辑") }
     public var deleteAccount: String { text(en: "Delete account", zh: "删除账号") }
+    public var confirmDeleteTitle: String { text(en: "Confirm Delete", zh: "确认删除") }
+    public var cancel: String { text(en: "Cancel", zh: "取消") }
+    public var delete: String { text(en: "Delete", zh: "删除") }
+
+    public func confirmDeleteMessage(alias: String) -> String {
+        text(en: "Delete account \"\(alias)\"? This cannot be undone.", zh: "确定要删除账号「\(alias)」吗？此操作不可撤销。")
+    }
+
     public var membership: String { text(en: "Membership", zh: "会员") }
     public var membershipExpires: String { text(en: "Membership expires", zh: "会员到期") }
     public var neverExpires: String { text(en: "Expiration unavailable locally", zh: "本地未提供到期时间") }
@@ -44,6 +52,9 @@ public struct CodixxStrings: Sendable {
     public var usageRefresh: String { text(en: "Usage refresh", zh: "用量刷新") }
     public var codexHome: String { text(en: "Codex Home", zh: "Codex 目录") }
     public var languageLabel: String { text(en: "Language", zh: "语言") }
+    public var postSwitchAction: String { text(en: "After switch", zh: "切换后动作") }
+    public var restartCodexNow: String { text(en: "Restart Codex now", zh: "立即重启 Codex") }
+    public var restartCodexFailed: String { text(en: "Could not restart Codex", zh: "无法重启 Codex") }
     public var topThreads: String { text(en: "Top Threads", zh: "高用量会话") }
     public var activeThread: String { text(en: "Active thread", zh: "活跃会话") }
     public var noActiveThread: String { text(en: "No active thread", zh: "暂无活跃会话") }
@@ -104,8 +115,8 @@ public struct CodixxStrings: Sendable {
     public var textForAutoSwitchPaused: String { text(en: "Auto switch has been paused.", zh: "已暂停自动切换。") }
     public var restartCodexHint: String {
         text(
-            en: "If a switched account does not take effect immediately, restart Codex or open a new thread to verify it.",
-            zh: "如果切换账号后没有立即生效，请重启 Codex 或新开线程验证。"
+            en: "Codex Desktop keeps auth in memory. Restart Codex after switching for the account to take effect.",
+            zh: "Codex Desktop 会缓存登录状态。切换账号后需要重启 Codex 才会真正生效。"
         )
     }
 
@@ -205,6 +216,17 @@ public struct CodixxStrings: Sendable {
             return rolledBack
         case .rollbackFailed:
             return rollbackFailed
+        }
+    }
+
+    public func postSwitchActionLabel(_ action: PostSwitchAction) -> String {
+        switch action {
+        case .none:
+            return text(en: "Do nothing", zh: "不处理")
+        case .notifyRestartRecommended:
+            return text(en: "Remind to restart", zh: "提醒重启")
+        case .restartCodexApp:
+            return text(en: "Restart Codex", zh: "重启 Codex")
         }
     }
 

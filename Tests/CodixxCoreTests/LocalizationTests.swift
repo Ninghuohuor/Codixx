@@ -40,6 +40,9 @@ final class LocalizationTests: XCTestCase {
         XCTAssertEqual(strings.todayTokens, "Today")
         XCTAssertEqual(strings.yesterdayTokens, "Yesterday")
         XCTAssertEqual(strings.membership, "Membership")
+        XCTAssertEqual(strings.postSwitchAction, "After switch")
+        XCTAssertEqual(strings.postSwitchActionLabel(.restartCodexApp), "Restart Codex")
+        XCTAssertEqual(strings.restartCodexNow, "Restart Codex now")
     }
 
     func testChineseStringsExplainUnsavedCurrentAccount() {
@@ -80,5 +83,8 @@ final class LocalizationTests: XCTestCase {
         XCTAssertEqual(strings.todayTokens, "今日 token 用量")
         XCTAssertEqual(strings.yesterdayTokens, "昨日 token 用量")
         XCTAssertEqual(strings.membership, "会员")
+        XCTAssertEqual(strings.postSwitchAction, "切换后动作")
+        XCTAssertEqual(strings.postSwitchActionLabel(.restartCodexApp), "重启 Codex")
+        XCTAssertEqual(strings.restartCodexNow, "立即重启 Codex")
     }
 }

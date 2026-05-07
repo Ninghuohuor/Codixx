@@ -25,6 +25,7 @@ public struct CodixxConfig: Codable, Equatable, Sendable {
     public var quotaRefreshIntervalSeconds: TimeInterval
     public var usageRefreshIntervalSeconds: TimeInterval
     public var language: CodixxLanguage
+    public var postSwitchAction: PostSwitchAction
 
     public init(
         codexDirectoryPath: String,
@@ -34,7 +35,8 @@ public struct CodixxConfig: Codable, Equatable, Sendable {
         detailedSwitchLoggingEnabled: Bool = true,
         quotaRefreshIntervalSeconds: TimeInterval = 60,
         usageRefreshIntervalSeconds: TimeInterval = 300,
-        language: CodixxLanguage = .english
+        language: CodixxLanguage = .english,
+        postSwitchAction: PostSwitchAction = .notifyRestartRecommended
     ) {
         self.codexDirectoryPath = codexDirectoryPath
         self.autoSwitchEnabled = autoSwitchEnabled
@@ -44,6 +46,7 @@ public struct CodixxConfig: Codable, Equatable, Sendable {
         self.quotaRefreshIntervalSeconds = quotaRefreshIntervalSeconds
         self.usageRefreshIntervalSeconds = usageRefreshIntervalSeconds
         self.language = language
+        self.postSwitchAction = postSwitchAction
     }
 
     public static func `default`(paths: CodixxPaths = CodixxPaths()) -> CodixxConfig {
@@ -59,6 +62,7 @@ public struct CodixxConfig: Codable, Equatable, Sendable {
         case quotaRefreshIntervalSeconds
         case usageRefreshIntervalSeconds
         case language
+        case postSwitchAction
     }
 
     public init(from decoder: Decoder) throws {
@@ -71,6 +75,7 @@ public struct CodixxConfig: Codable, Equatable, Sendable {
         self.quotaRefreshIntervalSeconds = try container.decode(TimeInterval.self, forKey: .quotaRefreshIntervalSeconds)
         self.usageRefreshIntervalSeconds = try container.decode(TimeInterval.self, forKey: .usageRefreshIntervalSeconds)
         self.language = try container.decodeIfPresent(CodixxLanguage.self, forKey: .language) ?? .english
+        self.postSwitchAction = try container.decodeIfPresent(PostSwitchAction.self, forKey: .postSwitchAction) ?? .notifyRestartRecommended
     }
 }
 
