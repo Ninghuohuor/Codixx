@@ -1,8 +1,11 @@
+import AppKit
 import SwiftUI
 import CodixxCore
 
 struct SettingsView: View {
     @ObservedObject var state: AppState
+    @State private var isShowingAllSwitchLogs = false
+    @State private var isShowingQuitConfirmation = false
 
     var body: some View {
         ScrollView {
@@ -69,6 +72,30 @@ struct SettingsView: View {
 
                     Divider()
 
+                    VStack(alignment: .leading, spacing: 6) {
+                        HStack {
+                            Text(state.strings.weeklyThreshold)
+                            Spacer()
+                            Text("\(Int(state.config.secondaryThresholdPercent.rounded()))%")
+                                .monospacedDigit()
+                                .foregroundStyle(.secondary)
+                        }
+                        Slider(
+                            value: Binding(
+                                get: { state.config.secondaryThresholdPercent },
+                                set: { state.setSecondaryThresholdPercent($0) }
+                            ),
+                            in: 50...100,
+                            step: 1
+                        )
+                        Text(state.strings.weeklyThresholdHint)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+
+                    Divider()
+
                     Picker(state.strings.postSwitchAction, selection: Binding(
                         get: { state.config.postSwitchAction },
                         set: { state.setPostSwitchAction($0) }
@@ -127,10 +154,51 @@ struct SettingsView: View {
                             .textSelection(.enabled)
                             .lineLimit(2)
                     }
+
+                    Divider()
+
+                    Button(role: .destructive) {
+                        isShowingQuitConfirmation = true
+                    } label: {
+                        Label(state.strings.quitCodixx, systemImage: "power")
+                    }
+                    .help(state.strings.quitCodixx)
+                    .alert(state.strings.quitCodixx, isPresented: $isShowingQuitConfirmation) {
+                        Button(state.strings.cancel, role: .cancel) {}
+                        Button(state.strings.quitCodixx, role: .destructive) {
+                            NSApplication.shared.terminate(nil)
+                        }
+                    }
+                }
+
+                settingsSection(title: state.strings.switchLog) {
+                    SwitchLogView(events: visibleSwitchEvents, strings: state.strings, showsTitle: false)
+
+                    if state.switchEvents.count > 3 {
+                        Divider()
+
+                        Button {
+                            withAnimation(.easeInOut(duration: 0.16)) {
+                                isShowingAllSwitchLogs.toggle()
+                            }
+                        } label: {
+                            Label(
+                                isShowingAllSwitchLogs ? state.strings.showLess : state.strings.showMore,
+                                systemImage: isShowingAllSwitchLogs ? "chevron.up" : "chevron.down"
+                            )
+                        }
+                        .font(.caption)
+                        .buttonStyle(.borderless)
+                    }
                 }
             }
-            .padding(4)
+            .padding(14)
         }
+    }
+
+    private var visibleSwitchEvents: [SwitchAuditEvent] {
+        let limit = isShowingAllSwitchLogs ? 20 : 3
+        return Array(state.switchEvents.prefix(limit))
     }
 
     private func settingsSection<Content: View>(title: String, @ViewBuilder content: () -> Content) -> some View {

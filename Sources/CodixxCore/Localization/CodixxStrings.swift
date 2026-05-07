@@ -8,6 +8,7 @@ public struct CodixxStrings: Sendable {
     }
 
     public var overview: String { text(en: "Overview", zh: "概览") }
+    public var allAccounts: String { text(en: "All", zh: "所有") }
     public var trends: String { text(en: "Trends", zh: "趋势") }
     public var accounts: String { text(en: "Accounts", zh: "账号") }
     public var logs: String { text(en: "Logs", zh: "日志") }
@@ -52,7 +53,7 @@ public struct CodixxStrings: Sendable {
 
     public var membership: String { text(en: "Membership", zh: "会员") }
     public var membershipExpires: String { text(en: "Membership expires", zh: "会员到期") }
-    public var neverExpires: String { text(en: "Expiration unavailable locally", zh: "本地未提供到期时间") }
+    public var neverExpires: String { text(en: "Expiration unavailable locally", zh: "到期时间未知") }
     public var enabled: String { text(en: "Enabled", zh: "启用") }
     public var autoSwitch: String { text(en: "Auto switch", zh: "自动切换") }
     public var autoSwitchNeedsTwoAccounts: String {
@@ -62,16 +63,34 @@ public struct CodixxStrings: Sendable {
         )
     }
     public var notifications: String { text(en: "Notifications", zh: "通知") }
-    public var threshold: String { text(en: "Threshold", zh: "阈值") }
+    public var notificationsEnabledTitle: String { text(en: "Codixx notifications enabled", zh: "Codixx 通知已开启") }
+    public var notificationsEnabledBody: String {
+        text(en: "You will receive quota and account switch alerts.", zh: "后续会收到额度和账号切换提醒。")
+    }
+    public var notificationsDenied: String {
+        text(
+            en: "Notifications are disabled in macOS System Settings. Enable Codixx notifications there first.",
+            zh: "macOS 系统设置里未允许 Codixx 通知，请先在系统设置中开启。"
+        )
+    }
+    public var threshold: String { text(en: "5-hour threshold", zh: "5 小时阈值") }
+    public var weeklyThreshold: String { text(en: "Weekly threshold", zh: "周额度阈值") }
     public var thresholdHint: String {
         text(
             en: "Auto switch triggers when the 5-hour quota reaches this percentage.",
             zh: "当 5 小时额度达到此百分比时，自动切换将触发。"
         )
     }
+    public var weeklyThresholdHint: String {
+        text(
+            en: "Auto switch also triggers when the current weekly quota reaches this percentage; candidates at or above it are skipped.",
+            zh: "当前账号周额度达到此百分比也会触发自动切换；候选账号达到后会被跳过。"
+        )
+    }
     public var quotaRefresh: String { text(en: "Quota refresh", zh: "额度刷新") }
     public var usageRefresh: String { text(en: "Usage refresh", zh: "用量刷新") }
     public var usageReadFailed: String { text(en: "Could not refresh usage data", zh: "无法刷新用量数据") }
+    public var loadingTrendData: String { text(en: "Loading trend data...", zh: "正在加载趋势数据...") }
     public var codexHome: String { text(en: "Codex Home", zh: "Codex 目录") }
     public var languageLabel: String { text(en: "Language", zh: "语言") }
     public var postSwitchAction: String { text(en: "After switch", zh: "切换后动作") }
@@ -84,6 +103,8 @@ public struct CodixxStrings: Sendable {
     public var noThreadUsageYet: String { text(en: "No thread usage yet", zh: "暂无会话用量") }
     public var switchLog: String { text(en: "Switch Log", zh: "切换日志") }
     public var noSwitchEvents: String { text(en: "No switch events", zh: "暂无切换事件") }
+    public var showMore: String { text(en: "Show more", zh: "展开更多") }
+    public var showLess: String { text(en: "Show less", zh: "收起") }
     public var unknown: String { text(en: "unknown", zh: "未知") }
     public var rolledBack: String { text(en: "Rolled back", zh: "已回滚") }
     public var rollbackFailed: String { text(en: "Rollback failed", zh: "回滚失败") }
@@ -96,12 +117,14 @@ public struct CodixxStrings: Sendable {
     public var total: String { text(en: "Total Tokens", zh: "Token 总量") }
     public var todayTokens: String { text(en: "Today", zh: "今日 Token 用量") }
     public var yesterdayTokens: String { text(en: "Yesterday", zh: "昨日 Token 用量") }
+    public var currentMonthTokens: String { text(en: "This month", zh: "本月 Token 用量") }
+    public var previousMonthTokens: String { text(en: "Last month", zh: "上月 Token 用量") }
     public var threads: String { text(en: "Threads", zh: "会话") }
     public var tokens: String { text(en: "Tokens", zh: "Token") }
     public var day: String { text(en: "Day", zh: "日期") }
     public var hour: String { text(en: "Hour", zh: "小时") }
-    public var threadsUpdatedSevenDays: String { text(en: "Threads updated, 7 days", zh: "近 7 天更新的会话") }
-    public var threadsUpdatedTwentyFourHours: String { text(en: "Threads updated, 24 hours", zh: "近 24 小时更新的会话") }
+    public var tokenUsageSevenDays: String { text(en: "Token usage, 7 days", zh: "近 7 天 Token 用量") }
+    public var tokenUsageTwentyFourHours: String { text(en: "Token usage, 24 hours", zh: "近 24 小时 Token 用量") }
     public var noActiveAccountTitle: String { text(en: "No saved current account", zh: "尚未保存当前账号") }
     public var noActiveAccountDetail: String {
         text(
@@ -178,8 +201,8 @@ public struct CodixxStrings: Sendable {
 
     public func expires(_ date: Date) -> String {
         text(
-            en: "Expires \(date.formatted(date: .abbreviated, time: .omitted))",
-            zh: "\(date.formatted(date: .abbreviated, time: .omitted)) 到期"
+            en: date.formatted(date: .abbreviated, time: .omitted),
+            zh: date.formatted(date: .abbreviated, time: .omitted)
         )
     }
 

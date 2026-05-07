@@ -15,7 +15,20 @@ private struct CodexActivation {
 }
 
 @MainActor
-final class AppState: ObservableObject {
+protocol LifecycleStateManaging: AnyObject {
+    var config: CodixxConfig { get }
+    var strings: CodixxStrings { get }
+    var paths: CodixxPaths { get }
+    var errorMessage: String? { get set }
+    var onNotificationsEnabled: (() -> Void)? { get set }
+
+    func refreshNow()
+    func refreshQuotaNow()
+    func refreshUsageNow()
+}
+
+@MainActor
+final class AppState: ObservableObject, LifecycleStateManaging {
     @Published private(set) var config: CodixxConfig
     @Published private(set) var accounts: [CodixxAccount] = []
     @Published private(set) var currentAccount: CodixxAccount?
@@ -28,6 +41,8 @@ final class AppState: ObservableObject {
     @Published private(set) var switchEvents: [SwitchAuditEvent] = []
     @Published private(set) var lastUpdatedAt: Date?
     @Published private(set) var isRefreshing = false
+    @Published private(set) var hasLoadedFullUsageSnapshot = false
+    @Published private(set) var isLoadingFullUsageSnapshot = false
     @Published private(set) var accountSaveStatus: AccountSaveStatus?
     @Published private(set) var postSwitchRestartMessage: String?
     @Published var errorMessage: String?
@@ -45,9 +60,11 @@ final class AppState: ObservableObject {
     private let now: () -> Date
     private var isRefreshInProgress = false
     private var isSwitchInProgress = false
+    private var usageRefreshTask: Task<Void, Never>?
     private var errorDismissWork: DispatchWorkItem?
     private var lastRefreshStartedAt: Date?
     private let menuRefreshThrottleSeconds: TimeInterval = 30
+    var onNotificationsEnabled: (() -> Void)?
 
     init(
         paths: CodixxPaths = CodixxPaths(),
@@ -60,7 +77,10 @@ final class AppState: ObservableObject {
         self.configStore = CodixxConfigStore(paths: paths)
         self.metadataStore = AccountMetadataStore(paths: paths)
         self.rateLimitReader = RateLimitReader(paths: paths)
-        self.threadUsageReader = ThreadUsageReader(databaseURL: paths.latestStateDatabaseURL())
+        self.threadUsageReader = ThreadUsageReader(
+            databaseURL: paths.latestStateDatabaseURL(),
+            trendCacheStore: TrendCacheStore(paths: paths)
+        )
         self.auditLog = SwitchAuditLog(paths: paths)
         self.accountStore = AccountStore(paths: paths, metadataStore: metadataStore, vault: vault, now: now)
         self.switcher = AccountSwitcher(
@@ -82,14 +102,39 @@ final class AppState: ObservableObject {
         return "Codixx"
     }
 
+    var menuBarHelpText: String {
+        guard let account = currentAccount else {
+            return strings.noActiveAccountTitle
+        }
+
+        let primaryPercent = quotaPercentText(account.quota.primaryUsedPercent)
+        let secondaryPercent = quotaPercentText(account.quota.secondaryUsedPercent)
+        let primaryReset = account.quota.primaryResetsAt.map(strings.resets) ?? strings.resetUnknown
+        let secondaryReset = account.quota.secondaryResetsAt.map(strings.weeklyResets) ?? strings.resetUnknown
+        let primaryThreshold = "\(Int(config.primaryThresholdPercent.rounded()))%"
+        let secondaryThreshold = "\(Int(config.secondaryThresholdPercent.rounded()))%"
+
+        return [
+            account.alias,
+            "\(strings.fiveHourQuota): \(primaryPercent) · \(primaryReset)",
+            "\(strings.weeklyQuota): \(secondaryPercent) · \(secondaryReset)",
+            "\(strings.threshold): \(primaryThreshold)",
+            "\(strings.weeklyThreshold): \(secondaryThreshold)"
+        ].joined(separator: "\n")
+    }
+
     var menuBarSystemImage: String {
         guard currentAccount != nil else { return "bolt.slash.circle.fill" }
-        guard let used = currentAccount?.quota.primaryUsedPercent else { return "bolt.circle.fill" }
-        return used >= config.primaryThresholdPercent ? "exclamationmark.triangle.fill" : "bolt.circle.fill"
+        let primaryAtThreshold = currentAccount?.quota.primaryUsedPercent.map { $0 >= config.primaryThresholdPercent } ?? false
+        let secondaryAtThreshold = currentAccount?.quota.secondaryUsedPercent.map { $0 >= config.secondaryThresholdPercent } ?? false
+        return primaryAtThreshold || secondaryAtThreshold ? "exclamationmark.triangle.fill" : "bolt.circle.fill"
     }
 
     var candidateAccounts: [CodixxAccount] {
-        SwitchPolicy(primaryThresholdPercent: config.primaryThresholdPercent)
+        SwitchPolicy(
+            primaryThresholdPercent: config.primaryThresholdPercent,
+            secondaryThresholdPercent: config.secondaryThresholdPercent
+        )
             .orderedCandidates(from: accounts.filter { $0.id != currentAccount?.id }) { _ in true }
     }
 
@@ -110,9 +155,34 @@ final class AppState: ObservableObject {
         )
     }
 
-    func refreshFromMenuOpen() {
+    func refreshQuotaNow() {
+        refresh(
+            applyRateLimitObservations: true,
+            allowAutoSwitch: true,
+            preservingError: nil,
+            throttled: false,
+            refreshUsage: true,
+            refreshUsageActivityOnly: true
+        )
+    }
+
+    func refreshUsageNow() {
         refresh(
             applyRateLimitObservations: false,
+            allowAutoSwitch: true,
+            preservingError: nil,
+            throttled: false
+        )
+    }
+
+    func refreshTrendsIfNeeded() {
+        guard !hasLoadedFullUsageSnapshot else { return }
+        refreshUsageNow()
+    }
+
+    func refreshFromMenuOpen() {
+        refresh(
+            applyRateLimitObservations: true,
             allowAutoSwitch: false,
             preservingError: nil,
             throttled: true,
@@ -127,7 +197,8 @@ final class AppState: ObservableObject {
         preservingError preservedError: String?,
         throttled: Bool,
         refreshUsage: Bool = true,
-        refreshUsageIfEmpty: Bool = true
+        refreshUsageIfEmpty: Bool = true,
+        refreshUsageActivityOnly: Bool = false
     ) {
         guard !isRefreshInProgress else { return }
         let refreshStartedAt = now()
@@ -175,25 +246,77 @@ final class AppState: ObservableObject {
 
         accounts = loadedAccounts
         currentAccount = currentAccount(in: loadedAccounts)
-        if refreshUsage || (refreshUsageIfEmpty && usageSnapshot.threads.isEmpty) {
-            let latestUsageSnapshot = threadUsageReader.readSnapshot(now: now())
-            if latestUsageSnapshot.isDegraded, !usageSnapshot.threads.isEmpty {
-                refreshErrors.append(latestUsageSnapshot.errorSummary ?? strings.usageReadFailed)
-            } else {
-                applyUsageSnapshot(latestUsageSnapshot)
-            }
-        }
-
         do {
             switchEvents = try auditLog.loadEvents().sorted { $0.timestamp > $1.timestamp }
         } catch {
             refreshErrors.append(error.localizedDescription)
         }
 
+        let shouldRefreshUsage = refreshUsage || (refreshUsageIfEmpty && usageSnapshot.threads.isEmpty)
+        if shouldRefreshUsage, !refreshUsageActivityOnly {
+            isLoadingFullUsageSnapshot = true
+            let usageReader = threadUsageReader
+            let usageNow = refreshStartedAt
+            let usageAccountWindows = accountUsageWindows(accounts: loadedAccounts, switchEvents: switchEvents)
+            let previousSnapshot = usageSnapshot
+            let currentStrings = strings
+            let baseErrors = refreshErrors
+
+            usageRefreshTask?.cancel()
+            usageRefreshTask = Task.detached(priority: .utility) {
+                let latestUsageSnapshot = usageReader.readSnapshot(
+                    now: usageNow,
+                    accountWindows: usageAccountWindows
+                )
+
+                await MainActor.run { [weak self] in
+                    guard let self else { return }
+                    var finalErrors = baseErrors
+                    if latestUsageSnapshot.isDegraded, !previousSnapshot.threads.isEmpty {
+                        finalErrors.append(latestUsageSnapshot.errorSummary ?? currentStrings.usageReadFailed)
+                    } else {
+                        self.applyUsageSnapshot(latestUsageSnapshot)
+                    }
+                    self.hasLoadedFullUsageSnapshot = true
+                    self.isLoadingFullUsageSnapshot = false
+                    self.finishRefresh(
+                        errors: finalErrors,
+                        preservedError: preservedError,
+                        allowAutoSwitch: allowAutoSwitch
+                    )
+                }
+            }
+            return
+        } else if shouldRefreshUsage {
+            let latestUsageSnapshot = threadUsageReader.readActivitySnapshot(now: refreshStartedAt)
+            if latestUsageSnapshot.isDegraded, !usageSnapshot.threads.isEmpty {
+                refreshErrors.append(latestUsageSnapshot.errorSummary ?? strings.usageReadFailed)
+            } else {
+                applyUsageSnapshot(latestUsageSnapshot, preservingTokenBuckets: refreshUsageActivityOnly)
+            }
+            if !refreshUsageActivityOnly {
+                hasLoadedFullUsageSnapshot = true
+                isLoadingFullUsageSnapshot = false
+            }
+        }
+
         if let usageError = usageSnapshot.errorSummary {
             refreshErrors.append(usageError)
         }
 
+        finishRefresh(
+            errors: refreshErrors,
+            preservedError: preservedError,
+            allowAutoSwitch: allowAutoSwitch
+        )
+    }
+
+    private func finishRefresh(
+        errors refreshErrors: [String],
+        preservedError: String?,
+        allowAutoSwitch: Bool
+    ) {
+        var refreshErrors = refreshErrors
         if let preservedError {
             refreshErrors.insert(preservedError, at: 0)
         }
@@ -217,21 +340,37 @@ final class AppState: ObservableObject {
         }
     }
 
-    private func applyUsageSnapshot(_ snapshot: ThreadUsageSnapshot) {
-        usageSnapshot = snapshot
+    private func applyUsageSnapshot(_ snapshot: ThreadUsageSnapshot, preservingTokenBuckets: Bool = false) {
+        if preservingTokenBuckets {
+            usageSnapshot = ThreadUsageSnapshot(
+                threads: snapshot.threads,
+                totalTokens: snapshot.totalTokens,
+                activeThread: snapshot.activeThread,
+                dailyTokenUsage: usageSnapshot.dailyTokenUsage,
+                hourlyTokenUsage: usageSnapshot.hourlyTokenUsage,
+                monthlyTokenUsage: usageSnapshot.monthlyTokenUsage,
+                accountUsageSummaries: usageSnapshot.accountUsageSummaries,
+                errorSummary: snapshot.errorSummary
+            )
+        } else {
+            usageSnapshot = snapshot
+        }
         topThreads = Array(snapshot.threads.sorted { $0.tokensUsed > $1.tokensUsed }.prefix(10))
     }
 
     func attemptAutoSwitchIfNeeded() {
         guard config.autoSwitchEnabled, !isSwitchInProgress else { return }
         let timestamp = now()
-        let policy = SwitchPolicy(primaryThresholdPercent: config.primaryThresholdPercent)
+        let policy = SwitchPolicy(
+            primaryThresholdPercent: config.primaryThresholdPercent,
+            secondaryThresholdPercent: config.secondaryThresholdPercent
+        )
         let context = SwitchSafetyContext(
             now: timestamp,
             activeThreadUpdatedAt: usageSnapshot.activeThread?.updatedAt,
             lastSwitchAt: lastSuccessfulSwitchAt
         )
-        guard policy.shouldAutoSwitch(currentAccount: currentAccount, context: context),
+        guard policy.shouldAutoSwitch(currentAccount: currentAccount, allAccounts: accounts, context: context),
               let target = candidateAccounts.first
         else {
             return
@@ -394,10 +533,17 @@ final class AppState: ObservableObject {
 
     func setNotificationsEnabled(_ isEnabled: Bool) {
         updateConfig { $0.notificationsEnabled = isEnabled }
+        if config.notificationsEnabled {
+            onNotificationsEnabled?()
+        }
     }
 
     func setPrimaryThresholdPercent(_ percent: Double) {
         updateConfig { $0.primaryThresholdPercent = percent }
+    }
+
+    func setSecondaryThresholdPercent(_ percent: Double) {
+        updateConfig { $0.secondaryThresholdPercent = percent }
     }
 
     func setQuotaRefreshIntervalSeconds(_ seconds: TimeInterval) {
@@ -438,6 +584,44 @@ final class AppState: ObservableObject {
         } catch {
             errorMessage = error.localizedDescription
         }
+    }
+
+    private func quotaPercentText(_ percent: Double?) -> String {
+        percent.map { "\(Int($0.rounded()))%" } ?? "--"
+    }
+
+    private func accountUsageWindows(accounts: [CodixxAccount], switchEvents: [SwitchAuditEvent]) -> [AccountUsageWindow] {
+        let accountIds = Set(accounts.map(\.id))
+        let successfulSwitches = switchEvents
+            .filter { $0.result == .success && $0.targetAccountId != nil }
+            .sorted { $0.timestamp < $1.timestamp }
+
+        if successfulSwitches.isEmpty,
+           let currentAccount,
+           accountIds.contains(currentAccount.id)
+        {
+            let start = accounts.map(\.createdAt).min() ?? Date.distantPast
+            return [AccountUsageWindow(accountId: currentAccount.id, start: start, end: nil)]
+        }
+
+        var windows: [AccountUsageWindow] = []
+        if let firstSwitch = successfulSwitches.first,
+           let sourceId = firstSwitch.sourceAccountId,
+           accountIds.contains(sourceId)
+        {
+            let creationStart = accounts.map(\.createdAt).min() ?? Date.distantPast
+            if creationStart < firstSwitch.timestamp {
+                windows.append(AccountUsageWindow(accountId: sourceId, start: creationStart, end: firstSwitch.timestamp))
+            }
+        }
+
+        for (index, event) in successfulSwitches.enumerated() {
+            guard let accountId = event.targetAccountId, accountIds.contains(accountId) else { continue }
+            let end = successfulSwitches.indices.contains(index + 1) ? successfulSwitches[index + 1].timestamp : nil
+            windows.append(AccountUsageWindow(accountId: accountId, start: event.timestamp, end: end))
+        }
+
+        return windows
     }
 
     private func handlePostSwitchAction() {

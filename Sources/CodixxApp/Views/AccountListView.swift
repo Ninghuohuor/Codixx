@@ -17,24 +17,32 @@ struct AccountListView: View {
                 HStack {
                     Text(state.strings.accounts)
                         .font(.headline)
+                    Text(lastUpdatedText)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
                     Spacer()
+                    Button {
+                        state.refreshNow()
+                    } label: {
+                        Image(systemName: state.isRefreshing ? "arrow.triangle.2.circlepath" : "arrow.clockwise")
+                    }
+                    .buttonStyle(.borderless)
+                    .help(state.strings.refresh)
+
                     Button {
                         withAnimation(.easeInOut(duration: 0.18)) {
                             isShowingSaveAccount.toggle()
                         }
                     } label: {
-                        Label(state.strings.addAccount, systemImage: isShowingSaveAccount ? "chevron.up" : "person.badge.plus")
+                        Image(systemName: isShowingSaveAccount ? "chevron.up" : "plus")
                     }
-                    .buttonStyle(.borderedProminent)
-                    .controlSize(.small)
+                    .buttonStyle(.borderless)
+                    .help(state.strings.addAccount)
                 }
 
                 if isShowingSaveAccount {
                     saveCurrentAccount
-                }
-
-                if let accountToSwitch {
-                    switchConfirmation(for: accountToSwitch)
                 }
 
                 if !state.canEnableAutoSwitch {
@@ -60,6 +68,7 @@ struct AccountListView: View {
                     }
                 }
             }
+            .padding(14)
         }
         .alert(
             state.strings.confirmDeleteTitle,
@@ -84,6 +93,28 @@ struct AccountListView: View {
                 Text(state.strings.confirmDeleteMessage(alias: account.alias))
             }
         }
+        .alert(
+            accountToSwitch.map { state.strings.confirmSwitchTitle(alias: $0.alias) } ?? "",
+            isPresented: Binding(
+                get: { accountToSwitch != nil },
+                set: { if !$0 { accountToSwitch = nil } }
+            )
+        ) {
+            Button(state.strings.cancel, role: .cancel) {
+                accountToSwitch = nil
+            }
+            Button(state.strings.switchAndRestartCodex) {
+                if let account = accountToSwitch {
+                    accountToSwitch = nil
+                    NSApplication.shared.keyWindow?.close()
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+                        state.switchToAccountAndRestartCodex(account)
+                    }
+                }
+            }
+        } message: {
+            Text(state.strings.confirmSwitchMessage)
+        }
     }
 
     private var saveCurrentAccount: some View {
@@ -96,6 +127,9 @@ struct AccountListView: View {
                 Button {
                     state.saveCurrentAccount(alias: newAlias)
                     newAlias = ""
+                    withAnimation(.easeInOut(duration: 0.18)) {
+                        isShowingSaveAccount = false
+                    }
                 } label: {
                     Label(state.strings.save, systemImage: "key")
                 }
@@ -117,23 +151,6 @@ struct AccountListView: View {
         VStack(alignment: .leading, spacing: 14) {
             VStack(alignment: .leading, spacing: 8) {
                 accountHeader(for: account)
-
-                HStack(spacing: 8) {
-                    if account.id == state.currentAccount?.id {
-                        Text(state.strings.current)
-                            .font(.caption2.weight(.semibold))
-                            .padding(.horizontal, 6)
-                            .padding(.vertical, 2)
-                            .background(Color.green.opacity(0.14), in: Capsule())
-                    }
-
-                    Text(quotaText(for: account))
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(2)
-
-                    Spacer(minLength: 0)
-                }
 
                 Text(membershipExpirationText(for: account))
                     .font(.caption)
@@ -208,14 +225,19 @@ struct AccountListView: View {
                         .padding(.horizontal, 6)
                         .padding(.vertical, 2)
                         .background(Color.secondary.opacity(0.12), in: Capsule())
+                    if account.id == state.currentAccount?.id {
+                        Text(state.strings.current)
+                            .font(.caption2.weight(.semibold))
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 2)
+                            .background(Color.green.opacity(0.14), in: Capsule())
+                    }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
 
             Button {
-                withAnimation(.easeInOut(duration: 0.16)) {
-                    accountToSwitch = account
-                }
+                accountToSwitch = account
             } label: {
                 Label(state.strings.switchAccount, systemImage: "arrow.triangle.2.circlepath")
             }
@@ -250,42 +272,9 @@ struct AccountListView: View {
         }
     }
 
-    private func switchConfirmation(for account: CodixxAccount) -> some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Label(state.strings.confirmSwitchTitle(alias: account.alias), systemImage: "arrow.triangle.2.circlepath")
-                .font(.subheadline.weight(.semibold))
-            Text(state.strings.confirmSwitchMessage)
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
-            HStack {
-                Button(state.strings.cancel) {
-                    withAnimation(.easeInOut(duration: 0.16)) {
-                        accountToSwitch = nil
-                    }
-                }
-                Spacer()
-                Button(state.strings.switchAndRestartCodex) {
-                    let targetAccount = account
-                    withAnimation(.easeInOut(duration: 0.12)) {
-                        accountToSwitch = nil
-                    }
-                    NSApplication.shared.keyWindow?.close()
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
-                        state.switchToAccountAndRestartCodex(targetAccount)
-                    }
-                }
-                .buttonStyle(.borderedProminent)
-            }
-            .font(.caption)
-        }
-        .padding(12)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color.blue.opacity(0.10), in: RoundedRectangle(cornerRadius: 8))
-        .overlay(
-            RoundedRectangle(cornerRadius: 8)
-                .stroke(Color.accentColor.opacity(0.18), lineWidth: 1)
-        )
+    private var lastUpdatedText: String {
+        guard let lastUpdatedAt = state.lastUpdatedAt else { return state.strings.notRefreshedYet }
+        return state.strings.updated(lastUpdatedAt)
     }
 
     private func quotaProgressRows(for account: CodixxAccount) -> some View {
@@ -301,7 +290,7 @@ struct AccountListView: View {
                 title: state.strings.weeklyQuota,
                 percent: account.quota.secondaryUsedPercent,
                 resetText: account.quota.secondaryResetsAt.map(state.strings.weeklyResets) ?? state.strings.resetUnknown,
-                tint: account.quota.secondaryUsedPercent.map { $0 >= 100 ? .red : .green } ?? .secondary
+                tint: account.quota.secondaryUsedPercent.map { $0 >= state.config.secondaryThresholdPercent ? .orange : .green } ?? .secondary
             )
         }
     }
@@ -312,12 +301,13 @@ struct AccountListView: View {
         resetText: String,
         tint: Color
     ) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
+        let percentText = percent.map { "\(Int($0.rounded()))%" } ?? "--"
+        return VStack(alignment: .leading, spacing: 4) {
             HStack {
                 Text("\(title) · \(resetText)")
                     .lineLimit(1)
                 Spacer()
-                Text(percent.map { "\(Int($0.rounded()))%" } ?? "--")
+                Text(percentText)
                     .monospacedDigit()
             }
             .font(.caption)
@@ -326,12 +316,7 @@ struct AccountListView: View {
             ProgressView(value: min(max((percent ?? 0) / 100, 0), 1))
                 .tint(tint)
         }
-    }
-
-    private func quotaText(for account: CodixxAccount) -> String {
-        let primary = account.quota.primaryUsedPercent.map { "\(Int($0.rounded()))%" } ?? "--"
-        let confidence = state.strings.confidenceLabel(account.quota.confidence)
-        return state.strings.primaryQuota(primary: primary, confidence: confidence)
+        .help("\(title): \(percentText) · \(resetText)")
     }
 
     private func planLabel(for account: CodixxAccount) -> String {

@@ -5,17 +5,26 @@ import Foundation
 
 @MainActor
 final class AppLifecycleCoordinator: ObservableObject {
-    private let state: AppState
-    private let notificationCoordinator: NotificationCoordinator
+    private let state: LifecycleStateManaging
+    private let notificationCoordinator: AppNotificationCoordinating
+    private let initialRefreshDelaySeconds: TimeInterval
+    private let shouldStartAuthFileObservation: Bool
     private var quotaTimer: Timer?
     private var usageTimer: Timer?
     private var authFileDescriptor: Int32 = -1
     private var authFileSource: DispatchSourceFileSystemObject?
     private var isStarted = false
 
-    init(state: AppState, notificationCoordinator: NotificationCoordinator? = nil) {
+    init(
+        state: LifecycleStateManaging,
+        notificationCoordinator: AppNotificationCoordinating? = nil,
+        initialRefreshDelaySeconds: TimeInterval = 0.3,
+        shouldStartAuthFileObservation: Bool = true
+    ) {
         self.state = state
         self.notificationCoordinator = notificationCoordinator ?? NotificationCoordinator()
+        self.initialRefreshDelaySeconds = initialRefreshDelaySeconds
+        self.shouldStartAuthFileObservation = shouldStartAuthFileObservation
     }
 
     func stop() {
@@ -25,17 +34,32 @@ final class AppLifecycleCoordinator: ObservableObject {
         authFileSource?.cancel()
         NotificationCenter.default.removeObserver(self)
         DistributedNotificationCenter.default().removeObserver(self)
+        state.onNotificationsEnabled = nil
     }
 
     func start() {
         guard !isStarted else { return }
         isStarted = true
 
-        refreshAndNotify()
+        state.onNotificationsEnabled = { [weak self] in
+            self?.sendNotificationsEnabledConfirmation()
+        }
         scheduleTimers()
         observeSystemEvents()
         observeActivationRequests()
-        startAuthFileObservation()
+        if shouldStartAuthFileObservation {
+            startAuthFileObservation()
+        }
+        scheduleInitialRefresh()
+    }
+
+    private func scheduleInitialRefresh() {
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            try? await Task.sleep(nanoseconds: UInt64(initialRefreshDelaySeconds * 1_000_000_000))
+            guard self.isStarted else { return }
+            self.refreshQuotaAndNotify()
+        }
     }
 
     private func scheduleTimers() {
@@ -54,7 +78,7 @@ final class AppLifecycleCoordinator: ObservableObject {
         ) { [weak self] _ in
             Task { @MainActor in
                 guard let self, self.isStarted else { return }
-                self.refreshAndNotify()
+                self.refreshQuotaAndNotify()
                 self.scheduleQuotaTimer()
             }
         }
@@ -68,7 +92,7 @@ final class AppLifecycleCoordinator: ObservableObject {
         ) { [weak self] _ in
             Task { @MainActor in
                 guard let self, self.isStarted else { return }
-                self.refreshAndNotify()
+                self.refreshUsageAndNotify()
                 self.scheduleUsageTimer()
             }
         }
@@ -148,6 +172,27 @@ final class AppLifecycleCoordinator: ObservableObject {
 
     private func refreshAndNotify() {
         state.refreshNow()
-        notificationCoordinator.evaluate(state: state)
+        evaluateNotificationsIfPossible()
+    }
+
+    private func refreshQuotaAndNotify() {
+        state.refreshQuotaNow()
+        evaluateNotificationsIfPossible()
+    }
+
+    private func refreshUsageAndNotify() {
+        state.refreshUsageNow()
+        evaluateNotificationsIfPossible()
+    }
+
+    private func evaluateNotificationsIfPossible() {
+        guard let appState = state as? AppState else { return }
+        notificationCoordinator.evaluate(state: appState)
+    }
+
+    private func sendNotificationsEnabledConfirmation() {
+        notificationCoordinator.sendNotificationsEnabledConfirmation(strings: state.strings) { [weak self] in
+            self?.state.errorMessage = self?.state.strings.notificationsDenied
+        }
     }
 }

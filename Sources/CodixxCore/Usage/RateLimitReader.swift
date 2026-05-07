@@ -77,10 +77,11 @@ public struct RateLimitReader {
     public func readNewObservations() throws -> [RateLimitObservation] {
         var cursorState = try cursorStore.load()
         var observations: [RateLimitObservation] = []
-        let files = try jsonlFiles()
-        cursorState.pruneKeepingOnly(files)
+        let filePlan = try jsonlFilePlan(cursorState: cursorState)
+        cursorState = filePlan.cursorState
+        cursorState.pruneKeepingOnly(filePlan.retainedFiles)
 
-        for file in files {
+        for file in filePlan.filesToRead {
             let storedOffset = max(0, cursorState.offset(for: file))
             let fileSize = try sizeOfFile(at: file)
             let previousOffset = storedOffset > fileSize ? 0 : storedOffset
@@ -161,15 +162,33 @@ public struct RateLimitReader {
         )
     }
 
-    private func jsonlFiles() throws -> [URL] {
+    private func jsonlFilePlan(
+        cursorState: ParseCursorState
+    ) throws -> (filesToRead: [URL], retainedFiles: [URL], cursorState: ParseCursorState) {
         let sessions = paths.codexHome.appendingPathComponent("sessions", isDirectory: true)
         let archivedSessions = paths.codexHome.appendingPathComponent("archived_sessions", isDirectory: true)
-        var files: [URL] = []
+        var updatedCursorState = cursorState
 
-        files.append(contentsOf: try recursiveJSONLFiles(in: sessions))
-        files.append(contentsOf: try directJSONLFiles(in: archivedSessions))
+        let sessionFiles = try recursiveJSONLFiles(in: sessions)
+        let archivedDirectoryModifiedAt = modificationDateOfItem(at: archivedSessions)
+        let archivedFilesToRead: [URL]
+        let retainedArchivedFiles: [URL]
 
-        return files.sorted { $0.path < $1.path }
+        if updatedCursorState.canUseCachedArchivedSessions(directoryModifiedAt: archivedDirectoryModifiedAt) {
+            archivedFilesToRead = []
+            retainedArchivedFiles = updatedCursorState.cachedArchivedSessionURLs()
+        } else {
+            let archivedFiles = try directJSONLFiles(in: archivedSessions)
+            updatedCursorState.recordArchivedSessions(archivedFiles, directoryModifiedAt: archivedDirectoryModifiedAt)
+            archivedFilesToRead = archivedFiles
+            retainedArchivedFiles = archivedFiles
+        }
+
+        return (
+            filesToRead: (sessionFiles + archivedFilesToRead).sorted { $0.path < $1.path },
+            retainedFiles: (sessionFiles + retainedArchivedFiles).sorted { $0.path < $1.path },
+            cursorState: updatedCursorState
+        )
     }
 
     private func recursiveJSONLFiles(in directory: URL) throws -> [URL] {
@@ -203,6 +222,15 @@ public struct RateLimitReader {
     private func sizeOfFile(at url: URL) throws -> Int64 {
         let attributes = try fileManager.attributesOfItem(atPath: url.path)
         return attributes[.size] as? Int64 ?? Int64((attributes[.size] as? Int) ?? 0)
+    }
+
+    private func modificationDateOfItem(at url: URL) -> Date? {
+        guard fileManager.fileExists(atPath: url.path),
+              let attributes = try? fileManager.attributesOfItem(atPath: url.path)
+        else {
+            return nil
+        }
+        return attributes[.modificationDate] as? Date
     }
 
     private static func readOffset(previousOffset: Int64, fileSize: Int64, maxReadBytes: Int64) -> Int64 {

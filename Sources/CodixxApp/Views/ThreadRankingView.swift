@@ -25,6 +25,7 @@ struct ThreadRankingView: View {
                                 Text(threadTitle(thread))
                                     .font(.subheadline)
                                     .lineLimit(1)
+                                    .truncationMode(.middle)
                                 Text("\(thread.model) / \(thread.reasoningEffort)")
                                     .font(.caption)
                                     .foregroundStyle(.secondary)

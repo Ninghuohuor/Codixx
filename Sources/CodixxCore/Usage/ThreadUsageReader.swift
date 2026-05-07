@@ -5,31 +5,65 @@ public struct ThreadUsageReader: Sendable {
     public var databaseURL: URL
     public var lockedRetryCount: Int
     public var lockedRetryDelay: TimeInterval
+    public var trendCacheStore: TrendCacheStore?
 
     public init(
         databaseURL: URL,
         lockedRetryCount: Int = 3,
-        lockedRetryDelay: TimeInterval = 1
+        lockedRetryDelay: TimeInterval = 1,
+        trendCacheStore: TrendCacheStore? = nil
     ) {
         self.databaseURL = databaseURL
         self.lockedRetryCount = lockedRetryCount
         self.lockedRetryDelay = lockedRetryDelay
+        self.trendCacheStore = trendCacheStore
     }
 
-    public func readSnapshot(now: Date) -> ThreadUsageSnapshot {
+    public func readSnapshot(now: Date, accountWindows: [AccountUsageWindow] = []) -> ThreadUsageSnapshot {
         do {
             let threads = try readThreadsWithRetries()
+            let dailyIntervals = dailyIntervals(now: now)
+            let hourlyIntervals = hourlyIntervals(now: now)
+            let monthlyIntervals = monthlyIntervals(now: now)
+            let intervalGroups = [dailyIntervals, hourlyIntervals, monthlyIntervals]
+            var trendCache = loadTrendCache()
+            let tokenEventsByThreadId = tokenEventsByThreadId(
+                for: threads,
+                dailyIntervals: dailyIntervals,
+                monthlyIntervals: monthlyIntervals,
+                trendCache: &trendCache
+            )
+            saveTrendCache(trendCache)
+            let tokenUsage = tokenUsageBuckets(
+                for: threads,
+                intervalGroups: intervalGroups,
+                fallbackIntervalGroupIndexes: [2],
+                tokenEventsByThreadId: tokenEventsByThreadId
+            )
             return UsageAggregator.snapshot(
                 threads: threads,
                 now: now,
-                dailyTokenUsage: tokenUsageBuckets(
+                dailyTokenUsage: tokenUsage.indices.contains(0) ? tokenUsage[0] : [],
+                hourlyTokenUsage: tokenUsage.indices.contains(1) ? tokenUsage[1] : [],
+                monthlyTokenUsage: tokenUsage.indices.contains(2) ? tokenUsage[2] : [],
+                accountUsageSummaries: accountUsageSummaries(
                     for: threads,
-                    intervals: dailyIntervals(now: now)
-                ),
-                hourlyTokenUsage: tokenUsageBuckets(
-                    for: threads,
-                    intervals: hourlyIntervals(now: now)
+                    accountWindows: accountWindows,
+                    dailyIntervals: dailyIntervals,
+                    monthlyIntervals: monthlyIntervals,
+                    tokenEventsByThreadId: tokenEventsByThreadId
                 )
+            )
+        } catch {
+            return .degraded(error.localizedDescription)
+        }
+    }
+
+    public func readActivitySnapshot(now: Date) -> ThreadUsageSnapshot {
+        do {
+            return UsageAggregator.snapshot(
+                threads: try readThreadsWithRetries(),
+                now: now
             )
         } catch {
             return .degraded(error.localizedDescription)
@@ -247,72 +281,259 @@ public struct ThreadUsageReader: Sendable {
         }
     }
 
+    private func monthlyIntervals(now: Date) -> [DateInterval] {
+        let calendar = Calendar.current
+        let currentMonth = calendar.dateInterval(of: .month, for: now)?.start ?? calendar.startOfDay(for: now)
+        let previousMonth = calendar.date(byAdding: .month, value: -1, to: currentMonth) ?? currentMonth.addingTimeInterval(-31 * 86_400)
+        let nextMonth = calendar.date(byAdding: .month, value: 1, to: currentMonth) ?? currentMonth.addingTimeInterval(31 * 86_400)
+        return [
+            DateInterval(start: previousMonth, end: currentMonth),
+            DateInterval(start: currentMonth, end: nextMonth)
+        ]
+    }
+
     private func tokenUsageBuckets(for threads: [ThreadUsage], intervals: [DateInterval]) -> [TokenUsageBucket] {
-        guard let firstInterval = intervals.first else { return [] }
-        var totals = Dictionary(uniqueKeysWithValues: intervals.map { ($0.start, 0) })
+        tokenUsageBuckets(for: threads, intervalGroups: [intervals]).first ?? []
+    }
 
-        for thread in threads where thread.updatedAt >= firstInterval.start {
-            let events = readTokenEvents(from: URL(fileURLWithPath: thread.rolloutPath))
-            guard !events.isEmpty else { continue }
+    private func tokenUsageBuckets(
+        for threads: [ThreadUsage],
+        intervalGroups: [[DateInterval]],
+        fallbackIntervalGroupIndexes: Set<Int> = [],
+        tokenEventsByThreadId: [String: [TokenUsageEvent]]? = nil
+    ) -> [[TokenUsageBucket]] {
+        let firstIntervalStart = intervalGroups.flatMap { $0 }.map(\.start).min()
+        var totalsByGroup = intervalGroups.map { intervals in
+            Dictionary(uniqueKeysWithValues: intervals.map { ($0.start, 0) })
+        }
+        guard let firstIntervalStart else {
+            return intervalGroups.map { _ in [] }
+        }
 
-            for interval in intervals {
-                let eventsInInterval = events
-                    .filter { $0.timestamp >= interval.start && $0.timestamp < interval.end }
-                let maxInInterval = eventsInInterval
-                    .map(\.totalTokens)
-                    .max()
-                guard let maxInInterval else { continue }
+        for thread in threads where thread.updatedAt >= firstIntervalStart {
+            let events: [TokenUsageEvent]
+            if let tokenEventsByThreadId {
+                events = tokenEventsByThreadId[thread.id] ?? []
+            } else {
+                events = readTokenEvents(from: URL(fileURLWithPath: thread.rolloutPath))
+            }
 
-                let baseline: Int
-                if let previousEvent = events.last(where: { $0.timestamp < interval.start }) {
-                    baseline = previousEvent.totalTokens
-                } else if thread.createdAt >= interval.start {
-                    baseline = 0
-                } else {
-                    baseline = eventsInInterval.first?.totalTokens ?? maxInInterval
+            for groupIndex in intervalGroups.indices {
+                for interval in intervalGroups[groupIndex] {
+                    let eventsInInterval = events
+                        .filter { $0.timestamp >= interval.start && $0.timestamp < interval.end }
+                    if eventsInInterval.isEmpty {
+                        if fallbackIntervalGroupIndexes.contains(groupIndex),
+                           thread.tokensUsed > 0,
+                           interval.contains(thread.updatedAt) {
+                            totalsByGroup[groupIndex][interval.start, default: 0] += thread.tokensUsed
+                        }
+                        continue
+                    }
+                    let maxInInterval = eventsInInterval
+                        .map(\.totalTokens)
+                        .max() ?? 0
+
+                    let baseline: Int
+                    if let previousEvent = events.last(where: { $0.timestamp < interval.start }) {
+                        baseline = previousEvent.totalTokens
+                    } else if thread.createdAt >= interval.start {
+                        baseline = 0
+                    } else {
+                        baseline = eventsInInterval.first?.totalTokens ?? maxInInterval
+                    }
+                    totalsByGroup[groupIndex][interval.start, default: 0] += max(0, maxInInterval - baseline)
                 }
-                totals[interval.start, default: 0] += max(0, maxInInterval - baseline)
             }
         }
 
-        return intervals.map { TokenUsageBucket(start: $0.start, tokens: totals[$0.start] ?? 0) }
+        return intervalGroups.enumerated().map { groupIndex, intervals in
+            intervals.map { TokenUsageBucket(start: $0.start, tokens: totalsByGroup[groupIndex][$0.start] ?? 0) }
+        }
+    }
+
+    private func accountUsageSummaries(
+        for threads: [ThreadUsage],
+        accountWindows: [AccountUsageWindow],
+        dailyIntervals: [DateInterval],
+        monthlyIntervals: [DateInterval],
+        tokenEventsByThreadId: [String: [TokenUsageEvent]]? = nil
+    ) -> [AccountUsageSummary] {
+        let accountIds = Array(Set(accountWindows.map(\.accountId))).sorted { $0.uuidString < $1.uuidString }
+        guard !accountIds.isEmpty else { return [] }
+
+        var totalTokensByAccount = Dictionary(uniqueKeysWithValues: accountIds.map { ($0, 0) })
+        var threadIdsByAccount = Dictionary(uniqueKeysWithValues: accountIds.map { ($0, Set<String>()) })
+        var dailyTotalsByAccount = Dictionary(uniqueKeysWithValues: accountIds.map { accountId in
+            (accountId, Dictionary(uniqueKeysWithValues: dailyIntervals.map { ($0.start, 0) }))
+        })
+        var monthlyTotalsByAccount = Dictionary(uniqueKeysWithValues: accountIds.map { accountId in
+            (accountId, Dictionary(uniqueKeysWithValues: monthlyIntervals.map { ($0.start, 0) }))
+        })
+
+        for thread in threads {
+            let events: [TokenUsageEvent]
+            if let tokenEventsByThreadId {
+                events = tokenEventsByThreadId[thread.id] ?? []
+            } else {
+                events = readTokenEvents(from: URL(fileURLWithPath: thread.rolloutPath))
+            }
+            guard !events.isEmpty else {
+                guard thread.tokensUsed > 0,
+                      let accountWindow = accountWindow(for: thread.updatedAt, in: accountWindows)
+                else {
+                    continue
+                }
+                let accountId = accountWindow.accountId
+                totalTokensByAccount[accountId, default: 0] += thread.tokensUsed
+                threadIdsByAccount[accountId, default: []].insert(thread.id)
+                if let interval = monthlyIntervals.first(where: { $0.contains(thread.updatedAt) }) {
+                    monthlyTotalsByAccount[accountId]?[interval.start, default: 0] += thread.tokensUsed
+                }
+                continue
+            }
+
+            var previousTotal: Int?
+            for event in events {
+                defer { previousTotal = event.totalTokens }
+                guard let accountWindow = accountWindow(for: event.timestamp, in: accountWindows) else { continue }
+                let accountId = accountWindow.accountId
+                let baseline = previousTotal ?? (thread.createdAt >= accountWindow.start ? 0 : event.totalTokens)
+                let delta = max(0, event.totalTokens - baseline)
+                guard delta > 0 else { continue }
+
+                totalTokensByAccount[accountId, default: 0] += delta
+                threadIdsByAccount[accountId, default: []].insert(thread.id)
+                if let interval = dailyIntervals.first(where: { $0.contains(event.timestamp) }) {
+                    dailyTotalsByAccount[accountId]?[interval.start, default: 0] += delta
+                }
+                if let interval = monthlyIntervals.first(where: { $0.contains(event.timestamp) }) {
+                    monthlyTotalsByAccount[accountId]?[interval.start, default: 0] += delta
+                }
+            }
+        }
+
+        return accountIds.map { accountId in
+            AccountUsageSummary(
+                accountId: accountId,
+                totalTokens: totalTokensByAccount[accountId] ?? 0,
+                threadCount: threadIdsByAccount[accountId]?.count ?? 0,
+                dailyTokenUsage: dailyIntervals.map {
+                    TokenUsageBucket(start: $0.start, tokens: dailyTotalsByAccount[accountId]?[$0.start] ?? 0)
+                },
+                monthlyTokenUsage: monthlyIntervals.map {
+                    TokenUsageBucket(start: $0.start, tokens: monthlyTotalsByAccount[accountId]?[$0.start] ?? 0)
+                }
+            )
+        }
+    }
+
+    private func tokenEventsByThreadId(
+        for threads: [ThreadUsage],
+        dailyIntervals: [DateInterval],
+        monthlyIntervals: [DateInterval],
+        trendCache: inout TrendCacheState
+    ) -> [String: [TokenUsageEvent]] {
+        var eventsByThreadId: [String: [TokenUsageEvent]] = [:]
+        for thread in threads where shouldReadTokenEvents(
+            for: thread,
+            dailyIntervals: dailyIntervals,
+            monthlyIntervals: monthlyIntervals
+        ) {
+            eventsByThreadId[thread.id] = readTokenEvents(
+                from: URL(fileURLWithPath: thread.rolloutPath),
+                trendCache: &trendCache
+            )
+        }
+        return eventsByThreadId
+    }
+
+    private func shouldReadTokenEvents(
+        for thread: ThreadUsage,
+        dailyIntervals: [DateInterval],
+        monthlyIntervals: [DateInterval]
+    ) -> Bool {
+        if let dailyStart = dailyIntervals.map(\.start).min(), thread.updatedAt >= dailyStart {
+            return true
+        }
+
+        let monthlyBoundaries = monthlyIntervals.map(\.start).dropFirst()
+        if monthlyBoundaries.contains(where: { boundary in
+            thread.createdAt < boundary && thread.updatedAt >= boundary
+        }) {
+            return true
+        }
+
+        if let monthlyStart = monthlyIntervals.map(\.start).min(), thread.updatedAt >= monthlyStart {
+            return true
+        }
+
+        return false
+    }
+
+    private func accountWindow(for date: Date, in accountWindows: [AccountUsageWindow]) -> AccountUsageWindow? {
+        accountWindows.first { $0.contains(date) }
     }
 
     private static let maxTokenEventFileSize: UInt64 = 50_000_000
 
-    private func readTokenEvents(from url: URL) -> [TokenUsageEvent] {
-        guard let attrs = try? FileManager.default.attributesOfItem(atPath: url.path),
-              let fileSize = attrs[.size] as? UInt64,
-              fileSize <= Self.maxTokenEventFileSize,
-              let handle = try? FileHandle(forReadingFrom: url)
-        else { return [] }
-        defer { try? handle.close() }
+    private func readTokenEvents(from url: URL, trendCache: inout TrendCacheState) -> [TokenUsageEvent] {
+        guard let fileInfo = tokenEventFileInfo(for: url) else { return [] }
+        let cacheKey = Self.cacheKey(for: url)
 
-        var events: [TokenUsageEvent] = []
-        var buffer = Data()
-        let newline = UInt8(ascii: "\n")
+        if let cached = trendCache.entriesByPath[cacheKey],
+           cached.fileSize == fileInfo.fileSize,
+           cached.modifiedAt == fileInfo.modifiedAt
+        {
+            return cached.events.map(TokenUsageEvent.init)
+        }
 
-        while autoreleasepool(invoking: {
-            guard let chunk = try? handle.read(upToCount: 65_536), !chunk.isEmpty else { return false }
-            buffer.append(chunk)
-            while let newlineIndex = buffer.firstIndex(of: newline) {
-                let lineData = buffer[buffer.startIndex..<newlineIndex]
-                buffer = buffer[(newlineIndex + 1)...]
-                if let line = String(data: Data(lineData), encoding: .utf8),
-                   let event = parseTokenUsageEvent(line) {
-                    events.append(event)
-                }
-            }
-            return true
-        }) {}
+        guard fileInfo.fileSize <= Self.maxTokenEventFileSize,
+              let data = try? Data(contentsOf: url),
+              let text = String(data: data, encoding: .utf8)
+        else {
+            trendCache.entriesByPath[cacheKey] = TrendCacheEntry(
+                fileSize: fileInfo.fileSize,
+                modifiedAt: fileInfo.modifiedAt,
+                events: []
+            )
+            return []
+        }
 
-        if !buffer.isEmpty,
-           let line = String(data: Data(buffer), encoding: .utf8),
-           let event = parseTokenUsageEvent(line) {
-            events.append(event)
+        var events = text.split(separator: "\n").compactMap { line in
+            parseTokenUsageEvent(String(line))
         }
         events.sort { $0.timestamp < $1.timestamp }
+        trendCache.entriesByPath[cacheKey] = TrendCacheEntry(
+            fileSize: fileInfo.fileSize,
+            modifiedAt: fileInfo.modifiedAt,
+            events: events.map(CachedTokenUsageEvent.init)
+        )
         return events
+    }
+
+    private func readTokenEvents(from url: URL) -> [TokenUsageEvent] {
+        var trendCache = TrendCacheState()
+        return readTokenEvents(from: url, trendCache: &trendCache)
+    }
+
+    private func loadTrendCache() -> TrendCacheState {
+        (try? trendCacheStore?.load()) ?? TrendCacheState()
+    }
+
+    private func saveTrendCache(_ state: TrendCacheState) {
+        try? trendCacheStore?.save(state)
+    }
+
+    private func tokenEventFileInfo(for url: URL) -> (fileSize: UInt64, modifiedAt: Date?)? {
+        guard let attrs = try? FileManager.default.attributesOfItem(atPath: url.path),
+              let fileSize = attrs[.size] as? UInt64
+        else { return nil }
+        return (fileSize, attrs[.modificationDate] as? Date)
+    }
+
+    private static func cacheKey(for url: URL) -> String {
+        url.resolvingSymlinksInPath().path
     }
 
     private func parseTokenUsageEvent(_ line: String) -> TokenUsageEvent? {
@@ -330,7 +551,19 @@ public struct ThreadUsageReader: Sendable {
             return nil
         }
 
-        return TokenUsageEvent(timestamp: timestamp, totalTokens: totalTokens)
+        let effectiveTokens = effectiveTokenCount(from: totalTokenUsage) ?? totalTokens
+        return TokenUsageEvent(timestamp: timestamp, totalTokens: effectiveTokens)
+    }
+
+    private func effectiveTokenCount(from totalTokenUsage: [String: Any]) -> Int? {
+        guard let inputTokens = integerValue(totalTokenUsage["input_tokens"]),
+              let outputTokens = integerValue(totalTokenUsage["output_tokens"])
+        else {
+            return nil
+        }
+
+        let cachedInputTokens = integerValue(totalTokenUsage["cached_input_tokens"]) ?? 0
+        return max(0, inputTokens - cachedInputTokens) + outputTokens
     }
 
     private func integerValue(_ value: Any?) -> Int? {
@@ -364,6 +597,22 @@ public struct ThreadUsageReader: Sendable {
 private struct TokenUsageEvent {
     var timestamp: Date
     var totalTokens: Int
+
+    init(timestamp: Date, totalTokens: Int) {
+        self.timestamp = timestamp
+        self.totalTokens = totalTokens
+    }
+
+    init(_ cached: CachedTokenUsageEvent) {
+        self.timestamp = cached.timestamp
+        self.totalTokens = cached.totalTokens
+    }
+}
+
+private extension CachedTokenUsageEvent {
+    init(_ event: TokenUsageEvent) {
+        self.init(timestamp: event.timestamp, totalTokens: event.totalTokens)
+    }
 }
 
 private enum ThreadUsageReaderError: LocalizedError {

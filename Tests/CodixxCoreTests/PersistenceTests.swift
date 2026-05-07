@@ -40,6 +40,7 @@ final class PersistenceTests: XCTestCase {
         XCTAssertEqual(config.codexDirectoryPath, paths.codexHome.path)
         XCTAssertTrue(config.autoSwitchEnabled)
         XCTAssertEqual(config.primaryThresholdPercent, 93)
+        XCTAssertEqual(config.secondaryThresholdPercent, 90)
         XCTAssertTrue(config.notificationsEnabled)
         XCTAssertTrue(config.detailedSwitchLoggingEnabled)
         XCTAssertEqual(config.quotaRefreshIntervalSeconds, 60)
@@ -57,6 +58,7 @@ final class PersistenceTests: XCTestCase {
             codexDirectoryPath: "/tmp/codex",
             autoSwitchEnabled: false,
             primaryThresholdPercent: 88,
+            secondaryThresholdPercent: 85,
             notificationsEnabled: false,
             detailedSwitchLoggingEnabled: false,
             quotaRefreshIntervalSeconds: 30,
@@ -97,6 +99,7 @@ final class PersistenceTests: XCTestCase {
         XCTAssertEqual(loaded.codexDirectoryPath, "/tmp/codex")
         XCTAssertEqual(loaded.language, .english)
         XCTAssertEqual(loaded.postSwitchAction, .notifyRestartRecommended)
+        XCTAssertEqual(loaded.secondaryThresholdPercent, 90)
     }
 
     func testConfigStorePathsCannotBeMutatedAfterInitialization() throws {

@@ -20,6 +20,7 @@ public struct CodixxConfig: Codable, Equatable, Sendable {
     public var codexDirectoryPath: String
     public var autoSwitchEnabled: Bool
     public var primaryThresholdPercent: Double
+    public var secondaryThresholdPercent: Double
     public var notificationsEnabled: Bool
     public var detailedSwitchLoggingEnabled: Bool
     public var quotaRefreshIntervalSeconds: TimeInterval
@@ -31,6 +32,7 @@ public struct CodixxConfig: Codable, Equatable, Sendable {
         codexDirectoryPath: String,
         autoSwitchEnabled: Bool = true,
         primaryThresholdPercent: Double = 93,
+        secondaryThresholdPercent: Double = 90,
         notificationsEnabled: Bool = true,
         detailedSwitchLoggingEnabled: Bool = true,
         quotaRefreshIntervalSeconds: TimeInterval = 60,
@@ -41,6 +43,7 @@ public struct CodixxConfig: Codable, Equatable, Sendable {
         self.codexDirectoryPath = codexDirectoryPath
         self.autoSwitchEnabled = autoSwitchEnabled
         self.primaryThresholdPercent = primaryThresholdPercent
+        self.secondaryThresholdPercent = secondaryThresholdPercent
         self.notificationsEnabled = notificationsEnabled
         self.detailedSwitchLoggingEnabled = detailedSwitchLoggingEnabled
         self.quotaRefreshIntervalSeconds = quotaRefreshIntervalSeconds
@@ -57,6 +60,7 @@ public struct CodixxConfig: Codable, Equatable, Sendable {
         case codexDirectoryPath
         case autoSwitchEnabled
         case primaryThresholdPercent
+        case secondaryThresholdPercent
         case notificationsEnabled
         case detailedSwitchLoggingEnabled
         case quotaRefreshIntervalSeconds
@@ -70,6 +74,7 @@ public struct CodixxConfig: Codable, Equatable, Sendable {
         self.codexDirectoryPath = try container.decode(String.self, forKey: .codexDirectoryPath)
         self.autoSwitchEnabled = try container.decode(Bool.self, forKey: .autoSwitchEnabled)
         self.primaryThresholdPercent = try container.decode(Double.self, forKey: .primaryThresholdPercent)
+        self.secondaryThresholdPercent = try container.decodeIfPresent(Double.self, forKey: .secondaryThresholdPercent) ?? 90
         self.notificationsEnabled = try container.decode(Bool.self, forKey: .notificationsEnabled)
         self.detailedSwitchLoggingEnabled = try container.decode(Bool.self, forKey: .detailedSwitchLoggingEnabled)
         self.quotaRefreshIntervalSeconds = try container.decode(TimeInterval.self, forKey: .quotaRefreshIntervalSeconds)

@@ -3,7 +3,13 @@ import Foundation
 import UserNotifications
 
 @MainActor
-final class NotificationCoordinator {
+protocol AppNotificationCoordinating: AnyObject {
+    func evaluate(state: AppState)
+    func sendNotificationsEnabledConfirmation(strings: CodixxStrings, onDenied: @escaping @MainActor () -> Void)
+}
+
+@MainActor
+final class NotificationCoordinator: NSObject, UNUserNotificationCenterDelegate, AppNotificationCoordinating {
     private var throttle = NotificationThrottle()
     private var didRequestAuthorization = false
     private var lastObservedSwitchEventId: UUID?
@@ -11,12 +17,22 @@ final class NotificationCoordinator {
 
     init(notificationCenter: UNUserNotificationCenter = .current()) {
         self.notificationCenter = notificationCenter
+        super.init()
+        notificationCenter.delegate = self
     }
 
     func evaluate(state: AppState) {
         sendQuotaWarningIfNeeded(state: state)
         sendProtectionModeIfNeeded(state: state)
         sendSwitchEventIfNeeded(state: state)
+    }
+
+    func sendNotificationsEnabledConfirmation(strings: CodixxStrings, onDenied: @escaping @MainActor () -> Void) {
+        send(
+            title: strings.notificationsEnabledTitle,
+            body: strings.notificationsEnabledBody,
+            onDenied: onDenied
+        )
     }
 
     private func sendQuotaWarningIfNeeded(state: AppState) {
@@ -39,7 +55,8 @@ final class NotificationCoordinator {
     }
 
     private func sendProtectionModeIfNeeded(state: AppState) {
-        guard let account = state.currentAccount,
+        guard state.config.notificationsEnabled,
+              let account = state.currentAccount,
               let primaryUsedPercent = account.quota.primaryUsedPercent,
               primaryUsedPercent >= state.config.primaryThresholdPercent,
               state.candidateAccounts.isEmpty,
@@ -55,7 +72,8 @@ final class NotificationCoordinator {
     }
 
     private func sendSwitchEventIfNeeded(state: AppState) {
-        guard let event = state.switchEvents.first,
+        guard state.config.notificationsEnabled,
+              let event = state.switchEvents.first,
               event.id != lastObservedSwitchEventId
         else {
             return
@@ -84,8 +102,8 @@ final class NotificationCoordinator {
         }
     }
 
-    private func send(title: String, body: String) {
-        ensureAuthorization {
+    private func send(title: String, body: String, onDenied: (@MainActor () -> Void)? = nil) {
+        ensureAuthorization(onDenied: onDenied) {
             let content = UNMutableNotificationContent()
             content.title = title
             content.body = body
@@ -100,18 +118,34 @@ final class NotificationCoordinator {
         }
     }
 
-    private func ensureAuthorization(send: @escaping @MainActor () -> Void) {
+    private func ensureAuthorization(onDenied: (@MainActor () -> Void)? = nil, send: @escaping @MainActor () -> Void) {
         guard !didRequestAuthorization else {
-            send()
+            notificationCenter.getNotificationSettings { settings in
+                guard settings.authorizationStatus == .authorized || settings.authorizationStatus == .provisional else {
+                    Task { @MainActor in onDenied?() }
+                    return
+                }
+                Task { @MainActor in send() }
+            }
             return
         }
 
         didRequestAuthorization = true
         notificationCenter.requestAuthorization(options: [.alert, .sound]) { granted, _ in
-            guard granted else { return }
+            guard granted else {
+                Task { @MainActor in onDenied?() }
+                return
+            }
             Task { @MainActor in
                 send()
             }
         }
+    }
+
+    nonisolated func userNotificationCenter(
+        _ center: UNUserNotificationCenter,
+        willPresent notification: UNNotification
+    ) async -> UNNotificationPresentationOptions {
+        [.banner, .sound]
     }
 }

@@ -21,8 +21,12 @@ mkdir -p "$MACOS_DIR" "$RESOURCES_DIR"
 cp "$BIN_DIR/Codixx" "$MACOS_DIR/Codixx"
 chmod +x "$MACOS_DIR/Codixx"
 
-if [[ -f "$ROOT_DIR/Assets.xcassets/AppIcon.appiconset/icon_512x512@2x.png" ]]; then
-  cp "$ROOT_DIR/Assets.xcassets/AppIcon.appiconset/icon_512x512@2x.png" "$RESOURCES_DIR/AppIcon.png"
+if [[ -f "$ROOT_DIR/Resources/AppIcon.icns" ]]; then
+  cp "$ROOT_DIR/Resources/AppIcon.icns" "$RESOURCES_DIR/AppIcon.icns"
+fi
+
+if [[ -f "$ROOT_DIR/Resources/MenuBarIcon.png" ]]; then
+  cp "$ROOT_DIR/Resources/MenuBarIcon.png" "$RESOURCES_DIR/MenuBarIcon.png"
 fi
 
 cat > "$CONTENTS_DIR/Info.plist" <<'PLIST'
@@ -38,6 +42,8 @@ cat > "$CONTENTS_DIR/Info.plist" <<'PLIST'
   <string>Codixx</string>
   <key>CFBundleDisplayName</key>
   <string>Codixx</string>
+  <key>CFBundleIconFile</key>
+  <string>AppIcon</string>
   <key>CFBundlePackageType</key>
   <string>APPL</string>
   <key>CFBundleShortVersionString</key>

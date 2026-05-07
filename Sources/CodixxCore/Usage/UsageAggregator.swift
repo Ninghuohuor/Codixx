@@ -44,12 +44,52 @@ public struct TokenUsageBucket: Equatable, Sendable {
     }
 }
 
+public struct AccountUsageWindow: Equatable, Sendable {
+    public var accountId: UUID
+    public var start: Date
+    public var end: Date?
+
+    public init(accountId: UUID, start: Date, end: Date?) {
+        self.accountId = accountId
+        self.start = start
+        self.end = end
+    }
+
+    public func contains(_ date: Date) -> Bool {
+        date >= start && end.map { date < $0 } ?? true
+    }
+}
+
+public struct AccountUsageSummary: Equatable, Sendable {
+    public var accountId: UUID
+    public var totalTokens: Int
+    public var threadCount: Int
+    public var dailyTokenUsage: [TokenUsageBucket]
+    public var monthlyTokenUsage: [TokenUsageBucket]
+
+    public init(
+        accountId: UUID,
+        totalTokens: Int,
+        threadCount: Int,
+        dailyTokenUsage: [TokenUsageBucket],
+        monthlyTokenUsage: [TokenUsageBucket]
+    ) {
+        self.accountId = accountId
+        self.totalTokens = totalTokens
+        self.threadCount = threadCount
+        self.dailyTokenUsage = dailyTokenUsage
+        self.monthlyTokenUsage = monthlyTokenUsage
+    }
+}
+
 public struct ThreadUsageSnapshot: Equatable, Sendable {
     public var threads: [ThreadUsage]
     public var totalTokens: Int
     public var activeThread: ThreadUsage?
     public var dailyTokenUsage: [TokenUsageBucket]
     public var hourlyTokenUsage: [TokenUsageBucket]
+    public var monthlyTokenUsage: [TokenUsageBucket]
+    public var accountUsageSummaries: [AccountUsageSummary]
     public var errorSummary: String?
 
     public var isDegraded: Bool {
@@ -62,6 +102,8 @@ public struct ThreadUsageSnapshot: Equatable, Sendable {
         activeThread: ThreadUsage?,
         dailyTokenUsage: [TokenUsageBucket] = [],
         hourlyTokenUsage: [TokenUsageBucket] = [],
+        monthlyTokenUsage: [TokenUsageBucket] = [],
+        accountUsageSummaries: [AccountUsageSummary] = [],
         errorSummary: String? = nil
     ) {
         self.threads = threads
@@ -69,6 +111,8 @@ public struct ThreadUsageSnapshot: Equatable, Sendable {
         self.activeThread = activeThread
         self.dailyTokenUsage = dailyTokenUsage
         self.hourlyTokenUsage = hourlyTokenUsage
+        self.monthlyTokenUsage = monthlyTokenUsage
+        self.accountUsageSummaries = accountUsageSummaries
         self.errorSummary = errorSummary
     }
 
@@ -83,7 +127,9 @@ public enum UsageAggregator {
         now: Date,
         activeWindow: TimeInterval = 600,
         dailyTokenUsage: [TokenUsageBucket] = [],
-        hourlyTokenUsage: [TokenUsageBucket] = []
+        hourlyTokenUsage: [TokenUsageBucket] = [],
+        monthlyTokenUsage: [TokenUsageBucket] = [],
+        accountUsageSummaries: [AccountUsageSummary] = []
     ) -> ThreadUsageSnapshot {
         let sortedThreads = threads.sorted {
             if $0.updatedAt == $1.updatedAt {
@@ -102,7 +148,9 @@ public enum UsageAggregator {
             totalTokens: totalTokens,
             activeThread: activeThread,
             dailyTokenUsage: dailyTokenUsage,
-            hourlyTokenUsage: hourlyTokenUsage
+            hourlyTokenUsage: hourlyTokenUsage,
+            monthlyTokenUsage: monthlyTokenUsage,
+            accountUsageSummaries: accountUsageSummaries
         )
     }
 }
