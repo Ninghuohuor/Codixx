@@ -25,19 +25,29 @@ public struct CodixxStrings: Sendable {
     public var saveCurrentCodexAuth: String { text(en: "Save current Codex auth", zh: "保存当前 Codex 登录") }
     public var noSavedAccounts: String { text(en: "No saved accounts", zh: "尚未保存账号") }
     public var current: String { text(en: "Current", zh: "当前") }
-    public var pendingRestart: String { text(en: "Pending restart", zh: "待重启") }
     public var switchAccount: String { text(en: "Switch to account", zh: "切换到此账号") }
     public var switchToThisAccount: String { text(en: "Switch to this account", zh: "切换到这个账号") }
+    public var switchAndRestartCodex: String { text(en: "Switch and restart Codex", zh: "切换并重启 Codex") }
     public var renameAccount: String { text(en: "Rename account", zh: "重命名账号") }
     public var cancelEdit: String { text(en: "Cancel edit", zh: "取消编辑") }
     public var deleteAccount: String { text(en: "Delete account", zh: "删除账号") }
     public var confirmDeleteTitle: String { text(en: "Confirm Delete", zh: "确认删除") }
     public var cancel: String { text(en: "Cancel", zh: "取消") }
-    public var later: String { text(en: "Later", zh: "稍后") }
     public var delete: String { text(en: "Delete", zh: "删除") }
 
     public func confirmDeleteMessage(alias: String) -> String {
         text(en: "Delete account \"\(alias)\"? This cannot be undone.", zh: "确定要删除账号「\(alias)」吗？此操作不可撤销。")
+    }
+
+    public func confirmSwitchTitle(alias: String) -> String {
+        text(en: "Switch to \"\(alias)\"?", zh: "切换到「\(alias)」？")
+    }
+
+    public var confirmSwitchMessage: String {
+        text(
+            en: "Codex must restart for the account switch to take effect. Canceling will leave the current account unchanged.",
+            zh: "账号切换需要重启 Codex 才会生效。取消则不会写入账号，当前账号保持不变。"
+        )
     }
 
     public var membership: String { text(en: "Membership", zh: "会员") }

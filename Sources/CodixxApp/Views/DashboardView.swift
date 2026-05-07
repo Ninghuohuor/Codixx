@@ -9,28 +9,22 @@ struct DashboardView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            ZStack(alignment: .top) {
-                TabView(selection: $selectedTab) {
-                    overview
-                        .tabItem { Label(state.strings.overview, systemImage: "gauge.with.dots.needle.67percent") }
-                        .tag(0)
+            TabView(selection: $selectedTab) {
+                overview
+                    .tabItem { Label(state.strings.overview, systemImage: "gauge.with.dots.needle.67percent") }
+                    .tag(0)
 
-                    trends
-                        .tabItem { Label(state.strings.trends, systemImage: "chart.xyaxis.line") }
-                        .tag(1)
+                trends
+                    .tabItem { Label(state.strings.trends, systemImage: "chart.xyaxis.line") }
+                    .tag(1)
 
-                    accounts
-                        .tabItem { Label(state.strings.accounts, systemImage: "person.2") }
-                        .tag(2)
+                accounts
+                    .tabItem { Label(state.strings.accounts, systemImage: "person.2") }
+                    .tag(2)
 
-                    logs
-                        .tabItem { Label(state.strings.logs, systemImage: "list.clipboard") }
-                        .tag(3)
-                }
-
-                RestartReminderCard(state: state)
-                    .padding(.horizontal, 14)
-                    .padding(.top, 44)
+                logs
+                    .tabItem { Label(state.strings.logs, systemImage: "list.clipboard") }
+                    .tag(3)
             }
             .frame(width: 360, height: 520)
 
@@ -82,7 +76,7 @@ struct DashboardView: View {
     private var overview: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 14) {
-                QuotaView(account: state.displayedCurrentAccount, config: state.config, strings: state.strings)
+                QuotaView(account: state.currentAccount, config: state.config, strings: state.strings)
                 activeThreadCard
 
                 if let error = state.errorMessage {
@@ -176,43 +170,5 @@ struct DashboardView: View {
     private var footerText: String {
         guard let lastUpdatedAt = state.lastUpdatedAt else { return state.strings.notRefreshedYet }
         return state.strings.updated(lastUpdatedAt)
-    }
-}
-
-private struct RestartReminderCard: View {
-    @ObservedObject var state: AppState
-
-    var body: some View {
-        if let message = state.postSwitchRestartMessage {
-            VStack(alignment: .leading, spacing: 10) {
-                Label(state.strings.codexRestartRequired, systemImage: "arrow.clockwise.circle")
-                    .font(.subheadline.weight(.semibold))
-                Text(message)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-                HStack {
-                    Button(state.strings.later) {
-                        state.dismissPostSwitchRestartMessage()
-                    }
-                    Spacer()
-                    Button(state.strings.restartCodexNow) {
-                        state.restartCodexNow()
-                    }
-                    .buttonStyle(.borderedProminent)
-                }
-                .font(.caption)
-            }
-            .padding(12)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 8))
-            .overlay(
-                RoundedRectangle(cornerRadius: 8)
-                    .stroke(Color.accentColor.opacity(0.22), lineWidth: 1)
-            )
-            .shadow(color: .black.opacity(0.12), radius: 16, y: 8)
-            .transition(.move(edge: .top).combined(with: .opacity))
-            .zIndex(10)
-        }
     }
 }
