@@ -113,7 +113,13 @@ struct AccountListView: View {
                 accountHeader(for: account)
 
                 HStack(spacing: 8) {
-                    if account.id == state.currentAccount?.id {
+                    if account.id == state.pendingRestartTargetAccountID {
+                        Text(state.strings.pendingRestart)
+                            .font(.caption2.weight(.semibold))
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 2)
+                            .background(Color.orange.opacity(0.16), in: Capsule())
+                    } else if account.id == state.displayedCurrentAccount?.id {
                         Text(state.strings.current)
                             .font(.caption2.weight(.semibold))
                             .padding(.horizontal, 6)
