@@ -243,6 +243,7 @@ struct AccountListView: View {
                     .labelStyle(.iconOnly)
             }
             .menuStyle(.borderlessButton)
+            .menuIndicator(.hidden)
             .fixedSize()
             .help(state.strings.settings)
         }
