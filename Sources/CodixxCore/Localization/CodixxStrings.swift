@@ -25,6 +25,7 @@ public struct CodixxStrings: Sendable {
     public var saveCurrentCodexAuth: String { text(en: "Save current Codex auth", zh: "保存当前 Codex 登录") }
     public var noSavedAccounts: String { text(en: "No saved accounts", zh: "尚未保存账号") }
     public var current: String { text(en: "Current", zh: "当前") }
+    public var pendingRestart: String { text(en: "Pending restart", zh: "待重启") }
     public var switchAccount: String { text(en: "Switch to account", zh: "切换到此账号") }
     public var switchToThisAccount: String { text(en: "Switch to this account", zh: "切换到这个账号") }
     public var renameAccount: String { text(en: "Rename account", zh: "重命名账号") }
@@ -32,6 +33,7 @@ public struct CodixxStrings: Sendable {
     public var deleteAccount: String { text(en: "Delete account", zh: "删除账号") }
     public var confirmDeleteTitle: String { text(en: "Confirm Delete", zh: "确认删除") }
     public var cancel: String { text(en: "Cancel", zh: "取消") }
+    public var later: String { text(en: "Later", zh: "稍后") }
     public var delete: String { text(en: "Delete", zh: "删除") }
 
     public func confirmDeleteMessage(alias: String) -> String {
