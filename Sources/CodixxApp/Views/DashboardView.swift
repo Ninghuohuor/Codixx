@@ -71,6 +71,22 @@ struct DashboardView: View {
         .onAppear {
             state.refreshFromMenuOpen()
         }
+        .alert(
+            state.strings.codexRestartRequired,
+            isPresented: Binding(
+                get: { state.postSwitchRestartMessage != nil },
+                set: { if !$0 { state.dismissPostSwitchRestartMessage() } }
+            )
+        ) {
+            Button(state.strings.cancel, role: .cancel) {
+                state.dismissPostSwitchRestartMessage()
+            }
+            Button(state.strings.restartCodexNow) {
+                state.restartCodexNow()
+            }
+        } message: {
+            Text(state.postSwitchRestartMessage ?? state.strings.restartCodexHint)
+        }
     }
 
     private var overview: some View {

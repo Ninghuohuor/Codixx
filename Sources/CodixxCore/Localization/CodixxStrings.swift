@@ -53,6 +53,7 @@ public struct CodixxStrings: Sendable {
     public var codexHome: String { text(en: "Codex Home", zh: "Codex 目录") }
     public var languageLabel: String { text(en: "Language", zh: "语言") }
     public var postSwitchAction: String { text(en: "After switch", zh: "切换后动作") }
+    public var codexRestartRequired: String { text(en: "Restart Codex required", zh: "需要重启 Codex") }
     public var restartCodexNow: String { text(en: "Restart Codex now", zh: "立即重启 Codex") }
     public var restartCodexFailed: String { text(en: "Could not restart Codex", zh: "无法重启 Codex") }
     public var topThreads: String { text(en: "Top Threads", zh: "高用量会话") }

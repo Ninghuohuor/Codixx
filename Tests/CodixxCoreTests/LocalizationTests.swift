@@ -41,6 +41,7 @@ final class LocalizationTests: XCTestCase {
         XCTAssertEqual(strings.yesterdayTokens, "Yesterday")
         XCTAssertEqual(strings.membership, "Membership")
         XCTAssertEqual(strings.postSwitchAction, "After switch")
+        XCTAssertEqual(strings.codexRestartRequired, "Restart Codex required")
         XCTAssertEqual(strings.postSwitchActionLabel(.restartCodexApp), "Restart Codex")
         XCTAssertEqual(strings.restartCodexNow, "Restart Codex now")
     }
@@ -84,6 +85,7 @@ final class LocalizationTests: XCTestCase {
         XCTAssertEqual(strings.yesterdayTokens, "昨日 token 用量")
         XCTAssertEqual(strings.membership, "会员")
         XCTAssertEqual(strings.postSwitchAction, "切换后动作")
+        XCTAssertEqual(strings.codexRestartRequired, "需要重启 Codex")
         XCTAssertEqual(strings.postSwitchActionLabel(.restartCodexApp), "重启 Codex")
         XCTAssertEqual(strings.restartCodexNow, "立即重启 Codex")
     }

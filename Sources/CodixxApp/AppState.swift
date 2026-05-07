@@ -22,6 +22,7 @@ final class AppState: ObservableObject {
     @Published private(set) var lastUpdatedAt: Date?
     @Published private(set) var isRefreshing = false
     @Published private(set) var accountSaveStatus: AccountSaveStatus?
+    @Published private(set) var postSwitchRestartMessage: String?
     @Published var errorMessage: String?
 
     let paths: CodixxPaths
@@ -345,10 +346,15 @@ final class AppState: ObservableObject {
 
     func restartCodexNow() {
         do {
+            postSwitchRestartMessage = nil
             try restartCodexDesktop()
         } catch {
             errorMessage = "\(strings.restartCodexFailed): \(error.localizedDescription)"
         }
+    }
+
+    func dismissPostSwitchRestartMessage() {
+        postSwitchRestartMessage = nil
     }
 
     private func updateConfig(_ mutate: (inout CodixxConfig) -> Void) {
@@ -367,6 +373,7 @@ final class AppState: ObservableObject {
         case .none:
             break
         case .notifyRestartRecommended:
+            postSwitchRestartMessage = strings.restartCodexHint
             errorMessage = strings.restartCodexHint
         case .restartCodexApp:
             restartCodexNow()
