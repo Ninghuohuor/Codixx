@@ -22,7 +22,7 @@ struct ThreadRankingView: View {
                     ForEach(threads, id: \.id) { thread in
                         HStack(spacing: 10) {
                             VStack(alignment: .leading, spacing: 3) {
-                                Text(thread.title.isEmpty ? thread.id : thread.title)
+                                Text(threadTitle(thread))
                                     .font(.subheadline)
                                     .lineLimit(1)
                                 Text("\(thread.model) / \(thread.reasoningEffort)")
@@ -41,5 +41,21 @@ struct ThreadRankingView: View {
                 }
             }
         }
+    }
+
+    private func threadTitle(_ thread: ThreadUsage) -> String {
+        let title = thread.title.isEmpty ? thread.id : thread.title
+        if let projectName = projectFolderName(from: thread.cwd) {
+            return "\(projectName) - \(title)"
+        }
+        return title
+    }
+
+    private func projectFolderName(from cwd: String) -> String? {
+        let trimmed = cwd.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+        let url = URL(fileURLWithPath: trimmed, isDirectory: true)
+        let name = url.lastPathComponent.trimmingCharacters(in: .whitespacesAndNewlines)
+        return name.isEmpty ? trimmed : name
     }
 }
