@@ -76,9 +76,9 @@ final class AppState: ObservableObject {
     var menuBarTitle: String {
         guard let account = currentAccount else { return "Codixx" }
         if let used = account.quota.primaryUsedPercent {
-            return "\(account.alias) \(Self.percentFormatter.string(from: NSNumber(value: used / 100)) ?? "")"
+            return "Codixx \(Self.percentFormatter.string(from: NSNumber(value: used / 100)) ?? "")"
         }
-        return account.alias
+        return "Codixx"
     }
 
     var menuBarSystemImage: String {
@@ -452,17 +452,77 @@ final class AppState: ObservableObject {
         let applicationURL = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleIdentifier)
             ?? URL(fileURLWithPath: "/Applications/Codex.app", isDirectory: true)
 
-        NSRunningApplication.runningApplications(withBundleIdentifier: bundleIdentifier).forEach { application in
+        let runningApplications = NSRunningApplication.runningApplications(withBundleIdentifier: bundleIdentifier)
+        runningApplications.forEach { application in
             application.terminate()
         }
 
+        guard !runningApplications.isEmpty else {
+            openCodexDesktop(at: applicationURL)
+            return
+        }
+
+        waitForCodexExitThenOpen(applicationURL: applicationURL, remainingAttempts: 20)
+    }
+
+    private func waitForCodexExitThenOpen(applicationURL: URL, remainingAttempts: Int) {
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
+            guard let self else { return }
+            let runningApplications = NSRunningApplication.runningApplications(withBundleIdentifier: CodexActivation.bundleIdentifier)
+            guard !runningApplications.isEmpty, remainingAttempts > 0 else {
+                self.openCodexDesktop(at: applicationURL)
+                return
+            }
+
+            if remainingAttempts == 10 {
+                runningApplications.forEach { $0.forceTerminate() }
+            }
+
+            self.waitForCodexExitThenOpen(applicationURL: applicationURL, remainingAttempts: remainingAttempts - 1)
+        }
+    }
+
+    private func openCodexDesktop(at applicationURL: URL) {
         let configuration = NSWorkspace.OpenConfiguration()
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in
-            NSWorkspace.shared.openApplication(at: applicationURL, configuration: configuration) { _, error in
-                guard let error else { return }
+        configuration.activates = true
+        NSWorkspace.shared.openApplication(at: applicationURL, configuration: configuration) { [weak self] _, error in
+            guard let error else {
                 Task { @MainActor in
-                    self?.errorMessage = "\(self?.strings.restartCodexFailed ?? "Could not restart Codex"): \(error.localizedDescription)"
+                    self?.verifyCodexLaunchFallback(applicationURL: applicationURL)
                 }
+                return
+            }
+            Task { @MainActor in
+                self?.launchCodexWithOpenCommand(applicationURL: applicationURL, previousError: error)
+            }
+        }
+    }
+
+    private func verifyCodexLaunchFallback(applicationURL: URL) {
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [weak self] in
+            let runningApplications = NSRunningApplication.runningApplications(withBundleIdentifier: CodexActivation.bundleIdentifier)
+            guard runningApplications.isEmpty else { return }
+            self?.launchCodexWithOpenCommand(applicationURL: applicationURL, previousError: nil)
+        }
+    }
+
+    private func launchCodexWithOpenCommand(applicationURL: URL, previousError: Error?) {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/open")
+        process.arguments = ["-b", CodexActivation.bundleIdentifier]
+
+        do {
+            try process.run()
+        } catch {
+            let fallbackProcess = Process()
+            fallbackProcess.executableURL = URL(fileURLWithPath: "/usr/bin/open")
+            fallbackProcess.arguments = [applicationURL.path]
+            do {
+                try fallbackProcess.run()
+            } catch {
+                let prefix = strings.restartCodexFailed
+                let original = previousError.map { "\($0.localizedDescription)\n" } ?? ""
+                errorMessage = "\(prefix): \(original)\(error.localizedDescription)"
             }
         }
     }
