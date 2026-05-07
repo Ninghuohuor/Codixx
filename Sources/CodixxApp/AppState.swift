@@ -11,12 +11,7 @@ enum AccountSaveStatus: Equatable {
 private struct CodexActivation {
     static let bundleIdentifier = "com.openai.codex"
 
-    var runningProcessIdentifier: pid_t?
     var activeProcessIdentifier: pid_t?
-
-    var isRunning: Bool {
-        runningProcessIdentifier != nil
-    }
 }
 
 @MainActor
@@ -34,8 +29,6 @@ final class AppState: ObservableObject {
     @Published private(set) var isRefreshing = false
     @Published private(set) var accountSaveStatus: AccountSaveStatus?
     @Published private(set) var postSwitchRestartMessage: String?
-    @Published private(set) var pendingRestartTargetAccountID: UUID?
-    @Published private(set) var runtimeCurrentAccountID: UUID?
     @Published var errorMessage: String?
 
     let paths: CodixxPaths
@@ -81,7 +74,7 @@ final class AppState: ObservableObject {
     }
 
     var menuBarTitle: String {
-        guard let account = displayedCurrentAccount else { return "Codixx" }
+        guard let account = currentAccount else { return "Codixx" }
         if let used = account.quota.primaryUsedPercent {
             return "\(account.alias) \(Self.percentFormatter.string(from: NSNumber(value: used / 100)) ?? "")"
         }
@@ -89,16 +82,9 @@ final class AppState: ObservableObject {
     }
 
     var menuBarSystemImage: String {
-        guard displayedCurrentAccount != nil else { return "bolt.slash.circle.fill" }
-        guard let used = displayedCurrentAccount?.quota.primaryUsedPercent else { return "bolt.circle.fill" }
+        guard currentAccount != nil else { return "bolt.slash.circle.fill" }
+        guard let used = currentAccount?.quota.primaryUsedPercent else { return "bolt.circle.fill" }
         return used >= config.primaryThresholdPercent ? "exclamationmark.triangle.fill" : "bolt.circle.fill"
-    }
-
-    var displayedCurrentAccount: CodixxAccount? {
-        if let runtimeCurrentAccountID {
-            return accounts.first { $0.id == runtimeCurrentAccountID }
-        }
-        return currentAccount
     }
 
     var topThreads: [ThreadUsage] {
@@ -107,7 +93,7 @@ final class AppState: ObservableObject {
 
     var candidateAccounts: [CodixxAccount] {
         SwitchPolicy(primaryThresholdPercent: config.primaryThresholdPercent)
-            .orderedCandidates(from: accounts.filter { $0.id != displayedCurrentAccount?.id }) { _ in true }
+            .orderedCandidates(from: accounts.filter { $0.id != currentAccount?.id }) { _ in true }
     }
 
     var canEnableAutoSwitch: Bool {
@@ -233,7 +219,7 @@ final class AppState: ObservableObject {
     }
 
     func attemptAutoSwitchIfNeeded() {
-        guard config.autoSwitchEnabled, !isSwitchInProgress, pendingRestartTargetAccountID == nil else { return }
+        guard config.autoSwitchEnabled, !isSwitchInProgress else { return }
         let timestamp = now()
         let policy = SwitchPolicy(primaryThresholdPercent: config.primaryThresholdPercent)
         let context = SwitchSafetyContext(
@@ -250,10 +236,8 @@ final class AppState: ObservableObject {
         isSwitchInProgress = true
         defer { isSwitchInProgress = false }
 
-        let codexActivation = currentCodexActivation()
-        let runtimeAccountIDBeforeSwitch = displayedCurrentAccount?.id
         do {
-            let result = try switcher.switchToAccount(target.id, trigger: .autoPrimaryThreshold)
+            _ = try switcher.switchToAccount(target.id, trigger: .autoPrimaryThreshold)
             refresh(
                 applyRateLimitObservations: false,
                 allowAutoSwitch: false,
@@ -261,12 +245,7 @@ final class AppState: ObservableObject {
                 throttled: false,
                 refreshUsage: false
             )
-            handlePostSwitchResult(
-                result,
-                runtimeAccountIDBeforeSwitch: runtimeAccountIDBeforeSwitch,
-                codexWasRunning: codexActivation.isRunning
-            )
-            restoreCodexActivationIfNeeded(codexActivation)
+            handlePostSwitchAction()
         } catch {
             let preservedError = pauseAutoSwitchIfRollbackFailed(error)
             refresh(
@@ -298,7 +277,6 @@ final class AppState: ObservableObject {
         defer { isSwitchInProgress = false }
 
         let codexActivation = currentCodexActivation()
-        let runtimeAccountIDBeforeSwitch = displayedCurrentAccount?.id
         refresh(
             applyRateLimitObservations: true,
             allowAutoSwitch: false,
@@ -308,7 +286,7 @@ final class AppState: ObservableObject {
         )
 
         do {
-            let result = try switcher.switchToAccount(account.id, trigger: .manual)
+            _ = try switcher.switchToAccount(account.id, trigger: .manual)
             refresh(
                 applyRateLimitObservations: false,
                 allowAutoSwitch: false,
@@ -316,12 +294,44 @@ final class AppState: ObservableObject {
                 throttled: false,
                 refreshUsage: false
             )
-            handlePostSwitchResult(
-                result,
-                runtimeAccountIDBeforeSwitch: runtimeAccountIDBeforeSwitch,
-                codexWasRunning: codexActivation.isRunning
-            )
+            handlePostSwitchAction()
             restoreCodexActivationIfNeeded(codexActivation)
+        } catch {
+            let preservedError = pauseAutoSwitchIfRollbackFailed(error)
+            refresh(
+                applyRateLimitObservations: false,
+                allowAutoSwitch: false,
+                preservingError: preservedError,
+                throttled: false,
+                refreshUsage: false
+            )
+        }
+    }
+
+    func switchToAccountAndRestartCodex(_ account: CodixxAccount) {
+        guard !isSwitchInProgress else { return }
+        isSwitchInProgress = true
+        defer { isSwitchInProgress = false }
+
+        refresh(
+            applyRateLimitObservations: true,
+            allowAutoSwitch: false,
+            preservingError: nil,
+            throttled: false,
+            refreshUsage: false
+        )
+
+        do {
+            _ = try switcher.switchToAccount(account.id, trigger: .manual)
+            refresh(
+                applyRateLimitObservations: false,
+                allowAutoSwitch: false,
+                preservingError: nil,
+                throttled: false,
+                refreshUsage: false
+            )
+            postSwitchRestartMessage = nil
+            try restartCodexDesktop()
         } catch {
             let preservedError = pauseAutoSwitchIfRollbackFailed(error)
             refresh(
@@ -405,8 +415,6 @@ final class AppState: ObservableObject {
     func restartCodexNow() {
         do {
             postSwitchRestartMessage = nil
-            pendingRestartTargetAccountID = nil
-            runtimeCurrentAccountID = nil
             try restartCodexDesktop()
         } catch {
             errorMessage = "\(strings.restartCodexFailed): \(error.localizedDescription)"
@@ -428,35 +436,13 @@ final class AppState: ObservableObject {
         }
     }
 
-    private func handlePostSwitchResult(
-        _ result: AccountSwitchResult,
-        runtimeAccountIDBeforeSwitch: UUID?,
-        codexWasRunning: Bool
-    ) {
-        guard case .success(let target) = result else {
-            errorMessage = strings.switchDidNotCompleteCleanly
-            return
-        }
-
-        guard codexWasRunning else {
-            pendingRestartTargetAccountID = nil
-            runtimeCurrentAccountID = nil
-            postSwitchRestartMessage = nil
-            return
-        }
-
+    private func handlePostSwitchAction() {
         switch config.postSwitchAction {
         case .none:
-            pendingRestartTargetAccountID = nil
-            runtimeCurrentAccountID = nil
             break
         case .notifyRestartRecommended:
-            pendingRestartTargetAccountID = target.id
-            runtimeCurrentAccountID = runtimeAccountIDBeforeSwitch
             postSwitchRestartMessage = strings.restartCodexHint
         case .restartCodexApp:
-            pendingRestartTargetAccountID = target.id
-            runtimeCurrentAccountID = runtimeAccountIDBeforeSwitch
             postSwitchRestartMessage = strings.restartCodexHint
         }
     }
@@ -484,10 +470,7 @@ final class AppState: ObservableObject {
     private func currentCodexActivation() -> CodexActivation {
         let applications = NSRunningApplication.runningApplications(withBundleIdentifier: CodexActivation.bundleIdentifier)
         let activeApplication = applications.first { $0.isActive }
-        return CodexActivation(
-            runningProcessIdentifier: applications.first?.processIdentifier,
-            activeProcessIdentifier: activeApplication?.processIdentifier
-        )
+        return CodexActivation(activeProcessIdentifier: activeApplication?.processIdentifier)
     }
 
     private func restoreCodexActivationIfNeeded(_ activation: CodexActivation) {

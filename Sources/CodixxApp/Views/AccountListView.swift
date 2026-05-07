@@ -7,6 +7,7 @@ struct AccountListView: View {
     @State private var editedAliases: [UUID: String] = [:]
     @State private var editingAccountIds: Set<UUID> = []
     @State private var accountToDelete: CodixxAccount?
+    @State private var accountToSwitch: CodixxAccount?
     @State private var isShowingSaveAccount = false
 
     var body: some View {
@@ -29,6 +30,10 @@ struct AccountListView: View {
 
                 if isShowingSaveAccount {
                     saveCurrentAccount
+                }
+
+                if let accountToSwitch {
+                    switchConfirmation(for: accountToSwitch)
                 }
 
                 if !state.canEnableAutoSwitch {
@@ -113,13 +118,7 @@ struct AccountListView: View {
                 accountHeader(for: account)
 
                 HStack(spacing: 8) {
-                    if account.id == state.pendingRestartTargetAccountID {
-                        Text(state.strings.pendingRestart)
-                            .font(.caption2.weight(.semibold))
-                            .padding(.horizontal, 6)
-                            .padding(.vertical, 2)
-                            .background(Color.orange.opacity(0.16), in: Capsule())
-                    } else if account.id == state.displayedCurrentAccount?.id {
+                    if account.id == state.currentAccount?.id {
                         Text(state.strings.current)
                             .font(.caption2.weight(.semibold))
                             .padding(.horizontal, 6)
@@ -213,7 +212,9 @@ struct AccountListView: View {
             }
 
             Button {
-                state.switchToAccount(account)
+                withAnimation(.easeInOut(duration: 0.16)) {
+                    accountToSwitch = account
+                }
             } label: {
                 Label(state.strings.switchAccount, systemImage: "arrow.triangle.2.circlepath")
             }
@@ -245,6 +246,38 @@ struct AccountListView: View {
             .fixedSize()
             .help(state.strings.settings)
         }
+    }
+
+    private func switchConfirmation(for account: CodixxAccount) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Label(state.strings.confirmSwitchTitle(alias: account.alias), systemImage: "arrow.triangle.2.circlepath")
+                .font(.subheadline.weight(.semibold))
+            Text(state.strings.confirmSwitchMessage)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            HStack {
+                Button(state.strings.cancel) {
+                    withAnimation(.easeInOut(duration: 0.16)) {
+                        accountToSwitch = nil
+                    }
+                }
+                Spacer()
+                Button(state.strings.switchAndRestartCodex) {
+                    state.switchToAccountAndRestartCodex(account)
+                    accountToSwitch = nil
+                }
+                .buttonStyle(.borderedProminent)
+            }
+            .font(.caption)
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color.blue.opacity(0.10), in: RoundedRectangle(cornerRadius: 8))
+        .overlay(
+            RoundedRectangle(cornerRadius: 8)
+                .stroke(Color.accentColor.opacity(0.18), lineWidth: 1)
+        )
     }
 
     private func quotaProgressRows(for account: CodixxAccount) -> some View {
