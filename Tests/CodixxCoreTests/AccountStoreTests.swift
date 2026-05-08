@@ -15,6 +15,36 @@ final class AccountStoreTests: XCTestCase {
         XCTAssertEqual(APIKeyFingerprint.generate(apiKey: "sk-test-123"), "api-key:\(sha256Prefix16("sk-test-123"))")
     }
 
+    func testSaveAPIProviderStoresMetadataAndKeySeparately() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let paths = CodixxPaths(home: directory)
+        let apiKeyVault = InMemoryAPIKeyVault()
+        let store = AccountStore(
+            paths: paths,
+            vault: InMemoryAuthSnapshotVault(),
+            apiKeyVault: apiKeyVault,
+            now: { Date(timeIntervalSince1970: 10) },
+            idGenerator: { UUID(uuidString: "00000000-0000-0000-0000-000000000001")! }
+        )
+
+        let account = try store.saveAPIProvider(
+            alias: "Relay",
+            providerName: "Relay",
+            baseURL: URL(string: "https://relay.example.com/v1")!,
+            apiKey: "sk-test-123",
+            defaultModel: "gpt-5"
+        )
+
+        XCTAssertEqual(account.credentialKind, .apiProvider)
+        XCTAssertEqual(account.apiProvider?.baseURL.absoluteString, "https://relay.example.com/v1")
+        XCTAssertEqual(account.apiProvider?.keyFingerprint, "api-key:\(sha256Prefix16("sk-test-123"))")
+        XCTAssertEqual(apiKeyVault.keys[account.apiProvider!.keyFingerprint], "sk-test-123")
+        let metadata = try AccountMetadataStore(paths: paths).load()
+        XCTAssertEqual(metadata.accounts.first?.apiProvider?.keyFingerprint, account.apiProvider?.keyFingerprint)
+        XCTAssertFalse(String(data: try Data(contentsOf: paths.accountsJSON), encoding: .utf8)!.contains("sk-test-123"))
+    }
+
     func testFingerprintPrefersStableAccountIdThenEmailThenAccessTokenHash() throws {
         let accountIdAuth = try AuthSnapshot(jsonData: Data(#"{"account_id":"acct_123","email":"main@example.com","access_token":"secret"}"#.utf8))
         let emailAuth = try AuthSnapshot(jsonData: Data(#"{"email":"main@example.com","access_token":"secret"}"#.utf8))
@@ -174,6 +204,33 @@ final class AccountStoreTests: XCTestCase {
         XCTAssertNil(vault.snapshotDataByFingerprint[account.fingerprint])
     }
 
+    func testDeleteAPIProviderRemovesMetadataAndAPIKey() throws {
+        let home = try makeTempHome()
+        defer { try? FileManager.default.removeItem(at: home) }
+        let paths = CodixxPaths(home: home)
+        let apiKeyVault = InMemoryAPIKeyVault()
+        let store = AccountStore(
+            paths: paths,
+            vault: InMemoryAuthSnapshotVault(),
+            apiKeyVault: apiKeyVault,
+            now: { Date(timeIntervalSince1970: 200) },
+            idGenerator: { UUID(uuidString: "11111111-1111-1111-1111-111111111111")! }
+        )
+        let account = try store.saveAPIProvider(
+            alias: "Relay",
+            providerName: "Relay",
+            baseURL: URL(string: "https://relay.example.com/v1")!,
+            apiKey: "sk-test-123",
+            defaultModel: "gpt-5"
+        )
+
+        try store.deleteAccount(account.id)
+        let metadata = try AccountMetadataStore(paths: paths).load()
+
+        XCTAssertEqual(metadata.accounts, [])
+        XCTAssertNil(apiKeyVault.keys[try XCTUnwrap(account.apiProvider?.keyFingerprint)])
+    }
+
     private func makeTempHome() throws -> URL {
         let home = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
         try FileManager.default.createDirectory(at: home, withIntermediateDirectories: true)
@@ -224,5 +281,24 @@ private final class InMemoryAuthSnapshotVault: AuthSnapshotVault {
 
     func delete(fingerprint: String) throws {
         snapshotDataByFingerprint.removeValue(forKey: fingerprint)
+    }
+}
+
+private final class InMemoryAPIKeyVault: APIKeyVault {
+    var keys: [String: String] = [:]
+
+    func save(apiKey: String, fingerprint: String) throws {
+        keys[fingerprint] = apiKey
+    }
+
+    func load(fingerprint: String) throws -> String {
+        guard let key = keys[fingerprint] else {
+            throw AccountStoreError.snapshotNotFound(fingerprint)
+        }
+        return key
+    }
+
+    func delete(fingerprint: String) throws {
+        keys.removeValue(forKey: fingerprint)
     }
 }
