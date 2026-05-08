@@ -10,7 +10,16 @@ public struct KeychainVault: AuthSnapshotVault {
 
     public func save(snapshot: AuthSnapshot, fingerprint: String) throws {
         let query = baseQuery(fingerprint: fingerprint)
-        SecItemDelete(query as CFDictionary)
+        let updateQuery = [
+            kSecValueData as String: snapshot.jsonData
+        ]
+        let updateStatus = SecItemUpdate(query as CFDictionary, updateQuery as CFDictionary)
+        if updateStatus == errSecSuccess {
+            return
+        }
+        guard updateStatus == errSecItemNotFound else {
+            throw AccountStoreError.keychainError(Self.message(for: updateStatus))
+        }
 
         var addQuery = query
         addQuery[kSecValueData as String] = snapshot.jsonData
@@ -54,7 +63,7 @@ public struct KeychainVault: AuthSnapshotVault {
         ]
     }
 
-    private static func currentApplicationAccess(descriptor: String) -> SecAccess? {
+    static func currentApplicationAccess(descriptor: String) -> SecAccess? {
         var trustedApplication: SecTrustedApplication?
         let trustedStatus = SecTrustedApplicationCreateFromPath(nil, &trustedApplication)
         guard trustedStatus == errSecSuccess, let trustedApplication else { return nil }
@@ -69,7 +78,7 @@ public struct KeychainVault: AuthSnapshotVault {
         return access
     }
 
-    private static func message(for status: OSStatus) -> String {
+    static func message(for status: OSStatus) -> String {
         SecCopyErrorMessageString(status, nil) as String? ?? "OSStatus \(status)"
     }
 }

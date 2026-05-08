@@ -3,6 +3,18 @@ import XCTest
 @testable import CodixxCore
 
 final class AccountStoreTests: XCTestCase {
+    func testAuthSnapshotCanRepresentAPIKeyLogin() throws {
+        let snapshot = try AuthSnapshot.apiKey("sk-test-123")
+
+        XCTAssertEqual(snapshot.stringValue(for: "auth_mode"), "apikey")
+        XCTAssertEqual(snapshot.stringValue(for: "OPENAI_API_KEY"), "sk-test-123")
+        XCTAssertEqual(try AccountFingerprint.generate(from: snapshot), "api-key:\(sha256Prefix16("sk-test-123"))")
+    }
+
+    func testAPIKeyFingerprintUsesStableHash() {
+        XCTAssertEqual(APIKeyFingerprint.generate(apiKey: "sk-test-123"), "api-key:\(sha256Prefix16("sk-test-123"))")
+    }
+
     func testFingerprintPrefersStableAccountIdThenEmailThenAccessTokenHash() throws {
         let accountIdAuth = try AuthSnapshot(jsonData: Data(#"{"account_id":"acct_123","email":"main@example.com","access_token":"secret"}"#.utf8))
         let emailAuth = try AuthSnapshot(jsonData: Data(#"{"email":"main@example.com","access_token":"secret"}"#.utf8))
