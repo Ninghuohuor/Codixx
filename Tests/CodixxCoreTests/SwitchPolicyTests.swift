@@ -249,6 +249,25 @@ final class SwitchPolicyTests: XCTestCase {
         XCTAssertEqual(ordered.map(\.alias), ["Under Weekly Threshold"])
     }
 
+    func testAutoSwitchSkipsAPIProviderAccounts() {
+        let now = Date(timeIntervalSince1970: 1_000)
+        let policy = SwitchPolicy(primaryThresholdPercent: 90, secondaryThresholdPercent: 90)
+        let api = account(
+            alias: "Relay",
+            primary: nil,
+            secondary: nil,
+            confidence: .unknown,
+            credentialKind: .apiProvider,
+            now: now
+        )
+        let chatgpt = account(alias: "ChatGPT", primary: 20, secondary: 20, confidence: .fresh, now: now)
+
+        let ordered = policy.orderedCandidates(from: [api, chatgpt]) { _ in true }
+
+        XCTAssertEqual(ordered.map(\.alias), ["ChatGPT"])
+        XCTAssertFalse(policy.shouldAutoSwitch(currentAccount: api, allAccounts: [chatgpt]))
+    }
+
     private func account(
         alias: String,
         primary: Double?,
@@ -256,6 +275,7 @@ final class SwitchPolicyTests: XCTestCase {
         confidence: QuotaConfidence,
         priority: Int = 0,
         lastUsedAt: Date? = nil,
+        credentialKind: CredentialKind = .chatgpt,
         now: Date
     ) -> CodixxAccount {
         let id = UUID()
@@ -263,6 +283,7 @@ final class SwitchPolicyTests: XCTestCase {
             id: id,
             alias: alias,
             fingerprint: "fingerprint-\(alias)",
+            credentialKind: credentialKind,
             createdAt: now,
             updatedAt: now,
             lastUsedAt: lastUsedAt,

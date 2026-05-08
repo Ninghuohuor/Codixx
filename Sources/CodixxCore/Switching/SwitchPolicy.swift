@@ -40,6 +40,7 @@ public struct SwitchPolicy: Sendable {
 
     public func shouldAutoSwitch(currentAccount: CodixxAccount?, allAccounts: [CodixxAccount] = [], context: SwitchSafetyContext) -> Bool {
         guard let currentAccount,
+              currentAccount.isChatGPT,
               currentAccount.quota.confidence == .fresh || currentAccount.quota.confidence == .recent,
               currentAccount.quota.primaryUsedPercent != nil || currentAccount.quota.secondaryUsedPercent != nil
         else {
