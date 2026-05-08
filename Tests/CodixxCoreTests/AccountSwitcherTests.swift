@@ -86,6 +86,29 @@ final class AccountSwitcherTests: XCTestCase {
         XCTAssertTrue(FileManager.default.fileExists(atPath: fixture.paths.codexHome.appendingPathComponent("state_5.sqlite").path))
     }
 
+    func testSwitchToChatGPTClearsManagedAPIProviderConfig() throws {
+        let fixture = try SwitchFixture()
+        defer { fixture.cleanup() }
+        try """
+        model = "gpt-5"
+        model_provider = "codixx-relay"
+
+        # BEGIN CODIXX API PROVIDER
+        [model_providers.codixx-relay]
+        name = "Relay"
+        base_url = "https://relay.example.com/v1"
+        wire_api = "responses"
+        # END CODIXX API PROVIDER
+        """.write(to: fixture.paths.configTOML, atomically: true, encoding: .utf8)
+        let switcher = fixture.switcher()
+
+        _ = try switcher.switchToAccount(fixture.target.id, trigger: .manual)
+
+        let config = try String(contentsOf: fixture.paths.configTOML)
+        XCTAssertFalse(config.contains("model_provider = \"codixx-relay\""))
+        XCTAssertFalse(config.contains("BEGIN CODIXX API PROVIDER"))
+    }
+
     func testSwitchRefreshesSourceSnapshotBeforeWritingTarget() throws {
         let fixture = try SwitchFixture()
         defer { fixture.cleanup() }
