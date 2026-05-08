@@ -13,7 +13,6 @@ struct AccountListView: View {
     @State private var editedAliases: [UUID: String] = [:]
     @State private var editingAccountIds: Set<UUID> = []
     @State private var accountToDelete: CodixxAccount?
-    @State private var switchConfirmation: SwitchConfirmation?
     @State private var isShowingSaveAccount = false
 
     var body: some View {
@@ -97,22 +96,6 @@ struct AccountListView: View {
             if let account = accountToDelete {
                 Text(state.strings.confirmDeleteMessage(alias: account.alias))
             }
-        }
-        .alert(item: $switchConfirmation) { confirmation in
-            Alert(
-                title: Text(state.strings.confirmSwitchTitle(alias: confirmation.account.alias)),
-                message: Text(state.strings.confirmSwitchMessage),
-                primaryButton: .default(Text(state.strings.switchAndRestartCodex)) {
-                    let account = confirmation.account
-                    DispatchQueue.main.async {
-                        state.switchToAccountAndRestartCodex(account)
-                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-                            NSApplication.shared.keyWindow?.close()
-                        }
-                    }
-                },
-                secondaryButton: .cancel(Text(state.strings.cancel))
-            )
         }
     }
 
@@ -282,7 +265,7 @@ struct AccountListView: View {
             }
 
             Button {
-                switchConfirmation = SwitchConfirmation(account: account)
+                confirmSwitchAndRestart(account)
             } label: {
                 Label(state.strings.switchAccount, systemImage: "arrow.triangle.2.circlepath")
             }
@@ -414,12 +397,19 @@ struct AccountListView: View {
             return .orange
         }
     }
-}
 
-private struct SwitchConfirmation: Identifiable {
-    var account: CodixxAccount
+    private func confirmSwitchAndRestart(_ account: CodixxAccount) {
+        let alert = NSAlert()
+        alert.messageText = state.strings.confirmSwitchTitle(alias: account.alias)
+        alert.informativeText = state.strings.confirmSwitchMessage
+        alert.alertStyle = .warning
+        alert.addButton(withTitle: state.strings.switchAndRestartCodex)
+        alert.addButton(withTitle: state.strings.cancel)
 
-    var id: UUID {
-        account.id
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        state.switchToAccountAndRestartCodex(account)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+            NSApplication.shared.keyWindow?.close()
+        }
     }
 }
