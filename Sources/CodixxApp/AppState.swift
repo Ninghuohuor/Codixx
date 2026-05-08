@@ -57,6 +57,7 @@ final class AppState: ObservableObject, LifecycleStateManaging {
     private let accountStore: AccountStore
     private let switcher: AccountSwitcher
     private let vault: AuthSnapshotVault
+    private let apiKeyVault: APIKeyVault
     private let now: () -> Date
     private var isRefreshInProgress = false
     private var isSwitchInProgress = false
@@ -69,10 +70,12 @@ final class AppState: ObservableObject, LifecycleStateManaging {
     init(
         paths: CodixxPaths = CodixxPaths(),
         vault: AuthSnapshotVault = KeychainVault(),
+        apiKeyVault: APIKeyVault = KeychainAPIKeyVault(),
         now: @escaping () -> Date = Date.init
     ) {
         self.paths = paths
         self.vault = vault
+        self.apiKeyVault = apiKeyVault
         self.now = now
         self.configStore = CodixxConfigStore(paths: paths)
         self.metadataStore = AccountMetadataStore(paths: paths)
@@ -82,14 +85,21 @@ final class AppState: ObservableObject, LifecycleStateManaging {
             trendCacheStore: TrendCacheStore(paths: paths)
         )
         self.auditLog = SwitchAuditLog(paths: paths)
-        self.accountStore = AccountStore(paths: paths, metadataStore: metadataStore, vault: vault, now: now)
+        self.accountStore = AccountStore(
+            paths: paths,
+            metadataStore: metadataStore,
+            vault: vault,
+            apiKeyVault: apiKeyVault,
+            now: now
+        )
         self.switcher = AccountSwitcher(
             paths: paths,
             metadataStore: metadataStore,
             vault: vault,
             backupManager: SwitchBackupManager(paths: paths),
             auditLog: auditLog,
-            now: now
+            now: now,
+            apiKeyVault: apiKeyVault
         )
         self.config = (try? configStore.load()) ?? .default(paths: paths)
     }
@@ -139,7 +149,7 @@ final class AppState: ObservableObject, LifecycleStateManaging {
     }
 
     var canEnableAutoSwitch: Bool {
-        accounts.filter(\.isEnabled).count >= 2
+        accounts.filter { $0.isEnabled && $0.isChatGPT }.count >= 2
     }
 
     var strings: CodixxStrings {
@@ -257,7 +267,11 @@ final class AppState: ObservableObject, LifecycleStateManaging {
             isLoadingFullUsageSnapshot = true
             let usageReader = threadUsageReader
             let usageNow = refreshStartedAt
-            let usageAccountWindows = accountUsageWindows(accounts: loadedAccounts, switchEvents: switchEvents)
+            let usageAccountWindows = Self.accountUsageWindows(
+                accounts: loadedAccounts,
+                switchEvents: switchEvents,
+                currentAccount: currentAccount
+            )
             let previousSnapshot = usageSnapshot
             let currentStrings = strings
             let baseErrors = refreshErrors
@@ -406,6 +420,41 @@ final class AppState: ObservableObject, LifecycleStateManaging {
         let savedAlias = trimmedAlias.isEmpty ? "Codex Account" : trimmedAlias
         do {
             let account = try accountStore.saveCurrentAuth(alias: savedAlias)
+            accountSaveStatus = .success(alias: account.alias)
+            refreshNow()
+        } catch {
+            accountSaveStatus = .failure(message: error.localizedDescription)
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    func saveAPIProviderAccount(
+        alias: String,
+        providerName: String,
+        baseURLText: String,
+        apiKey: String,
+        defaultModel: String
+    ) {
+        guard let baseURL = URL(string: baseURLText),
+              baseURL.scheme?.hasPrefix("http") == true
+        else {
+            errorMessage = strings.invalidBaseURL
+            accountSaveStatus = .failure(message: strings.invalidBaseURL)
+            return
+        }
+
+        let trimmedProvider = providerName.trimmingCharacters(in: .whitespacesAndNewlines)
+        let savedProvider = trimmedProvider.isEmpty ? "API Provider" : trimmedProvider
+        let trimmedModel = defaultModel.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        do {
+            let account = try accountStore.saveAPIProvider(
+                alias: alias,
+                providerName: savedProvider,
+                baseURL: baseURL,
+                apiKey: apiKey,
+                defaultModel: trimmedModel.isEmpty ? nil : trimmedModel
+            )
             accountSaveStatus = .success(alias: account.alias)
             refreshNow()
         } catch {
@@ -590,18 +639,24 @@ final class AppState: ObservableObject, LifecycleStateManaging {
         percent.map { "\(Int($0.rounded()))%" } ?? "--"
     }
 
-    private func accountUsageWindows(accounts: [CodixxAccount], switchEvents: [SwitchAuditEvent]) -> [AccountUsageWindow] {
+    static func accountUsageWindows(
+        accounts: [CodixxAccount],
+        switchEvents: [SwitchAuditEvent],
+        currentAccount: CodixxAccount? = nil
+    ) -> [AccountUsageWindow] {
         let accountIds = Set(accounts.map(\.id))
         let successfulSwitches = switchEvents
             .filter { $0.result == .success && $0.targetAccountId != nil }
             .sorted { $0.timestamp < $1.timestamp }
 
-        if successfulSwitches.isEmpty,
-           let currentAccount,
-           accountIds.contains(currentAccount.id)
-        {
-            let start = accounts.map(\.createdAt).min() ?? Date.distantPast
-            return [AccountUsageWindow(accountId: currentAccount.id, start: start, end: nil)]
+        if successfulSwitches.isEmpty {
+            let account = currentAccount.flatMap { accountIds.contains($0.id) ? $0 : nil }
+                ?? accounts
+                    .filter { accountIds.contains($0.id) }
+                    .max { ($0.lastUsedAt ?? $0.updatedAt) < ($1.lastUsedAt ?? $1.updatedAt) }
+            if let account {
+                return [AccountUsageWindow(accountId: account.id, start: .distantPast, end: nil)]
+            }
         }
 
         var windows: [AccountUsageWindow] = []
@@ -609,9 +664,8 @@ final class AppState: ObservableObject, LifecycleStateManaging {
            let sourceId = firstSwitch.sourceAccountId,
            accountIds.contains(sourceId)
         {
-            let creationStart = accounts.map(\.createdAt).min() ?? Date.distantPast
-            if creationStart < firstSwitch.timestamp {
-                windows.append(AccountUsageWindow(accountId: sourceId, start: creationStart, end: firstSwitch.timestamp))
+            if Date.distantPast < firstSwitch.timestamp {
+                windows.append(AccountUsageWindow(accountId: sourceId, start: .distantPast, end: firstSwitch.timestamp))
             }
         }
 
@@ -820,7 +874,9 @@ final class AppState: ObservableObject, LifecycleStateManaging {
         else {
             return nil
         }
-        return accounts.first { $0.fingerprint == fingerprint }
+        return accounts.first { account in
+            account.fingerprint == fingerprint || account.apiProvider?.keyFingerprint == fingerprint
+        }
     }
 
     private func currentAuthProfile() -> AuthProfile? {
