@@ -65,6 +65,8 @@ final class AppState: ObservableObject, LifecycleStateManaging {
     private var errorDismissWork: DispatchWorkItem?
     private var lastRefreshStartedAt: Date?
     private let menuRefreshThrottleSeconds: TimeInterval = 30
+    private let manualSwitchAutoSuppressionSeconds: TimeInterval = 300
+    private var autoSwitchSuppressedUntil: Date?
     var onNotificationsEnabled: (() -> Void)?
 
     init(
@@ -375,6 +377,10 @@ final class AppState: ObservableObject, LifecycleStateManaging {
     func attemptAutoSwitchIfNeeded() {
         guard config.autoSwitchEnabled, !isSwitchInProgress else { return }
         let timestamp = now()
+        if let autoSwitchSuppressedUntil {
+            guard timestamp >= autoSwitchSuppressedUntil else { return }
+            self.autoSwitchSuppressedUntil = nil
+        }
         let policy = SwitchPolicy(
             primaryThresholdPercent: config.primaryThresholdPercent,
             secondaryThresholdPercent: config.secondaryThresholdPercent
@@ -400,7 +406,8 @@ final class AppState: ObservableObject, LifecycleStateManaging {
                 allowAutoSwitch: false,
                 preservingError: nil,
                 throttled: false,
-                refreshUsage: false
+                refreshUsage: false,
+                refreshUsageIfEmpty: false
             )
             handlePostSwitchAction()
         } catch {
@@ -410,7 +417,8 @@ final class AppState: ObservableObject, LifecycleStateManaging {
                 allowAutoSwitch: false,
                 preservingError: preservedError,
                 throttled: false,
-                refreshUsage: false
+                refreshUsage: false,
+                refreshUsageIfEmpty: false
             )
         }
     }
@@ -474,17 +482,20 @@ final class AppState: ObservableObject, LifecycleStateManaging {
             allowAutoSwitch: false,
             preservingError: nil,
             throttled: false,
-            refreshUsage: false
+            refreshUsage: false,
+            refreshUsageIfEmpty: false
         )
 
         do {
             _ = try switcher.switchToAccount(account.id, trigger: .manual)
+            suppressAutoSwitchAfterManualSwitch()
             refresh(
                 applyRateLimitObservations: false,
                 allowAutoSwitch: false,
                 preservingError: nil,
                 throttled: false,
-                refreshUsage: false
+                refreshUsage: false,
+                refreshUsageIfEmpty: false
             )
             handlePostSwitchAction()
             restoreCodexActivationIfNeeded(codexActivation)
@@ -495,7 +506,8 @@ final class AppState: ObservableObject, LifecycleStateManaging {
                 allowAutoSwitch: false,
                 preservingError: preservedError,
                 throttled: false,
-                refreshUsage: false
+                refreshUsage: false,
+                refreshUsageIfEmpty: false
             )
         }
     }
@@ -510,17 +522,20 @@ final class AppState: ObservableObject, LifecycleStateManaging {
             allowAutoSwitch: false,
             preservingError: nil,
             throttled: false,
-            refreshUsage: false
+            refreshUsage: false,
+            refreshUsageIfEmpty: false
         )
 
         do {
             _ = try switcher.switchToAccount(account.id, trigger: .manual)
+            suppressAutoSwitchAfterManualSwitch()
             refresh(
                 applyRateLimitObservations: false,
                 allowAutoSwitch: false,
                 preservingError: nil,
                 throttled: false,
-                refreshUsage: false
+                refreshUsage: false,
+                refreshUsageIfEmpty: false
             )
             postSwitchRestartMessage = nil
             try restartCodexDesktop()
@@ -531,7 +546,8 @@ final class AppState: ObservableObject, LifecycleStateManaging {
                 allowAutoSwitch: false,
                 preservingError: preservedError,
                 throttled: false,
-                refreshUsage: false
+                refreshUsage: false,
+                refreshUsageIfEmpty: false
             )
         }
     }
@@ -633,6 +649,10 @@ final class AppState: ObservableObject, LifecycleStateManaging {
         } catch {
             errorMessage = error.localizedDescription
         }
+    }
+
+    private func suppressAutoSwitchAfterManualSwitch() {
+        autoSwitchSuppressedUntil = now().addingTimeInterval(manualSwitchAutoSuppressionSeconds)
     }
 
     private func quotaPercentText(_ percent: Double?) -> String {

@@ -4,6 +4,79 @@ import CodixxCore
 
 @MainActor
 final class AppStateTrendRefreshTests: XCTestCase {
+    func testManualSwitchSuppressesImmediateAutoSwitchBounceFromDepletedTarget() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let paths = CodixxPaths(home: directory)
+        try FileManager.default.createDirectory(at: paths.codexHome, withIntermediateDirectories: true)
+
+        var now = Date(timeIntervalSince1970: 1_778_000_000)
+        let currentAuth = try AuthSnapshot(jsonData: Data(#"{"account_id":"current","access_token":"current-secret"}"#.utf8))
+        let depletedAuth = try AuthSnapshot(jsonData: Data(#"{"account_id":"depleted","access_token":"depleted-secret"}"#.utf8))
+        let currentFingerprint = try AccountFingerprint.generate(from: currentAuth)
+        let depletedFingerprint = try AccountFingerprint.generate(from: depletedAuth)
+        let vault = InMemoryVault()
+        try vault.save(snapshot: currentAuth, fingerprint: currentFingerprint)
+        try vault.save(snapshot: depletedAuth, fingerprint: depletedFingerprint)
+        try currentAuth.jsonData.write(to: paths.authJSON)
+
+        let current = CodixxAccount(
+            id: UUID(),
+            alias: "Current",
+            fingerprint: currentFingerprint,
+            createdAt: now,
+            updatedAt: now,
+            lastUsedAt: nil,
+            quota: AccountQuotaState(
+                accountId: "current",
+                alias: "Current",
+                primaryUsedPercent: 10,
+                primaryWindowMinutes: 300,
+                primaryResetsAt: nil,
+                secondaryUsedPercent: 10,
+                secondaryWindowMinutes: 10_080,
+                secondaryResetsAt: nil,
+                lastObservedAt: now,
+                confidence: .fresh
+            ),
+            isEnabled: true,
+            priority: 0
+        )
+        let depleted = CodixxAccount(
+            id: UUID(),
+            alias: "Depleted",
+            fingerprint: depletedFingerprint,
+            createdAt: now,
+            updatedAt: now,
+            lastUsedAt: nil,
+            quota: AccountQuotaState(
+                accountId: "depleted",
+                alias: "Depleted",
+                primaryUsedPercent: 0,
+                primaryWindowMinutes: 300,
+                primaryResetsAt: nil,
+                secondaryUsedPercent: 100,
+                secondaryWindowMinutes: 10_080,
+                secondaryResetsAt: nil,
+                lastObservedAt: now,
+                confidence: .fresh
+            ),
+            isEnabled: true,
+            priority: 0
+        )
+        try AccountMetadataStore(paths: paths).save(AccountMetadataList(accounts: [current, depleted]))
+        let state = AppState(paths: paths, vault: vault, now: { now })
+
+        state.switchToAccount(depleted)
+        XCTAssertEqual(state.currentAccount?.id, depleted.id)
+        now = now.addingTimeInterval(1)
+        state.refreshQuotaNow()
+
+        XCTAssertEqual(state.currentAccount?.id, depleted.id)
+        let events = try SwitchAuditLog(paths: paths).loadEvents()
+        XCTAssertEqual(events.filter { $0.result == .success }.map(\.targetAlias), ["Depleted"])
+    }
+
     func testAppStateCanSaveAPIProviderAccount() throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
         defer { try? FileManager.default.removeItem(at: directory) }
@@ -160,13 +233,22 @@ final class AppStateTrendRefreshTests: XCTestCase {
 }
 
 private final class InMemoryVault: AuthSnapshotVault {
-    func save(snapshot: AuthSnapshot, fingerprint: String) throws {}
+    var snapshots: [String: AuthSnapshot] = [:]
 
-    func load(fingerprint: String) throws -> AuthSnapshot {
-        throw InMemoryVaultError.missingSnapshot
+    func save(snapshot: AuthSnapshot, fingerprint: String) throws {
+        snapshots[fingerprint] = snapshot
     }
 
-    func delete(fingerprint: String) throws {}
+    func load(fingerprint: String) throws -> AuthSnapshot {
+        guard let snapshot = snapshots[fingerprint] else {
+            throw InMemoryVaultError.missingSnapshot
+        }
+        return snapshot
+    }
+
+    func delete(fingerprint: String) throws {
+        snapshots.removeValue(forKey: fingerprint)
+    }
 }
 
 private enum InMemoryVaultError: Error {
