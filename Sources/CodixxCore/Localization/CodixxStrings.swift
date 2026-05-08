@@ -21,6 +21,12 @@ public struct CodixxStrings: Sendable {
     public var notRefreshedYet: String { text(en: "Not refreshed yet", zh: "尚未刷新") }
     public var saveCurrentAuth: String { text(en: "Save Current Auth", zh: "保存当前登录") }
     public var addAccount: String { text(en: "Add Account", zh: "添加账号") }
+    public var codexLoginAccount: String { text(en: "Codex login", zh: "Codex 登录") }
+    public var apiKeyAccount: String { text(en: "API key", zh: "API Key") }
+    public var providerName: String { text(en: "Provider", zh: "服务商") }
+    public var baseURL: String { text(en: "Base URL", zh: "Base URL") }
+    public var defaultModel: String { text(en: "Default model", zh: "默认模型") }
+    public var invalidBaseURL: String { text(en: "Base URL is invalid", zh: "Base URL 无效") }
     public var alias: String { text(en: "Alias", zh: "别名") }
     public var save: String { text(en: "Save", zh: "保存") }
     public var saveCurrentCodexAuth: String { text(en: "Save current Codex auth", zh: "保存当前 Codex 登录") }

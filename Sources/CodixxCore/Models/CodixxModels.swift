@@ -109,7 +109,7 @@ public struct AccountQuotaState: Codable, Equatable, Sendable {
     }
 }
 
-public enum CredentialKind: String, Codable, Equatable, Sendable {
+public enum CredentialKind: String, Codable, Equatable, Hashable, Sendable {
     case chatgpt
     case apiProvider
 }

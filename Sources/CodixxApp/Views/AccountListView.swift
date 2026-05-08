@@ -5,10 +5,15 @@ import CodixxCore
 struct AccountListView: View {
     @ObservedObject var state: AppState
     @State private var newAlias = ""
+    @State private var credentialKind: CredentialKind = .chatgpt
+    @State private var providerName = ""
+    @State private var baseURLText = ""
+    @State private var apiKey = ""
+    @State private var defaultModel = "gpt-5"
     @State private var editedAliases: [UUID: String] = [:]
     @State private var editingAccountIds: Set<UUID> = []
     @State private var accountToDelete: CodixxAccount?
-    @State private var accountToSwitch: CodixxAccount?
+    @State private var switchConfirmation: SwitchConfirmation?
     @State private var isShowingSaveAccount = false
 
     var body: some View {
@@ -94,21 +99,21 @@ struct AccountListView: View {
             }
         }
         .alert(
-            accountToSwitch.map { state.strings.confirmSwitchTitle(alias: $0.alias) } ?? "",
+            switchConfirmation.map { state.strings.confirmSwitchTitle(alias: $0.account.alias) } ?? "",
             isPresented: Binding(
-                get: { accountToSwitch != nil },
-                set: { if !$0 { accountToSwitch = nil } }
+                get: { switchConfirmation != nil },
+                set: { if !$0 { switchConfirmation = nil } }
             )
         ) {
             Button(state.strings.cancel, role: .cancel) {
-                accountToSwitch = nil
+                switchConfirmation = nil
             }
             Button(state.strings.switchAndRestartCodex) {
-                if let account = accountToSwitch {
-                    accountToSwitch = nil
-                    NSApplication.shared.keyWindow?.close()
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
-                        state.switchToAccountAndRestartCodex(account)
+                if let account = switchConfirmation?.account {
+                    switchConfirmation = nil
+                    state.switchToAccountAndRestartCodex(account)
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                        NSApplication.shared.keyWindow?.close()
                     }
                 }
             }
@@ -121,19 +126,59 @@ struct AccountListView: View {
         VStack(alignment: .leading, spacing: 8) {
             Text(state.strings.saveCurrentAuth)
                 .font(.headline)
-            HStack {
+
+            Picker("", selection: $credentialKind) {
+                Text(state.strings.codexLoginAccount).tag(CredentialKind.chatgpt)
+                Text(state.strings.apiKeyAccount).tag(CredentialKind.apiProvider)
+            }
+            .pickerStyle(.segmented)
+
+            if credentialKind == .chatgpt {
+                HStack {
+                    TextField(state.strings.alias, text: $newAlias)
+                        .textFieldStyle(.roundedBorder)
+                    Button {
+                        state.saveCurrentAccount(alias: newAlias)
+                        newAlias = ""
+                        withAnimation(.easeInOut(duration: 0.18)) {
+                            isShowingSaveAccount = false
+                        }
+                    } label: {
+                        Label(state.strings.save, systemImage: "key")
+                    }
+                    .help(state.strings.saveCurrentCodexAuth)
+                }
+            } else {
                 TextField(state.strings.alias, text: $newAlias)
                     .textFieldStyle(.roundedBorder)
+                TextField(state.strings.providerName, text: $providerName)
+                    .textFieldStyle(.roundedBorder)
+                TextField(state.strings.baseURL, text: $baseURLText)
+                    .textFieldStyle(.roundedBorder)
+                SecureField(state.strings.apiKeyAccount, text: $apiKey)
+                    .textFieldStyle(.roundedBorder)
+                TextField(state.strings.defaultModel, text: $defaultModel)
+                    .textFieldStyle(.roundedBorder)
                 Button {
-                    state.saveCurrentAccount(alias: newAlias)
+                    state.saveAPIProviderAccount(
+                        alias: newAlias,
+                        providerName: providerName,
+                        baseURLText: baseURLText,
+                        apiKey: apiKey,
+                        defaultModel: defaultModel
+                    )
                     newAlias = ""
+                    providerName = ""
+                    baseURLText = ""
+                    apiKey = ""
+                    defaultModel = "gpt-5"
                     withAnimation(.easeInOut(duration: 0.18)) {
                         isShowingSaveAccount = false
                     }
                 } label: {
                     Label(state.strings.save, systemImage: "key")
                 }
-                .help(state.strings.saveCurrentCodexAuth)
+                .disabled(baseURLText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || apiKey.isEmpty)
             }
 
             if let accountSaveStatus = state.accountSaveStatus {
@@ -152,13 +197,19 @@ struct AccountListView: View {
             VStack(alignment: .leading, spacing: 8) {
                 accountHeader(for: account)
 
-                Text(membershipExpirationText(for: account))
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
+                if account.isAPIProvider {
+                    apiProviderDetails(for: account)
+                } else {
+                    Text(membershipExpirationText(for: account))
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
             }
 
-            quotaProgressRows(for: account)
+            if !account.isAPIProvider {
+                quotaProgressRows(for: account)
+            }
 
             HStack(alignment: .center, spacing: 12) {
                 Toggle(state.strings.enabled, isOn: Binding(
@@ -237,7 +288,7 @@ struct AccountListView: View {
             }
 
             Button {
-                accountToSwitch = account
+                switchConfirmation = SwitchConfirmation(account: account)
             } label: {
                 Label(state.strings.switchAccount, systemImage: "arrow.triangle.2.circlepath")
             }
@@ -319,8 +370,23 @@ struct AccountListView: View {
         .help("\(title): \(percentText) · \(resetText)")
     }
 
+    private func apiProviderDetails(for account: CodixxAccount) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(account.apiProvider?.providerName ?? state.strings.apiKeyAccount)
+            Text(account.apiProvider?.baseURL.absoluteString ?? "")
+                .lineLimit(1)
+                .truncationMode(.middle)
+            if let model = account.apiProvider?.defaultModel, !model.isEmpty {
+                Text(model)
+            }
+        }
+        .font(.caption)
+        .foregroundStyle(.secondary)
+    }
+
     private func planLabel(for account: CodixxAccount) -> String {
-        account.quota.planType?.isEmpty == false ? account.quota.planType! : state.strings.unknownPlan
+        if account.isAPIProvider { return state.strings.apiKeyAccount }
+        return account.quota.planType?.isEmpty == false ? account.quota.planType! : state.strings.unknownPlan
     }
 
     private func membershipExpirationText(for account: CodixxAccount) -> String {
@@ -353,5 +419,13 @@ struct AccountListView: View {
         case .failure:
             return .orange
         }
+    }
+}
+
+private struct SwitchConfirmation: Identifiable {
+    var account: CodixxAccount
+
+    var id: UUID {
+        account.id
     }
 }

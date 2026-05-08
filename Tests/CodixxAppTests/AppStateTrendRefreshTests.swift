@@ -4,6 +4,24 @@ import CodixxCore
 
 @MainActor
 final class AppStateTrendRefreshTests: XCTestCase {
+    func testAppStateCanSaveAPIProviderAccount() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let apiKeyVault = InMemoryAPIKeyVault()
+        let state = AppState(paths: CodixxPaths(home: directory), vault: InMemoryVault(), apiKeyVault: apiKeyVault)
+
+        state.saveAPIProviderAccount(
+            alias: "Relay",
+            providerName: "Relay",
+            baseURLText: "https://relay.example.com/v1",
+            apiKey: "sk-test-123",
+            defaultModel: "gpt-5"
+        )
+
+        XCTAssertEqual(state.accounts.first?.credentialKind, .apiProvider)
+        XCTAssertEqual(state.accounts.first?.apiProvider?.baseURL.absoluteString, "https://relay.example.com/v1")
+    }
+
     func testMenuOpenRefreshAppliesLatestQuotaObservationWithoutFullUsageRefresh() async throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
         defer { try? FileManager.default.removeItem(at: directory) }
@@ -74,6 +92,60 @@ final class AppStateTrendRefreshTests: XCTestCase {
         XCTAssertFalse(state.isLoadingFullUsageSnapshot)
     }
 
+    func testAccountUsageWindowsAttributeHistoryBeforeFirstSwitchToSourceAccount() throws {
+        let accountA = UUID()
+        let accountB = UUID()
+        let accountCreatedAt = Date(timeIntervalSince1970: 1_777_000_000)
+        let firstSwitchAt = Date(timeIntervalSince1970: 1_778_000_000)
+        let account = CodixxAccount(
+            id: accountA,
+            alias: "A",
+            fingerprint: "fingerprint-a",
+            createdAt: accountCreatedAt,
+            updatedAt: accountCreatedAt,
+            lastUsedAt: nil,
+            quota: .unknown(accountId: accountA.uuidString, alias: "A"),
+            isEnabled: true,
+            priority: 0
+        )
+        let target = CodixxAccount(
+            id: accountB,
+            alias: "B",
+            fingerprint: "fingerprint-b",
+            createdAt: accountCreatedAt,
+            updatedAt: accountCreatedAt,
+            lastUsedAt: nil,
+            quota: .unknown(accountId: accountB.uuidString, alias: "B"),
+            isEnabled: true,
+            priority: 1
+        )
+        let switchEvent = SwitchAuditEvent(
+            timestamp: firstSwitchAt,
+            trigger: .manual,
+            sourceAccountId: accountA,
+            sourceAlias: "A",
+            targetAccountId: accountB,
+            targetAlias: "B",
+            sourcePrimaryUsedPercent: nil,
+            sourceSecondaryUsedPercent: nil,
+            threshold: nil,
+            result: .success,
+            errorSummary: nil,
+            backupPath: nil
+        )
+
+        let windows = AppState.accountUsageWindows(
+            accounts: [account, target],
+            switchEvents: [switchEvent]
+        )
+
+        XCTAssertTrue(windows.contains {
+            $0.accountId == accountA
+                && $0.start == .distantPast
+                && $0.end == firstSwitchAt
+        })
+    }
+
     private func waitUntil(
         timeout: TimeInterval = 2,
         predicate: @escaping @MainActor @Sendable () -> Bool
@@ -99,4 +171,23 @@ private final class InMemoryVault: AuthSnapshotVault {
 
 private enum InMemoryVaultError: Error {
     case missingSnapshot
+}
+
+private final class InMemoryAPIKeyVault: APIKeyVault {
+    var keys: [String: String] = [:]
+
+    func save(apiKey: String, fingerprint: String) throws {
+        keys[fingerprint] = apiKey
+    }
+
+    func load(fingerprint: String) throws -> String {
+        guard let key = keys[fingerprint] else {
+            throw InMemoryVaultError.missingSnapshot
+        }
+        return key
+    }
+
+    func delete(fingerprint: String) throws {
+        keys.removeValue(forKey: fingerprint)
+    }
 }
