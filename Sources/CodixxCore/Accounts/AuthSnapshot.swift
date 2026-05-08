@@ -20,6 +20,15 @@ public struct AuthSnapshot: Equatable, Sendable {
         return object["tokens"]?.dictionaryValue?[key]?.stringValue
     }
 
+    public static func apiKey(_ apiKey: String) throws -> AuthSnapshot {
+        let object: [String: String] = [
+            "auth_mode": "apikey",
+            "OPENAI_API_KEY": apiKey
+        ]
+        let data = try JSONSerialization.data(withJSONObject: object, options: [.prettyPrinted, .sortedKeys])
+        return try AuthSnapshot(jsonData: data)
+    }
+
     public var accessTokenExpiresAt: Date? {
         guard let accessToken = stringValue(for: "access_token") else { return nil }
         return Self.jwtExpirationDate(accessToken)
