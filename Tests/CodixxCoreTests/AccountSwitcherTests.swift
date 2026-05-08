@@ -213,6 +213,28 @@ final class AccountSwitcherTests: XCTestCase {
         XCTAssertFalse(backupFiles.contains { $0.lastPathComponent.contains("1970-01-01T02-46-40Z") })
     }
 
+    func testProtectedPathSnapshotIgnoresGrowthButRejectsRemovalAndShrink() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let paths = CodixxPaths(home: directory)
+        try FileManager.default.createDirectory(
+            at: paths.codexHome.appendingPathComponent("sessions", isDirectory: true),
+            withIntermediateDirectories: true
+        )
+        let stateDB = paths.codexHome.appendingPathComponent("state_5.sqlite")
+        try Data(repeating: 1, count: 100).write(to: stateDB)
+        let before = try ProtectedPathSnapshot.capture(paths: paths)
+
+        try Data(repeating: 1, count: 120).write(to: stateDB)
+        XCTAssertEqual(try before.abnormalChanges(comparedTo: .capture(paths: paths)), [])
+
+        try Data(repeating: 1, count: 10).write(to: stateDB)
+        XCTAssertTrue(try before.abnormalChanges(comparedTo: .capture(paths: paths)).contains(.sharpFileShrink(stateDB.path)))
+
+        try FileManager.default.removeItem(at: stateDB)
+        XCTAssertTrue(try before.abnormalChanges(comparedTo: .capture(paths: paths)).contains(.removed(stateDB.path)))
+    }
+
     private static func jwt(expiration: Int) -> String {
         [
             base64URL(["alg": "none"]),
