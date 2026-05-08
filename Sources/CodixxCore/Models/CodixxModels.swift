@@ -214,7 +214,7 @@ public struct CodixxAccount: Codable, Identifiable, Equatable, Sendable {
         primaryThresholdPercent: Double = 93.0,
         secondaryThresholdPercent: Double = 90.0
     ) -> Bool {
-        guard isEnabled, hasSnapshot else { return false }
+        guard isChatGPT, isEnabled, hasSnapshot else { return false }
         let primaryOK = quota.primaryUsedPercent.map { $0 < primaryThresholdPercent } ?? true
         let secondaryOK = quota.secondaryUsedPercent.map { $0 < secondaryThresholdPercent } ?? true
         return primaryOK && secondaryOK
