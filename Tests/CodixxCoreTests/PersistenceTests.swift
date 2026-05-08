@@ -198,6 +198,55 @@ final class PersistenceTests: XCTestCase {
         XCTAssertEqual(try store.load().accounts, [account])
     }
 
+    func testProviderConfigStoreWritesManagedProviderWithoutDroppingExistingConfig() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let paths = CodixxPaths(home: directory)
+        try FileManager.default.createDirectory(at: paths.codexHome, withIntermediateDirectories: true)
+        try """
+        model = "gpt-5.5"
+
+        [projects."/tmp/example"]
+        trust_level = "trusted"
+        """.write(to: paths.configTOML, atomically: true, encoding: .utf8)
+        let store = CodexProviderConfigStore(paths: paths)
+
+        try store.writeAPIProvider(
+            providerID: "codixx-relay",
+            providerName: "Relay",
+            baseURL: URL(string: "https://relay.example.com/v1")!,
+            defaultModel: "gpt-5"
+        )
+
+        let text = try String(contentsOf: paths.configTOML)
+        XCTAssertTrue(text.contains("model_provider = \"codixx-relay\""))
+        XCTAssertTrue(text.contains("model = \"gpt-5\""))
+        XCTAssertTrue(text.contains("[model_providers.codixx-relay]"))
+        XCTAssertTrue(text.contains("base_url = \"https://relay.example.com/v1\""))
+        XCTAssertTrue(text.contains("wire_api = \"responses\""))
+        XCTAssertTrue(text.contains("[projects.\"/tmp/example\"]"))
+    }
+
+    func testProviderConfigStoreRestoresBackup() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let paths = CodixxPaths(home: directory)
+        try FileManager.default.createDirectory(at: paths.codexHome, withIntermediateDirectories: true)
+        try "model = \"gpt-5.5\"\n".write(to: paths.configTOML, atomically: true, encoding: .utf8)
+        let store = CodexProviderConfigStore(paths: paths)
+
+        let backup = try store.backupConfig()
+        try store.writeAPIProvider(
+            providerID: "codixx-relay",
+            providerName: "Relay",
+            baseURL: URL(string: "https://relay.example.com/v1")!,
+            defaultModel: "gpt-5"
+        )
+        try store.restoreConfig(from: backup)
+
+        XCTAssertEqual(try String(contentsOf: paths.configTOML), "model = \"gpt-5.5\"\n")
+    }
+
     func testSwitchAuditLogPrunesEventsOlderThanNinetyDays() throws {
         let tempHome = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
         defer { try? FileManager.default.removeItem(at: tempHome) }
