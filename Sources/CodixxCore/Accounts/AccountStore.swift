@@ -39,6 +39,7 @@ public struct AccountStore {
     public let paths: CodixxPaths
     public let metadataStore: AccountMetadataStore
     private let vault: AuthSnapshotVault
+    private let apiKeyVault: APIKeyVault
     private let now: () -> Date
     private let idGenerator: () -> UUID
 
@@ -46,12 +47,14 @@ public struct AccountStore {
         paths: CodixxPaths = CodixxPaths(),
         metadataStore: AccountMetadataStore? = nil,
         vault: AuthSnapshotVault,
+        apiKeyVault: APIKeyVault = KeychainAPIKeyVault(),
         now: @escaping () -> Date = Date.init,
         idGenerator: @escaping () -> UUID = UUID.init
     ) {
         self.paths = paths
         self.metadataStore = metadataStore ?? AccountMetadataStore(paths: paths)
         self.vault = vault
+        self.apiKeyVault = apiKeyVault
         self.now = now
         self.idGenerator = idGenerator
     }
@@ -99,6 +102,61 @@ public struct AccountStore {
         return account
     }
 
+    public func saveAPIProvider(
+        alias: String,
+        providerName: String,
+        baseURL: URL,
+        apiKey: String,
+        defaultModel: String?
+    ) throws -> CodixxAccount {
+        let timestamp = now()
+        let trimmedAlias = alias.trimmingCharacters(in: .whitespacesAndNewlines)
+        let savedAlias = trimmedAlias.isEmpty ? providerName : trimmedAlias
+        let keyFingerprint = APIKeyFingerprint.generate(apiKey: apiKey)
+        let accountFingerprint = "api-provider:\(keyFingerprint)"
+        var metadata = try metadataStore.load()
+
+        try apiKeyVault.save(apiKey: apiKey, fingerprint: keyFingerprint)
+
+        if let index = metadata.accounts.firstIndex(where: { $0.fingerprint == accountFingerprint }) {
+            metadata.accounts[index].alias = savedAlias
+            metadata.accounts[index].updatedAt = timestamp
+            metadata.accounts[index].lastUsedAt = timestamp
+            metadata.accounts[index].apiProvider = APIProviderAccount(
+                providerName: providerName,
+                baseURL: baseURL,
+                defaultModel: defaultModel,
+                keyFingerprint: keyFingerprint
+            )
+            metadata.accounts[index].quota.alias = savedAlias
+            try metadataStore.save(metadata)
+            return metadata.accounts[index]
+        }
+
+        let id = idGenerator()
+        let account = CodixxAccount(
+            id: id,
+            alias: savedAlias,
+            fingerprint: accountFingerprint,
+            credentialKind: .apiProvider,
+            apiProvider: APIProviderAccount(
+                providerName: providerName,
+                baseURL: baseURL,
+                defaultModel: defaultModel,
+                keyFingerprint: keyFingerprint
+            ),
+            createdAt: timestamp,
+            updatedAt: timestamp,
+            lastUsedAt: timestamp,
+            quota: .unknown(accountId: id.uuidString, alias: savedAlias),
+            isEnabled: true,
+            priority: metadata.accounts.count
+        )
+        metadata.accounts.append(account)
+        try metadataStore.save(metadata)
+        return account
+    }
+
     public func renameAccount(_ id: UUID, alias: String) throws -> CodixxAccount {
         var metadata = try metadataStore.load()
         guard let index = metadata.accounts.firstIndex(where: { $0.id == id }) else {
@@ -120,7 +178,11 @@ public struct AccountStore {
         }
 
         let account = metadata.accounts.remove(at: index)
-        try vault.delete(fingerprint: account.fingerprint)
+        if let apiProvider = account.apiProvider {
+            try apiKeyVault.delete(fingerprint: apiProvider.keyFingerprint)
+        } else {
+            try vault.delete(fingerprint: account.fingerprint)
+        }
         try metadataStore.save(metadata)
     }
 }
