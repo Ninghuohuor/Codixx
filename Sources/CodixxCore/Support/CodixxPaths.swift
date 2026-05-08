@@ -4,6 +4,7 @@ public struct CodixxPaths: Sendable {
     public var home: URL
     public var codexHome: URL
     public var authJSON: URL
+    public var configTOML: URL
     public var applicationSupport: URL
     public var backups: URL
     public var logs: URL
@@ -17,6 +18,7 @@ public struct CodixxPaths: Sendable {
         self.home = home
         self.codexHome = home.appendingPathComponent(".codex", isDirectory: true)
         self.authJSON = codexHome.appendingPathComponent("auth.json")
+        self.configTOML = codexHome.appendingPathComponent("config.toml")
         self.applicationSupport = home.appendingPathComponent("Library/Application Support/Codixx", isDirectory: true)
         self.backups = applicationSupport.appendingPathComponent("backups", isDirectory: true)
         self.logs = applicationSupport.appendingPathComponent("logs", isDirectory: true)
