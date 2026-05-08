@@ -39,6 +39,53 @@ final class AccountSwitcherTests: XCTestCase {
         XCTAssertEqual(auditEvents.first?.targetAlias, "Backup")
     }
 
+    func testSwitchToAPIProviderWritesAPIAuthAndProviderConfigWithoutTouchingHistory() throws {
+        let fixture = try SwitchFixture()
+        defer { fixture.cleanup() }
+        let apiKeyVault = InMemorySwitchAPIKeyVault()
+        let apiAccountId = UUID()
+        let apiKeyFingerprint = APIKeyFingerprint.generate(apiKey: "sk-test-123")
+        try apiKeyVault.save(apiKey: "sk-test-123", fingerprint: apiKeyFingerprint)
+        let apiAccount = CodixxAccount(
+            id: apiAccountId,
+            alias: "Relay",
+            fingerprint: "api-provider:\(apiKeyFingerprint)",
+            credentialKind: .apiProvider,
+            apiProvider: APIProviderAccount(
+                providerName: "Relay",
+                baseURL: URL(string: "https://relay.example.com/v1")!,
+                defaultModel: "gpt-5",
+                keyFingerprint: apiKeyFingerprint
+            ),
+            createdAt: fixture.now,
+            updatedAt: fixture.now,
+            lastUsedAt: nil,
+            quota: .unknown(accountId: apiAccountId.uuidString, alias: "Relay"),
+            isEnabled: true,
+            priority: 2
+        )
+        var metadata = try fixture.metadataStore.load()
+        metadata.accounts.append(apiAccount)
+        try fixture.metadataStore.save(metadata)
+        try FileManager.default.createDirectory(
+            at: fixture.paths.codexHome.appendingPathComponent("sessions", isDirectory: true),
+            withIntermediateDirectories: true
+        )
+        try Data(repeating: 1, count: 100).write(to: fixture.paths.codexHome.appendingPathComponent("state_5.sqlite"))
+
+        let switcher = fixture.switcher(apiKeyVault: apiKeyVault)
+
+        _ = try switcher.switchToAccount(apiAccountId, trigger: .manual)
+
+        let written = try AuthSnapshot(jsonData: Data(contentsOf: fixture.paths.authJSON))
+        XCTAssertEqual(written.stringValue(for: "auth_mode"), "apikey")
+        XCTAssertEqual(written.stringValue(for: "OPENAI_API_KEY"), "sk-test-123")
+        let config = try String(contentsOf: fixture.paths.configTOML)
+        XCTAssertTrue(config.contains("base_url = \"https://relay.example.com/v1\""))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: fixture.paths.codexHome.appendingPathComponent("sessions", isDirectory: true).path))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: fixture.paths.codexHome.appendingPathComponent("state_5.sqlite").path))
+    }
+
     func testSwitchRefreshesSourceSnapshotBeforeWritingTarget() throws {
         let fixture = try SwitchFixture()
         defer { fixture.cleanup() }
@@ -49,6 +96,30 @@ final class AccountSwitcherTests: XCTestCase {
         _ = try switcher.switchToAccount(fixture.target.id, trigger: .manual)
 
         XCTAssertEqual(fixture.vault.snapshots[fixture.source.fingerprint]?.jsonData, updatedSourceAuth.jsonData)
+    }
+
+    func testSwitchSucceedsWhenCodexIsLoggedOutAndAuthFileIsMissing() throws {
+        let fixture = try SwitchFixture()
+        defer { fixture.cleanup() }
+        try FileManager.default.removeItem(at: fixture.paths.authJSON)
+        let switcher = fixture.switcher()
+
+        let result = try switcher.switchToAccount(fixture.target.id, trigger: .manual)
+
+        let writtenAuth = try Data(contentsOf: fixture.paths.authJSON)
+        let backupFiles = try FileManager.default.contentsOfDirectory(atPath: fixture.paths.backups.path)
+        let auditEvents = try fixture.auditLog.loadEvents()
+
+        guard case .success(let switchedAccount) = result else {
+            XCTFail("Expected switch to succeed from logged-out Codex state")
+            return
+        }
+        XCTAssertEqual(switchedAccount.id, fixture.target.id)
+        XCTAssertEqual(writtenAuth, fixture.targetAuth.jsonData)
+        XCTAssertEqual(backupFiles, [])
+        XCTAssertEqual(auditEvents.map(\.result), [.success])
+        XCTAssertNil(auditEvents.first?.sourceAccountId)
+        XCTAssertNil(auditEvents.first?.backupPath)
     }
 
     func testSwitchRejectsExpiredTargetAccessTokenBeforeWritingAuth() throws {
@@ -101,6 +172,20 @@ final class AccountSwitcherTests: XCTestCase {
         XCTAssertEqual(result, .rolledBack)
         XCTAssertEqual(writtenAuth, fixture.sourceAuth.jsonData)
         XCTAssertEqual(auditEvents.map(\.result), [.failedValidation, .rolledBack])
+    }
+
+    func testValidationFailureWithoutExistingAuthReturnsToLoggedOutState() throws {
+        let fixture = try SwitchFixture()
+        defer { fixture.cleanup() }
+        try FileManager.default.removeItem(at: fixture.paths.authJSON)
+        let switcher = fixture.switcher(fingerprintGenerator: { _ in "wrong-fingerprint" })
+
+        let result = try switcher.switchToAccount(fixture.target.id, trigger: .manual)
+
+        let auditEvents = try fixture.auditLog.loadEvents()
+        XCTAssertEqual(result, .rolledBack)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: fixture.paths.authJSON.path))
+        XCTAssertEqual(auditEvents.map(\.result), [.failedValidation])
     }
 
     func testValidationThrowRollsBackAndWritesAuditEvents() throws {
@@ -288,6 +373,7 @@ private final class SwitchFixture {
 
     func switcher(
         fingerprintGenerator: @escaping (AuthSnapshot) throws -> String = AccountFingerprint.generate(from:),
+        apiKeyVault: APIKeyVault = InMemorySwitchAPIKeyVault(),
         writer: AtomicAuthFileWriting = AtomicFileWriter(),
         diskSpaceChecker: DiskSpaceChecking = FileManagerDiskSpaceChecker()
     ) -> AccountSwitcher {
@@ -299,6 +385,7 @@ private final class SwitchFixture {
             auditLog: auditLog,
             now: { self.now },
             fingerprintGenerator: fingerprintGenerator,
+            apiKeyVault: apiKeyVault,
             writer: writer,
             diskSpaceChecker: diskSpaceChecker
         )
@@ -369,5 +456,24 @@ private final class InMemorySwitchVault: AuthSnapshotVault {
 
     func delete(fingerprint: String) throws {
         snapshots.removeValue(forKey: fingerprint)
+    }
+}
+
+private final class InMemorySwitchAPIKeyVault: APIKeyVault {
+    var keys: [String: String] = [:]
+
+    func save(apiKey: String, fingerprint: String) throws {
+        keys[fingerprint] = apiKey
+    }
+
+    func load(fingerprint: String) throws -> String {
+        guard let key = keys[fingerprint] else {
+            throw AccountStoreError.snapshotNotFound(fingerprint)
+        }
+        return key
+    }
+
+    func delete(fingerprint: String) throws {
+        keys.removeValue(forKey: fingerprint)
     }
 }

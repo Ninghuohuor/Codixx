@@ -10,6 +10,7 @@ public enum AccountSwitchError: Error, Equatable, LocalizedError, Sendable {
     case insufficientDiskSpace(minimumBytes: Int64)
     case expiredAuthSnapshot(alias: String)
     case couldNotRefreshSourceSnapshot(String)
+    case protectedPathChanged(String)
 
     public var errorDescription: String? {
         switch self {
@@ -21,6 +22,8 @@ public enum AccountSwitchError: Error, Equatable, LocalizedError, Sendable {
             return "Saved auth for \(alias) is expired. Log out and sign in to this account in Codex, then save the account again in Codixx."
         case .couldNotRefreshSourceSnapshot(let message):
             return "Could not refresh the current account snapshot before switching. \(message)"
+        case .protectedPathChanged(let message):
+            return "Codex history files changed unexpectedly during account switching. \(message)"
         }
     }
 }
@@ -54,6 +57,8 @@ public struct AccountSwitcher {
     private let auditLog: SwitchAuditLog
     private let now: () -> Date
     private let fingerprintGenerator: (AuthSnapshot) throws -> String
+    private let apiKeyVault: APIKeyVault
+    private let providerConfigStore: CodexProviderConfigStore
     private let writer: AtomicAuthFileWriting
     private let diskSpaceChecker: DiskSpaceChecking
 
@@ -65,6 +70,8 @@ public struct AccountSwitcher {
         auditLog: SwitchAuditLog,
         now: @escaping () -> Date = Date.init,
         fingerprintGenerator: @escaping (AuthSnapshot) throws -> String = AccountFingerprint.generate(from:),
+        apiKeyVault: APIKeyVault = KeychainAPIKeyVault(),
+        providerConfigStore: CodexProviderConfigStore? = nil,
         writer: AtomicAuthFileWriting = AtomicFileWriter(),
         diskSpaceChecker: DiskSpaceChecking = FileManagerDiskSpaceChecker()
     ) {
@@ -75,6 +82,8 @@ public struct AccountSwitcher {
         self.auditLog = auditLog
         self.now = now
         self.fingerprintGenerator = fingerprintGenerator
+        self.apiKeyVault = apiKeyVault
+        self.providerConfigStore = providerConfigStore ?? CodexProviderConfigStore(paths: paths)
         self.writer = writer
         self.diskSpaceChecker = diskSpaceChecker
     }
@@ -118,9 +127,19 @@ public struct AccountSwitcher {
             throw error
         }
 
-        let backupURL: URL
+        if target.isAPIProvider {
+            return try performAPIProviderSwitch(
+                target: target,
+                source: source,
+                trigger: trigger,
+                metadata: &metadata,
+                targetIndex: targetIndex
+            )
+        }
+
+        let backupURL: URL?
         do {
-            backupURL = try backupManager.backupCurrentAuth(alias: source?.alias ?? "unknown")
+            backupURL = try backupCurrentAuthIfPresent(alias: source?.alias ?? "unknown")
         } catch {
             try auditLog.append(event(
                 trigger: trigger,
@@ -172,7 +191,13 @@ public struct AccountSwitcher {
                 error: error,
                 backupURL: backupURL
             ))
-            try restoreAfterFailure(trigger: .recovery, source: target, target: source, backupURL: backupURL)
+            try restoreAfterFailureIfPossible(
+                trigger: .recovery,
+                source: target,
+                target: source,
+                backupURL: backupURL,
+                removeAuthWhenMissingBackup: true
+            )
             throw error
         }
 
@@ -189,7 +214,13 @@ public struct AccountSwitcher {
                 error: error,
                 backupURL: backupURL
             ))
-            try restoreAfterFailure(trigger: .recovery, source: target, target: source, backupURL: backupURL)
+            try restoreAfterFailureIfPossible(
+                trigger: .recovery,
+                source: target,
+                target: source,
+                backupURL: backupURL,
+                removeAuthWhenMissingBackup: true
+            )
             return .rolledBack
         }
         guard writtenFingerprint == target.fingerprint else {
@@ -201,7 +232,13 @@ public struct AccountSwitcher {
                 error: nil,
                 backupURL: backupURL
             ))
-            try restoreAfterFailure(trigger: .recovery, source: target, target: source, backupURL: backupURL)
+            try restoreAfterFailureIfPossible(
+                trigger: .recovery,
+                source: target,
+                target: source,
+                backupURL: backupURL,
+                removeAuthWhenMissingBackup: true
+            )
             return .rolledBack
         }
 
@@ -219,8 +256,107 @@ public struct AccountSwitcher {
         return .success(target: metadata.accounts[targetIndex])
     }
 
+    private func performAPIProviderSwitch(
+        target: CodixxAccount,
+        source: CodixxAccount?,
+        trigger: SwitchTrigger,
+        metadata: inout AccountMetadataList,
+        targetIndex: Int
+    ) throws -> AccountSwitchResult {
+        guard let apiProvider = target.apiProvider else {
+            let error = AccountStoreError.snapshotNotFound(target.fingerprint)
+            try auditLog.append(event(
+                trigger: trigger,
+                source: source,
+                target: target,
+                result: .failedBeforeWrite,
+                error: error,
+                backupURL: nil
+            ))
+            throw error
+        }
+
+        let protectedBefore = try ProtectedPathSnapshot.capture(paths: paths)
+        let authBackupURL: URL?
+        do {
+            authBackupURL = try backupCurrentAuthIfPresent(alias: source?.alias ?? "unknown")
+        } catch {
+            try auditLog.append(event(
+                trigger: trigger,
+                source: source,
+                target: target,
+                result: .failedBeforeWrite,
+                error: error,
+                backupURL: nil
+            ))
+            throw error
+        }
+        let configBackup = try providerConfigStore.backupConfig()
+
+        do {
+            let apiKey = try apiKeyVault.load(fingerprint: apiProvider.keyFingerprint)
+            let apiSnapshot = try AuthSnapshot.apiKey(apiKey)
+            try writer.write(apiSnapshot.jsonData, to: paths.authJSON, fileManager: .default)
+            try providerConfigStore.writeAPIProvider(
+                providerID: providerID(for: target),
+                providerName: apiProvider.providerName,
+                baseURL: apiProvider.baseURL,
+                defaultModel: apiProvider.defaultModel
+            )
+
+            let protectedAfter = try ProtectedPathSnapshot.capture(paths: paths)
+            let changes = protectedBefore.abnormalChanges(comparedTo: protectedAfter)
+            guard changes.isEmpty else {
+                throw AccountSwitchError.protectedPathChanged(changes.map { String(describing: $0) }.joined(separator: ", "))
+            }
+
+            metadata.accounts[targetIndex].lastUsedAt = now()
+            metadata.accounts[targetIndex].updatedAt = now()
+            try metadataStore.save(metadata)
+            try auditLog.append(event(
+                trigger: trigger,
+                source: source,
+                target: target,
+                result: .success,
+                error: nil,
+                backupURL: authBackupURL
+            ))
+            return .success(target: metadata.accounts[targetIndex])
+        } catch {
+            try? providerConfigStore.restoreConfig(from: configBackup)
+            try auditLog.append(event(
+                trigger: trigger,
+                source: source,
+                target: target,
+                result: .failedDuringWrite,
+                error: error,
+                backupURL: authBackupURL
+            ))
+            try restoreAfterFailureIfPossible(
+                trigger: .recovery,
+                source: target,
+                target: source,
+                backupURL: authBackupURL,
+                removeAuthWhenMissingBackup: true
+            )
+            throw error
+        }
+    }
+
+    private func providerID(for account: CodixxAccount) -> String {
+        "codixx-\(account.id.uuidString.lowercased())"
+    }
+
+    private func backupCurrentAuthIfPresent(alias: String) throws -> URL? {
+        guard FileManager.default.fileExists(atPath: paths.authJSON.path) else {
+            return nil
+        }
+        return try backupManager.backupCurrentAuth(alias: alias)
+    }
+
     private func refreshSourceSnapshotIfCurrentAuthMatches(_ source: CodixxAccount?) throws {
         guard let source,
+              source.isChatGPT,
               let authData = try? Data(contentsOf: paths.authJSON),
               let snapshot = try? AuthSnapshot(jsonData: authData),
               (try? fingerprintGenerator(snapshot)) == source.fingerprint
@@ -264,6 +400,22 @@ public struct AccountSwitcher {
         }
     }
 
+    private func restoreAfterFailureIfPossible(
+        trigger: SwitchTrigger,
+        source: CodixxAccount?,
+        target: CodixxAccount?,
+        backupURL: URL?,
+        removeAuthWhenMissingBackup: Bool = false
+    ) throws {
+        guard let backupURL else {
+            if removeAuthWhenMissingBackup {
+                try? FileManager.default.removeItem(at: paths.authJSON)
+            }
+            return
+        }
+        try restoreAfterFailure(trigger: trigger, source: source, target: target, backupURL: backupURL)
+    }
+
     private func currentAccount(in metadata: AccountMetadataList) -> CodixxAccount? {
         guard let data = try? Data(contentsOf: paths.authJSON),
               let snapshot = try? AuthSnapshot(jsonData: data),
@@ -271,7 +423,9 @@ public struct AccountSwitcher {
         else {
             return nil
         }
-        return metadata.accounts.first { $0.fingerprint == fingerprint }
+        return metadata.accounts.first { account in
+            account.fingerprint == fingerprint || account.apiProvider?.keyFingerprint == fingerprint
+        }
     }
 
     private func event(
