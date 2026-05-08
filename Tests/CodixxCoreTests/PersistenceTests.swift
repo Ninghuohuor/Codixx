@@ -247,6 +247,37 @@ final class PersistenceTests: XCTestCase {
         XCTAssertEqual(try String(contentsOf: paths.configTOML), "model = \"gpt-5.5\"\n")
     }
 
+    func testProviderConfigStoreClearsManagedProviderForChatGPTSwitch() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let paths = CodixxPaths(home: directory)
+        try FileManager.default.createDirectory(at: paths.codexHome, withIntermediateDirectories: true)
+        try """
+        model = "gpt-5"
+        model_provider = "codixx-relay"
+
+        # BEGIN CODIXX API PROVIDER
+        [model_providers.codixx-relay]
+        name = "Relay"
+        base_url = "https://relay.example.com/v1"
+        wire_api = "responses"
+        # END CODIXX API PROVIDER
+
+        [projects."/tmp/example"]
+        trust_level = "trusted"
+        """.write(to: paths.configTOML, atomically: true, encoding: .utf8)
+        let store = CodexProviderConfigStore(paths: paths)
+
+        try store.clearManagedAPIProvider()
+
+        let text = try String(contentsOf: paths.configTOML)
+        XCTAssertFalse(text.contains("model_provider = \"codixx-relay\""))
+        XCTAssertFalse(text.contains("BEGIN CODIXX API PROVIDER"))
+        XCTAssertFalse(text.contains("[model_providers.codixx-relay]"))
+        XCTAssertTrue(text.contains("model = \"gpt-5\""))
+        XCTAssertTrue(text.contains("[projects.\"/tmp/example\"]"))
+    }
+
     func testSwitchAuditLogPrunesEventsOlderThanNinetyDays() throws {
         let tempHome = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
         defer { try? FileManager.default.removeItem(at: tempHome) }

@@ -71,6 +71,17 @@ public struct CodexProviderConfigStore {
         try config.write(to: paths.configTOML, atomically: true, encoding: .utf8)
     }
 
+    public func clearManagedAPIProvider() throws {
+        guard fileManager.fileExists(atPath: paths.configTOML.path) else { return }
+        let existing = try String(contentsOf: paths.configTOML, encoding: .utf8)
+        let withoutManagedBlock = removeManagedBlock(from: existing)
+        let withoutManagedRootProvider = removeManagedRootModelProvider(from: withoutManagedBlock)
+        try withoutManagedRootProvider
+            .trimmingCharacters(in: .newlines)
+            .appending("\n")
+            .write(to: paths.configTOML, atomically: true, encoding: .utf8)
+    }
+
     private func removeManagedBlock(from text: String) -> String {
         guard let start = text.range(of: "# BEGIN CODIXX API PROVIDER"),
               let end = text.range(of: "# END CODIXX API PROVIDER", range: start.upperBound..<text.endIndex)
@@ -81,6 +92,21 @@ public struct CodexProviderConfigStore {
         var updated = text
         updated.removeSubrange(start.lowerBound..<end.upperBound)
         return updated
+    }
+
+    private func removeManagedRootModelProvider(from text: String) -> String {
+        let lines = text
+            .split(separator: "\n", omittingEmptySubsequences: false)
+            .map(String.init)
+        let firstTableIndex = lines.firstIndex { line in
+            line.trimmingCharacters(in: .whitespaces).hasPrefix("[")
+        } ?? lines.endIndex
+        let rootLines = Array(lines[..<firstTableIndex]).filter { line in
+            let trimmed = line.trimmingCharacters(in: .whitespaces)
+            guard trimmed.hasPrefix("model_provider =") else { return true }
+            return !trimmed.contains("\"codixx-")
+        }
+        return (rootLines + Array(lines[firstTableIndex...])).joined(separator: "\n")
     }
 
     private func upsertRootKeys(in text: String, keys: [String: String]) -> String {

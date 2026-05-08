@@ -181,6 +181,7 @@ public struct AccountSwitcher {
         }
 
         do {
+            try providerConfigStore.clearManagedAPIProvider()
             try writer.write(targetSnapshot.jsonData, to: paths.authJSON, fileManager: .default)
         } catch {
             try auditLog.append(event(

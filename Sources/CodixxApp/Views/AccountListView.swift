@@ -98,27 +98,21 @@ struct AccountListView: View {
                 Text(state.strings.confirmDeleteMessage(alias: account.alias))
             }
         }
-        .alert(
-            switchConfirmation.map { state.strings.confirmSwitchTitle(alias: $0.account.alias) } ?? "",
-            isPresented: Binding(
-                get: { switchConfirmation != nil },
-                set: { if !$0 { switchConfirmation = nil } }
-            )
-        ) {
-            Button(state.strings.cancel, role: .cancel) {
-                switchConfirmation = nil
-            }
-            Button(state.strings.switchAndRestartCodex) {
-                if let account = switchConfirmation?.account {
-                    switchConfirmation = nil
-                    state.switchToAccountAndRestartCodex(account)
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-                        NSApplication.shared.keyWindow?.close()
+        .alert(item: $switchConfirmation) { confirmation in
+            Alert(
+                title: Text(state.strings.confirmSwitchTitle(alias: confirmation.account.alias)),
+                message: Text(state.strings.confirmSwitchMessage),
+                primaryButton: .default(Text(state.strings.switchAndRestartCodex)) {
+                    let account = confirmation.account
+                    DispatchQueue.main.async {
+                        state.switchToAccountAndRestartCodex(account)
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                            NSApplication.shared.keyWindow?.close()
+                        }
                     }
-                }
-            }
-        } message: {
-            Text(state.strings.confirmSwitchMessage)
+                },
+                secondaryButton: .cancel(Text(state.strings.cancel))
+            )
         }
     }
 
