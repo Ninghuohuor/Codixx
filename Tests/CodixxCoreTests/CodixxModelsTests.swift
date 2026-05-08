@@ -27,6 +27,36 @@ final class CodixxModelsTests: XCTestCase {
         XCTAssertFalse(account.isEligibleForSwitch(hasSnapshot: false))
     }
 
+    func testAPIProviderAccountStoresNonSecretMetadata() {
+        let id = UUID()
+        let account = CodixxAccount(
+            id: id,
+            alias: "Relay",
+            fingerprint: "api:abc123",
+            credentialKind: .apiProvider,
+            apiProvider: APIProviderAccount(
+                providerName: "Relay",
+                baseURL: URL(string: "https://relay.example.com/v1")!,
+                defaultModel: "gpt-5",
+                keyFingerprint: "api-key:abc123"
+            ),
+            createdAt: Date(timeIntervalSince1970: 1),
+            updatedAt: Date(timeIntervalSince1970: 2),
+            lastUsedAt: nil,
+            quota: .unknown(accountId: id.uuidString, alias: "Relay"),
+            isEnabled: true,
+            priority: 0
+        )
+
+        XCTAssertEqual(account.credentialKind, .apiProvider)
+        XCTAssertEqual(account.apiProvider?.providerName, "Relay")
+        XCTAssertEqual(account.apiProvider?.baseURL.absoluteString, "https://relay.example.com/v1")
+        XCTAssertEqual(account.apiProvider?.defaultModel, "gpt-5")
+        XCTAssertEqual(account.apiProvider?.keyFingerprint, "api-key:abc123")
+        XCTAssertTrue(account.isAPIProvider)
+        XCTAssertFalse(account.isChatGPT)
+    }
+
     func testAccountSwitchEligibilityRespectsDisabledAndQuotaThresholds() {
         let account = CodixxAccount(
             id: UUID(uuidString: "11111111-1111-1111-1111-111111111111")!,

@@ -168,6 +168,36 @@ final class PersistenceTests: XCTestCase {
         XCTAssertTrue(FileManager.default.fileExists(atPath: paths.accountsJSON.path))
     }
 
+    func testAccountMetadataStoreRoundTripsAPIProviderAccount() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let paths = CodixxPaths(home: directory)
+        let store = AccountMetadataStore(paths: paths)
+        let id = UUID()
+        let account = CodixxAccount(
+            id: id,
+            alias: "Relay",
+            fingerprint: "api:abc123",
+            credentialKind: .apiProvider,
+            apiProvider: APIProviderAccount(
+                providerName: "Relay",
+                baseURL: URL(string: "https://relay.example.com/v1")!,
+                defaultModel: "gpt-5",
+                keyFingerprint: "api-key:abc123"
+            ),
+            createdAt: Date(timeIntervalSince1970: 1),
+            updatedAt: Date(timeIntervalSince1970: 2),
+            lastUsedAt: nil,
+            quota: .unknown(accountId: id.uuidString, alias: "Relay"),
+            isEnabled: true,
+            priority: 0
+        )
+
+        try store.save(AccountMetadataList(accounts: [account]))
+
+        XCTAssertEqual(try store.load().accounts, [account])
+    }
+
     func testSwitchAuditLogPrunesEventsOlderThanNinetyDays() throws {
         let tempHome = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
         defer { try? FileManager.default.removeItem(at: tempHome) }
