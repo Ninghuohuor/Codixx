@@ -109,10 +109,51 @@ public struct AccountQuotaState: Codable, Equatable, Sendable {
     }
 }
 
+public enum CredentialKind: String, Codable, Equatable, Sendable {
+    case chatgpt
+    case apiProvider
+}
+
+public struct APIProviderAccount: Codable, Equatable, Sendable {
+    public var providerName: String
+    public var baseURL: URL
+    public var defaultModel: String?
+    public var keyFingerprint: String
+
+    public init(
+        providerName: String,
+        baseURL: URL,
+        defaultModel: String?,
+        keyFingerprint: String
+    ) {
+        self.providerName = providerName
+        self.baseURL = baseURL
+        self.defaultModel = defaultModel
+        self.keyFingerprint = keyFingerprint
+    }
+}
+
 public struct CodixxAccount: Codable, Identifiable, Equatable, Sendable {
+    private enum CodingKeys: String, CodingKey {
+        case id
+        case alias
+        case fingerprint
+        case credentialKind
+        case apiProvider
+        case createdAt
+        case updatedAt
+        case lastUsedAt
+        case membershipExpiresAt
+        case quota
+        case isEnabled
+        case priority
+    }
+
     public var id: UUID
     public var alias: String
     public var fingerprint: String
+    public var credentialKind: CredentialKind
+    public var apiProvider: APIProviderAccount?
     public var createdAt: Date
     public var updatedAt: Date
     public var lastUsedAt: Date?
@@ -125,6 +166,8 @@ public struct CodixxAccount: Codable, Identifiable, Equatable, Sendable {
         id: UUID,
         alias: String,
         fingerprint: String,
+        credentialKind: CredentialKind = .chatgpt,
+        apiProvider: APIProviderAccount? = nil,
         createdAt: Date,
         updatedAt: Date,
         lastUsedAt: Date?,
@@ -136,6 +179,8 @@ public struct CodixxAccount: Codable, Identifiable, Equatable, Sendable {
         self.id = id
         self.alias = alias
         self.fingerprint = fingerprint
+        self.credentialKind = credentialKind
+        self.apiProvider = apiProvider
         self.createdAt = createdAt
         self.updatedAt = updatedAt
         self.lastUsedAt = lastUsedAt
@@ -144,6 +189,25 @@ public struct CodixxAccount: Codable, Identifiable, Equatable, Sendable {
         self.isEnabled = isEnabled
         self.priority = priority
     }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.id = try container.decode(UUID.self, forKey: .id)
+        self.alias = try container.decode(String.self, forKey: .alias)
+        self.fingerprint = try container.decode(String.self, forKey: .fingerprint)
+        self.credentialKind = try container.decodeIfPresent(CredentialKind.self, forKey: .credentialKind) ?? .chatgpt
+        self.apiProvider = try container.decodeIfPresent(APIProviderAccount.self, forKey: .apiProvider)
+        self.createdAt = try container.decode(Date.self, forKey: .createdAt)
+        self.updatedAt = try container.decode(Date.self, forKey: .updatedAt)
+        self.lastUsedAt = try container.decodeIfPresent(Date.self, forKey: .lastUsedAt)
+        self.membershipExpiresAt = try container.decodeIfPresent(Date.self, forKey: .membershipExpiresAt)
+        self.quota = try container.decode(AccountQuotaState.self, forKey: .quota)
+        self.isEnabled = try container.decode(Bool.self, forKey: .isEnabled)
+        self.priority = try container.decode(Int.self, forKey: .priority)
+    }
+
+    public var isChatGPT: Bool { credentialKind == .chatgpt }
+    public var isAPIProvider: Bool { credentialKind == .apiProvider }
 
     public func isEligibleForSwitch(
         hasSnapshot: Bool,
