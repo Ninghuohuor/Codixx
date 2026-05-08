@@ -23,6 +23,17 @@ Use a temporary macOS user profile or a disposable `HOME` when possible. Never u
 - [ ] Confirm `switch_audit.jsonl` records a success event with aliases and backup path, without raw tokens.
 - [ ] Force validation failure with a corrupted snapshot; app rolls back to the previous auth and writes failure plus rollback audit events.
 
+## API Provider Switching
+
+- [ ] Add an API provider account with alias, provider name, base URL, API key, and default model.
+- [ ] Confirm `~/Library/Application Support/Codixx/accounts.json` does not contain the raw API key.
+- [ ] Switch from a ChatGPT account to the API provider account.
+- [ ] Confirm `~/.codex/auth.json` has `auth_mode` set to `apikey`.
+- [ ] Confirm `~/.codex/config.toml` contains the Codixx-managed provider block.
+- [ ] Confirm `~/.codex/sessions`, `~/.codex/archived_sessions`, `~/.codex/session_index.jsonl`, and `~/.codex/state_*.sqlite` still exist after switching.
+- [ ] Restart Codex and confirm existing conversations are still visible.
+- [ ] Switch back to a ChatGPT account and confirm `auth.json` matches the saved ChatGPT snapshot.
+
 ## Automatic Switching
 
 - [ ] Add a fresh JSONL rate-limit observation at 92%; app warns at 80% at most once per 5-hour window.
