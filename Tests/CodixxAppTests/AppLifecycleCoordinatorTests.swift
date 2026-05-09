@@ -33,6 +33,7 @@ private final class LifecycleStateSpy: LifecycleStateManaging {
     var onNotificationsEnabled: (() -> Void)?
     var refreshNowCallCount = 0
     var refreshQuotaNowCallCount = 0
+    var refreshAPIBalancesNowCallCount = 0
 
     init() {
         let paths = CodixxPaths(home: URL(fileURLWithPath: NSTemporaryDirectory()))
@@ -50,6 +51,10 @@ private final class LifecycleStateSpy: LifecycleStateManaging {
     }
 
     func refreshUsageNow() {}
+
+    func refreshAPIBalancesNow() {
+        refreshAPIBalancesNowCallCount += 1
+    }
 }
 
 @MainActor

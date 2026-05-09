@@ -10,7 +10,7 @@ final class CodixxModelsTests: XCTestCase {
         XCTAssertEqual(QuotaConfidence.observed(at: nil, now: now), .unknown)
     }
 
-    func testAccountIsSwitchCandidateWhenEnabledAndSnapshotExists() {
+    func testAccountIsSwitchCandidateWhenEnabledSnapshotExistsAndQuotaIsKnownAvailable() {
         let account = CodixxAccount(
             id: UUID(uuidString: "11111111-1111-1111-1111-111111111111")!,
             alias: "Work",
@@ -18,13 +18,28 @@ final class CodixxModelsTests: XCTestCase {
             createdAt: Date(timeIntervalSince1970: 1),
             updatedAt: Date(timeIntervalSince1970: 1),
             lastUsedAt: nil,
-            quota: .unknown(accountId: "11111111-1111-1111-1111-111111111111", alias: "Work"),
+            quota: AccountQuotaState(
+                accountId: "11111111-1111-1111-1111-111111111111",
+                alias: "Work",
+                primaryUsedPercent: 10,
+                primaryWindowMinutes: 300,
+                primaryResetsAt: nil,
+                secondaryUsedPercent: 10,
+                secondaryWindowMinutes: 10_080,
+                secondaryResetsAt: nil,
+                lastObservedAt: Date(timeIntervalSince1970: 1),
+                confidence: .fresh
+            ),
             isEnabled: true,
             priority: 10
         )
 
         XCTAssertTrue(account.isEligibleForSwitch(hasSnapshot: true))
         XCTAssertFalse(account.isEligibleForSwitch(hasSnapshot: false))
+
+        var unknown = account
+        unknown.quota = .unknown(accountId: account.id.uuidString, alias: account.alias)
+        XCTAssertFalse(unknown.isEligibleForSwitch(hasSnapshot: true))
     }
 
     func testAPIProviderAccountStoresNonSecretMetadata() {

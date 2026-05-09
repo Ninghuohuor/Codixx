@@ -16,6 +16,13 @@ public enum CodixxLanguage: String, Codable, CaseIterable, Identifiable, Sendabl
     }
 }
 
+public enum APISwitchThreadSyncScope: String, Codable, CaseIterable, Identifiable, Sendable {
+    case visibleDesktopThreads
+    case allThreads
+
+    public var id: String { rawValue }
+}
+
 public struct CodixxConfig: Codable, Equatable, Sendable {
     public var codexDirectoryPath: String
     public var autoSwitchEnabled: Bool
@@ -27,6 +34,7 @@ public struct CodixxConfig: Codable, Equatable, Sendable {
     public var usageRefreshIntervalSeconds: TimeInterval
     public var language: CodixxLanguage
     public var postSwitchAction: PostSwitchAction
+    public var apiSwitchThreadSyncScope: APISwitchThreadSyncScope
 
     public init(
         codexDirectoryPath: String,
@@ -38,7 +46,8 @@ public struct CodixxConfig: Codable, Equatable, Sendable {
         quotaRefreshIntervalSeconds: TimeInterval = 60,
         usageRefreshIntervalSeconds: TimeInterval = 300,
         language: CodixxLanguage = .english,
-        postSwitchAction: PostSwitchAction = .notifyRestartRecommended
+        postSwitchAction: PostSwitchAction = .notifyRestartRecommended,
+        apiSwitchThreadSyncScope: APISwitchThreadSyncScope = .visibleDesktopThreads
     ) {
         self.codexDirectoryPath = codexDirectoryPath
         self.autoSwitchEnabled = autoSwitchEnabled
@@ -50,6 +59,7 @@ public struct CodixxConfig: Codable, Equatable, Sendable {
         self.usageRefreshIntervalSeconds = usageRefreshIntervalSeconds
         self.language = language
         self.postSwitchAction = postSwitchAction
+        self.apiSwitchThreadSyncScope = apiSwitchThreadSyncScope
     }
 
     public static func `default`(paths: CodixxPaths = CodixxPaths()) -> CodixxConfig {
@@ -67,6 +77,7 @@ public struct CodixxConfig: Codable, Equatable, Sendable {
         case usageRefreshIntervalSeconds
         case language
         case postSwitchAction
+        case apiSwitchThreadSyncScope
     }
 
     public init(from decoder: Decoder) throws {
@@ -81,6 +92,7 @@ public struct CodixxConfig: Codable, Equatable, Sendable {
         self.usageRefreshIntervalSeconds = try container.decode(TimeInterval.self, forKey: .usageRefreshIntervalSeconds)
         self.language = try container.decodeIfPresent(CodixxLanguage.self, forKey: .language) ?? .english
         self.postSwitchAction = try container.decodeIfPresent(PostSwitchAction.self, forKey: .postSwitchAction) ?? .notifyRestartRecommended
+        self.apiSwitchThreadSyncScope = try container.decodeIfPresent(APISwitchThreadSyncScope.self, forKey: .apiSwitchThreadSyncScope) ?? .visibleDesktopThreads
     }
 }
 

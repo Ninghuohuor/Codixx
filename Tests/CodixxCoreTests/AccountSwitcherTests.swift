@@ -39,6 +39,84 @@ final class AccountSwitcherTests: XCTestCase {
         XCTAssertEqual(auditEvents.first?.targetAlias, "Backup")
     }
 
+    func testSwitchToChatGPTClearsCodexDesktopLoginStateAfterWritingTarget() throws {
+        let fixture = try SwitchFixture()
+        defer { fixture.cleanup() }
+        let codexDesktopState = RecordingCodexDesktopState()
+        let switcher = fixture.switcher(codexDesktopState: codexDesktopState)
+
+        _ = try switcher.switchToAccount(fixture.target.id, trigger: .manual)
+
+        XCTAssertEqual(codexDesktopState.clearCallCount, 1)
+    }
+
+    func testSwitchToChatGPTRestoresOpenAIThreadProvider() throws {
+        let fixture = try SwitchFixture()
+        defer { fixture.cleanup() }
+        let threadProviderSync = RecordingThreadProviderSync()
+        let switcher = fixture.switcher(threadProviderSync: threadProviderSync)
+
+        _ = try switcher.switchToAccount(fixture.target.id, trigger: .manual)
+
+        XCTAssertEqual(threadProviderSync.calls, [
+            .init(from: "openai-custom", to: "openai", scope: .visibleDesktopThreads)
+        ])
+    }
+
+    func testSwitchStopsBeforeWritingWhenCodexDesktopIsRunning() throws {
+        let fixture = try SwitchFixture()
+        defer { fixture.cleanup() }
+        let codexDesktopState = RecordingCodexDesktopState(isRunning: true)
+        let switcher = fixture.switcher(codexDesktopState: codexDesktopState)
+
+        XCTAssertThrowsError(try switcher.switchToAccount(fixture.target.id, trigger: .manual)) { error in
+            XCTAssertEqual(error as? AccountSwitchError, .codexDesktopRunning)
+        }
+
+        let writtenAuth = try Data(contentsOf: fixture.paths.authJSON)
+        let auditEvents = try fixture.auditLog.loadEvents()
+        XCTAssertEqual(writtenAuth, fixture.sourceAuth.jsonData)
+        XCTAssertEqual(codexDesktopState.clearCallCount, 0)
+        XCTAssertEqual(auditEvents.map(\.result), [.failedBeforeWrite])
+    }
+
+    func testCodexDesktopStateCleanerPreservesUserInterfaceState() throws {
+        let fixture = try SwitchFixture()
+        defer { fixture.cleanup() }
+        let appSupport = fixture.paths.codexDesktopApplicationSupport
+        let localStorage = appSupport.appendingPathComponent("Local Storage", isDirectory: true)
+        let sessionStorage = appSupport.appendingPathComponent("Session Storage", isDirectory: true)
+        let cookies = appSupport.appendingPathComponent("Cookies")
+        let sharedStorage = appSupport.appendingPathComponent("SharedStorage")
+        let crashpad = appSupport.appendingPathComponent("Crashpad", isDirectory: true)
+        try FileManager.default.createDirectory(
+            at: localStorage,
+            withIntermediateDirectories: true
+        )
+        try FileManager.default.createDirectory(
+            at: sessionStorage,
+            withIntermediateDirectories: true
+        )
+        try FileManager.default.createDirectory(
+            at: crashpad,
+            withIntermediateDirectories: true
+        )
+        try Data("token-cache".utf8).write(to: localStorage.appendingPathComponent("leveldb"))
+        try Data("session-cache".utf8).write(to: sessionStorage.appendingPathComponent("000003.log"))
+        try Data("cookie-cache".utf8).write(to: cookies)
+        try Data("shared-cache".utf8).write(to: sharedStorage)
+        try Data("keep".utf8).write(to: crashpad.appendingPathComponent("metadata"))
+        let cleaner = FileSystemCodexDesktopStateCleaner(paths: fixture.paths, isRunning: { false })
+
+        try cleaner.clearState()
+
+        XCTAssertTrue(FileManager.default.fileExists(atPath: localStorage.appendingPathComponent("leveldb").path))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: sessionStorage.path))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: cookies.path))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: sharedStorage.path))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: crashpad.appendingPathComponent("metadata").path))
+    }
+
     func testSwitchToAPIProviderWritesAPIAuthAndProviderConfigWithoutTouchingHistory() throws {
         let fixture = try SwitchFixture()
         defer { fixture.cleanup() }
@@ -81,9 +159,91 @@ final class AccountSwitcherTests: XCTestCase {
         XCTAssertEqual(written.stringValue(for: "auth_mode"), "apikey")
         XCTAssertEqual(written.stringValue(for: "OPENAI_API_KEY"), "sk-test-123")
         let config = try String(contentsOf: fixture.paths.configTOML)
+        XCTAssertTrue(config.contains("model_provider = \"openai-custom\""))
+        XCTAssertTrue(config.contains("[model_providers.openai-custom]"))
         XCTAssertTrue(config.contains("base_url = \"https://relay.example.com/v1\""))
         XCTAssertTrue(FileManager.default.fileExists(atPath: fixture.paths.codexHome.appendingPathComponent("sessions", isDirectory: true).path))
         XCTAssertTrue(FileManager.default.fileExists(atPath: fixture.paths.codexHome.appendingPathComponent("state_5.sqlite").path))
+    }
+
+    func testSwitchToAPIProviderMovesOpenAIThreadsToCustomProvider() throws {
+        let fixture = try SwitchFixture()
+        defer { fixture.cleanup() }
+        let apiKeyVault = InMemorySwitchAPIKeyVault()
+        let threadProviderSync = RecordingThreadProviderSync()
+        let apiAccountId = UUID()
+        let apiKeyFingerprint = APIKeyFingerprint.generate(apiKey: "sk-test-123")
+        try apiKeyVault.save(apiKey: "sk-test-123", fingerprint: apiKeyFingerprint)
+        let apiAccount = CodixxAccount(
+            id: apiAccountId,
+            alias: "Relay",
+            fingerprint: "api-provider:\(apiKeyFingerprint)",
+            credentialKind: .apiProvider,
+            apiProvider: APIProviderAccount(
+                providerName: "Relay",
+                baseURL: URL(string: "https://relay.example.com/v1")!,
+                defaultModel: nil,
+                keyFingerprint: apiKeyFingerprint
+            ),
+            createdAt: fixture.now,
+            updatedAt: fixture.now,
+            lastUsedAt: nil,
+            quota: .unknown(accountId: apiAccountId.uuidString, alias: "Relay"),
+            isEnabled: true,
+            priority: 2
+        )
+        var metadata = try fixture.metadataStore.load()
+        metadata.accounts.append(apiAccount)
+        try fixture.metadataStore.save(metadata)
+        let switcher = fixture.switcher(apiKeyVault: apiKeyVault, threadProviderSync: threadProviderSync)
+
+        _ = try switcher.switchToAccount(apiAccountId, trigger: .manual)
+
+        XCTAssertEqual(threadProviderSync.calls, [
+            .init(from: "openai", to: "openai-custom", scope: .visibleDesktopThreads)
+        ])
+    }
+
+    func testSwitchToAPIProviderUsesConfiguredThreadSyncScope() throws {
+        let fixture = try SwitchFixture()
+        defer { fixture.cleanup() }
+        let apiKeyVault = InMemorySwitchAPIKeyVault()
+        let threadProviderSync = RecordingThreadProviderSync()
+        let apiAccountId = UUID()
+        let apiKeyFingerprint = APIKeyFingerprint.generate(apiKey: "sk-test-123")
+        try apiKeyVault.save(apiKey: "sk-test-123", fingerprint: apiKeyFingerprint)
+        let apiAccount = CodixxAccount(
+            id: apiAccountId,
+            alias: "Relay",
+            fingerprint: "api-provider:\(apiKeyFingerprint)",
+            credentialKind: .apiProvider,
+            apiProvider: APIProviderAccount(
+                providerName: "Relay",
+                baseURL: URL(string: "https://relay.example.com/v1")!,
+                defaultModel: nil,
+                keyFingerprint: apiKeyFingerprint
+            ),
+            createdAt: fixture.now,
+            updatedAt: fixture.now,
+            lastUsedAt: nil,
+            quota: .unknown(accountId: apiAccountId.uuidString, alias: "Relay"),
+            isEnabled: true,
+            priority: 2
+        )
+        var metadata = try fixture.metadataStore.load()
+        metadata.accounts.append(apiAccount)
+        try fixture.metadataStore.save(metadata)
+        let switcher = fixture.switcher(
+            apiKeyVault: apiKeyVault,
+            threadProviderSync: threadProviderSync,
+            apiSwitchThreadSyncScope: { .allThreads }
+        )
+
+        _ = try switcher.switchToAccount(apiAccountId, trigger: .manual)
+
+        XCTAssertEqual(threadProviderSync.calls, [
+            .init(from: "openai", to: "openai-custom", scope: .allThreads)
+        ])
     }
 
     func testSwitchToChatGPTClearsManagedAPIProviderConfig() throws {
@@ -107,6 +267,29 @@ final class AccountSwitcherTests: XCTestCase {
         let config = try String(contentsOf: fixture.paths.configTOML)
         XCTAssertFalse(config.contains("model_provider = \"codixx-relay\""))
         XCTAssertFalse(config.contains("BEGIN CODIXX API PROVIDER"))
+    }
+
+    func testSwitchToChatGPTRestoresProviderConfigWhenThreadSyncFails() throws {
+        let fixture = try SwitchFixture()
+        defer { fixture.cleanup() }
+        let originalConfig = """
+        model = "gpt-5"
+        model_provider = "codixx-relay"
+
+        # BEGIN CODIXX API PROVIDER
+        [model_providers.codixx-relay]
+        name = "Relay"
+        base_url = "https://relay.example.com/v1"
+        wire_api = "responses"
+        # END CODIXX API PROVIDER
+        """
+        try originalConfig.write(to: fixture.paths.configTOML, atomically: true, encoding: .utf8)
+        let switcher = fixture.switcher(threadProviderSync: ThrowingThreadProviderSync())
+
+        XCTAssertThrowsError(try switcher.switchToAccount(fixture.target.id, trigger: .manual))
+
+        XCTAssertEqual(try String(contentsOf: fixture.paths.configTOML), originalConfig)
+        XCTAssertEqual(try Data(contentsOf: fixture.paths.authJSON), fixture.sourceAuth.jsonData)
     }
 
     func testSwitchRefreshesSourceSnapshotBeforeWritingTarget() throws {
@@ -398,7 +581,10 @@ private final class SwitchFixture {
         fingerprintGenerator: @escaping (AuthSnapshot) throws -> String = AccountFingerprint.generate(from:),
         apiKeyVault: APIKeyVault = InMemorySwitchAPIKeyVault(),
         writer: AtomicAuthFileWriting = AtomicFileWriter(),
-        diskSpaceChecker: DiskSpaceChecking = FileManagerDiskSpaceChecker()
+        diskSpaceChecker: DiskSpaceChecking = FileManagerDiskSpaceChecker(),
+        codexDesktopState: CodexDesktopStateCleaning = NoopCodexDesktopStateCleaner(),
+        threadProviderSync: CodexThreadProviderSyncing = NoopCodexThreadProviderSync(),
+        apiSwitchThreadSyncScope: @escaping () -> APISwitchThreadSyncScope = { .visibleDesktopThreads }
     ) -> AccountSwitcher {
         AccountSwitcher(
             paths: paths,
@@ -410,7 +596,10 @@ private final class SwitchFixture {
             fingerprintGenerator: fingerprintGenerator,
             apiKeyVault: apiKeyVault,
             writer: writer,
-            diskSpaceChecker: diskSpaceChecker
+            diskSpaceChecker: diskSpaceChecker,
+            codexDesktopState: codexDesktopState,
+            threadProviderSync: threadProviderSync,
+            apiSwitchThreadSyncScope: apiSwitchThreadSyncScope
         )
     }
 
@@ -455,6 +644,40 @@ private struct FixedDiskSpaceChecker: DiskSpaceChecking {
 
     func hasAvailableSpace(at url: URL, minimumBytes: Int64) -> Bool {
         hasEnoughSpace
+    }
+}
+
+private final class RecordingCodexDesktopState: CodexDesktopStateCleaning {
+    var isCodexDesktopRunning: Bool
+    private(set) var clearCallCount = 0
+
+    init(isRunning: Bool = false) {
+        self.isCodexDesktopRunning = isRunning
+    }
+
+    func clearState() throws {
+        clearCallCount += 1
+    }
+}
+
+private final class RecordingThreadProviderSync: CodexThreadProviderSyncing, @unchecked Sendable {
+    struct Call: Equatable {
+        var from: String
+        var to: String
+        var scope: APISwitchThreadSyncScope
+    }
+
+    private(set) var calls: [Call] = []
+
+    func syncProvider(from sourceProvider: String, to targetProvider: String, scope: APISwitchThreadSyncScope) throws -> Int {
+        calls.append(.init(from: sourceProvider, to: targetProvider, scope: scope))
+        return 0
+    }
+}
+
+private struct ThrowingThreadProviderSync: CodexThreadProviderSyncing {
+    func syncProvider(from sourceProvider: String, to targetProvider: String, scope: APISwitchThreadSyncScope) throws -> Int {
+        throw AccountStoreError.keychainError("forced thread sync failure")
     }
 }
 

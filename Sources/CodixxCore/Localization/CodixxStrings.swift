@@ -17,16 +17,45 @@ public struct CodixxStrings: Sendable {
     public var generalSection: String { text(en: "General", zh: "通用") }
     public var autoSwitchSection: String { text(en: "Auto Switch", zh: "自动切换") }
     public var refreshIntervalSection: String { text(en: "Refresh Intervals", zh: "刷新频率") }
+    public var apiBalanceSection: String { text(en: "API Balance Monitoring", zh: "API 余额监测") }
     public var quitCodixx: String { text(en: "Quit Codixx", zh: "退出 Codixx") }
     public var notRefreshedYet: String { text(en: "Not refreshed yet", zh: "尚未刷新") }
     public var saveCurrentAuth: String { text(en: "Save Current Auth", zh: "保存当前登录") }
     public var addAccount: String { text(en: "Add Account", zh: "添加账号") }
-    public var codexLoginAccount: String { text(en: "Codex login", zh: "Codex 登录") }
+    public var codexLoginAccount: String { text(en: "Account login", zh: "账号登录") }
     public var apiKeyAccount: String { text(en: "API key", zh: "API Key") }
     public var providerName: String { text(en: "Provider", zh: "服务商") }
     public var baseURL: String { text(en: "Base URL", zh: "Base URL") }
     public var defaultModel: String { text(en: "Default model", zh: "默认模型") }
+    public var testConnection: String { text(en: "Test connection", zh: "测试连接") }
+    public var testingConnection: String { text(en: "Testing connection...", zh: "正在测试连接...") }
+    public var connectionSucceeded: String { text(en: "Connection succeeded", zh: "连接成功") }
+    public var savedReplaceableAPIKey: String { text(en: "API key (saved, replaceable)", zh: "API Key（已保存，可替换）") }
+    public var apiBalanceMonitoring: String { text(en: "Enable API balance monitoring", zh: "启用 API 余额监测") }
+    public var balanceQueryURL: String { text(en: "Balance query URL", zh: "余额查询 URL") }
+    public var balanceJSONPath: String { text(en: "Balance JSON field path", zh: "余额 JSON 字段路径") }
+    public var balanceRefreshInterval: String { text(en: "Auto refresh interval", zh: "自动刷新间隔") }
+    public var testBalanceQuery: String { text(en: "Test balance query", zh: "测试余额查询") }
+    public var testingBalanceQuery: String { text(en: "Testing balance...", zh: "正在测试余额...") }
+    public var noAPIAccountForBalance: String { text(en: "No API account available for balance query", zh: "暂无可用于余额查询的 API 账号") }
+    public var currentBalanceUnavailable: String { text(en: "Current balance: --", zh: "当前余额：--") }
+    public func currentBalance(_ balance: String) -> String {
+        text(en: "Current balance: \(balance)", zh: "当前余额：\(balance)")
+    }
+    public var balanceQueryHint: String {
+        text(
+            en: "Uses the current API account key with GET and Authorization: Bearer. Example JSON path: data.balance.",
+            zh: "使用当前 API 账号密钥，以 GET 和 Authorization: Bearer 查询。示例字段路径：data.balance。"
+        )
+    }
+    public func requiredField(_ label: String) -> String {
+        text(en: "\(label) (required)", zh: "\(label)（必填）")
+    }
+    public func optionalField(_ label: String) -> String {
+        text(en: "\(label) (optional)", zh: "\(label)（选填）")
+    }
     public var invalidBaseURL: String { text(en: "Base URL is invalid", zh: "Base URL 无效") }
+    public var aliasRequired: String { text(en: "Alias is required", zh: "别名为必填项") }
     public var alias: String { text(en: "Alias", zh: "别名") }
     public var save: String { text(en: "Save", zh: "保存") }
     public var saveCurrentCodexAuth: String { text(en: "Save current Codex auth", zh: "保存当前 Codex 登录") }
@@ -35,6 +64,7 @@ public struct CodixxStrings: Sendable {
     public var switchAccount: String { text(en: "Switch to account", zh: "切换到此账号") }
     public var switchToThisAccount: String { text(en: "Switch to this account", zh: "切换到这个账号") }
     public var switchAndRestartCodex: String { text(en: "Switch and restart Codex", zh: "切换并重启 Codex") }
+    public var editAccount: String { text(en: "Edit account", zh: "编辑账号") }
     public var renameAccount: String { text(en: "Rename account", zh: "重命名账号") }
     public var cancelEdit: String { text(en: "Cancel edit", zh: "取消编辑") }
     public var deleteAccount: String { text(en: "Delete account", zh: "删除账号") }
@@ -100,6 +130,13 @@ public struct CodixxStrings: Sendable {
     public var codexHome: String { text(en: "Codex Home", zh: "Codex 目录") }
     public var languageLabel: String { text(en: "Language", zh: "语言") }
     public var postSwitchAction: String { text(en: "After switch", zh: "切换后动作") }
+    public var apiSwitchThreadSyncScope: String { text(en: "Sync threads when switching API", zh: "切换 API 时同步线程") }
+    public var apiSwitchThreadSyncScopeHint: String {
+        text(
+            en: "All threads is slower; use it only if history is still missing.",
+            zh: "所有线程会更慢，仅在历史仍缺失时使用。"
+        )
+    }
     public var codexRestartRequired: String { text(en: "Restart Codex required", zh: "需要重启 Codex") }
     public var restartCodexNow: String { text(en: "Restart Codex now", zh: "立即重启 Codex") }
     public var restartCodexFailed: String { text(en: "Could not restart Codex", zh: "无法重启 Codex") }
@@ -282,6 +319,15 @@ public struct CodixxStrings: Sendable {
             return text(en: "Remind to restart", zh: "提醒重启")
         case .restartCodexApp:
             return text(en: "Show restart button", zh: "显示重启按钮")
+        }
+    }
+
+    public func apiSwitchThreadSyncScopeLabel(_ scope: APISwitchThreadSyncScope) -> String {
+        switch scope {
+        case .visibleDesktopThreads:
+            return text(en: "Current main threads", zh: "当前主线程")
+        case .allThreads:
+            return text(en: "All threads", zh: "所有")
         }
     }
 

@@ -65,10 +65,19 @@ final class AppStateTrendRefreshTests: XCTestCase {
             priority: 0
         )
         try AccountMetadataStore(paths: paths).save(AccountMetadataList(accounts: [current, depleted]))
-        let state = AppState(paths: paths, vault: vault, now: { now })
+        let codexDesktopManager = CodexDesktopManagerSpy()
+        let state = AppState(
+            paths: paths,
+            vault: vault,
+            codexDesktopState: NoopCodexDesktopStateCleaner(),
+            codexDesktopManager: codexDesktopManager,
+            now: { now }
+        )
 
         state.switchToAccount(depleted)
         XCTAssertEqual(state.currentAccount?.id, depleted.id)
+        XCTAssertEqual(codexDesktopManager.quitForCleanSwitchCallCount, 1)
+        XCTAssertEqual(codexDesktopManager.restartCallCount, 1)
         now = now.addingTimeInterval(1)
         state.refreshQuotaNow()
 
@@ -81,18 +90,277 @@ final class AppStateTrendRefreshTests: XCTestCase {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
         defer { try? FileManager.default.removeItem(at: directory) }
         let apiKeyVault = InMemoryAPIKeyVault()
-        let state = AppState(paths: CodixxPaths(home: directory), vault: InMemoryVault(), apiKeyVault: apiKeyVault)
+        let state = AppState(
+            paths: CodixxPaths(home: directory),
+            vault: InMemoryVault(),
+            apiKeyVault: apiKeyVault,
+            codexDesktopState: NoopCodexDesktopStateCleaner(),
+            codexDesktopManager: CodexDesktopManagerSpy()
+        )
 
         state.saveAPIProviderAccount(
             alias: "Relay",
-            providerName: "Relay",
             baseURLText: "https://relay.example.com/v1",
             apiKey: "sk-test-123",
             defaultModel: "gpt-5"
         )
 
         XCTAssertEqual(state.accounts.first?.credentialKind, .apiProvider)
+        XCTAssertEqual(state.accounts.first?.alias, "Relay")
+        XCTAssertEqual(state.accounts.first?.apiProvider?.providerName, "Relay")
         XCTAssertEqual(state.accounts.first?.apiProvider?.baseURL.absoluteString, "https://relay.example.com/v1")
+    }
+
+    func testAppStateRequiresAliasForAPIProviderAccount() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let state = AppState(
+            paths: CodixxPaths(home: directory),
+            vault: InMemoryVault(),
+            apiKeyVault: InMemoryAPIKeyVault(),
+            codexDesktopState: NoopCodexDesktopStateCleaner(),
+            codexDesktopManager: CodexDesktopManagerSpy()
+        )
+
+        state.saveAPIProviderAccount(
+            alias: " ",
+            baseURLText: "https://relay.example.com/v1",
+            apiKey: "sk-test-123",
+            defaultModel: ""
+        )
+
+        XCTAssertTrue(state.accounts.isEmpty)
+        XCTAssertEqual(state.errorMessage, state.strings.aliasRequired)
+        XCTAssertEqual(state.accountSaveStatus, .failure(message: state.strings.aliasRequired))
+    }
+
+    func testAppStateCanUpdateAPIProviderAccountAndKeepExistingKeyWhenBlank() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let apiKeyVault = InMemoryAPIKeyVault()
+        let state = AppState(
+            paths: CodixxPaths(home: directory),
+            vault: InMemoryVault(),
+            apiKeyVault: apiKeyVault,
+            codexDesktopState: NoopCodexDesktopStateCleaner(),
+            codexDesktopManager: CodexDesktopManagerSpy()
+        )
+
+        state.saveAPIProviderAccount(
+            alias: "Relay",
+            baseURLText: "https://relay.example.com/v1",
+            apiKey: "sk-old-123456",
+            defaultModel: "gpt-4.1"
+        )
+        let account = try XCTUnwrap(state.accounts.first)
+
+        state.updateAPIProviderAccount(
+            account,
+            alias: "Relay 2",
+            baseURLText: "https://relay2.example.com/v1",
+            apiKey: "",
+            defaultModel: ""
+        )
+
+        let updated = try XCTUnwrap(state.accounts.first)
+        XCTAssertEqual(updated.alias, "Relay 2")
+        XCTAssertEqual(updated.apiProvider?.baseURL.absoluteString, "https://relay2.example.com/v1")
+        XCTAssertNil(updated.apiProvider?.defaultModel)
+        XCTAssertEqual(updated.apiProvider?.keyFingerprint, account.apiProvider?.keyFingerprint)
+        XCTAssertEqual(apiKeyVault.keys[account.apiProvider!.keyFingerprint], "sk-old-123456")
+    }
+
+    func testAppStateMasksAPIKeyFromVault() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let apiKeyVault = InMemoryAPIKeyVault()
+        let state = AppState(
+            paths: CodixxPaths(home: directory),
+            vault: InMemoryVault(),
+            apiKeyVault: apiKeyVault,
+            codexDesktopState: NoopCodexDesktopStateCleaner(),
+            codexDesktopManager: CodexDesktopManagerSpy()
+        )
+
+        state.saveAPIProviderAccount(
+            alias: "Relay",
+            baseURLText: "https://relay.example.com/v1",
+            apiKey: "sk-e1c12345678992df",
+            defaultModel: ""
+        )
+
+        let account = try XCTUnwrap(state.accounts.first)
+        XCTAssertEqual(state.maskedAPIKey(for: account), "sk-e1c...92df")
+    }
+
+    func testAppStateKeepsExistingAPIKeyWhenUpdateReceivesMaskedKey() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let apiKeyVault = InMemoryAPIKeyVault()
+        let state = AppState(
+            paths: CodixxPaths(home: directory),
+            vault: InMemoryVault(),
+            apiKeyVault: apiKeyVault,
+            codexDesktopState: NoopCodexDesktopStateCleaner(),
+            codexDesktopManager: CodexDesktopManagerSpy()
+        )
+
+        state.saveAPIProviderAccount(
+            alias: "Relay",
+            baseURLText: "https://relay.example.com/v1",
+            apiKey: "sk-e1c12345678992df",
+            defaultModel: ""
+        )
+        let account = try XCTUnwrap(state.accounts.first)
+
+        state.updateAPIProviderAccount(
+            account,
+            alias: "Relay 2",
+            baseURLText: "https://relay2.example.com/v1",
+            apiKey: "sk-e1c...92df",
+            defaultModel: "gpt-4.1"
+        )
+
+        let updated = try XCTUnwrap(state.accounts.first)
+        XCTAssertEqual(updated.alias, "Relay 2")
+        XCTAssertEqual(updated.apiProvider?.keyFingerprint, account.apiProvider?.keyFingerprint)
+        XCTAssertEqual(apiKeyVault.keys[account.apiProvider!.keyFingerprint], "sk-e1c12345678992df")
+    }
+
+    func testRefreshingAPIBalanceStoresBalanceOnAccount() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let apiKeyVault = InMemoryAPIKeyVault()
+        let balanceTester = APIBalanceQueryTesterSpy(result: APIBalanceQueryResult(isSuccess: true, message: "Balance: 12.34", balanceText: "12.34"))
+        let observedAt = Date(timeIntervalSince1970: 1_778_300_000)
+        let state = AppState(
+            paths: CodixxPaths(home: directory),
+            vault: InMemoryVault(),
+            apiKeyVault: apiKeyVault,
+            codexDesktopState: NoopCodexDesktopStateCleaner(),
+            codexDesktopManager: CodexDesktopManagerSpy(),
+            balanceQueryTester: balanceTester,
+            now: { observedAt }
+        )
+        state.saveAPIProviderAccount(
+            alias: "Relay",
+            baseURLText: "https://relay.example.com/v1",
+            apiKey: "sk-test-123",
+            defaultModel: ""
+        )
+        let account = try XCTUnwrap(state.accounts.first)
+        let config = APIBalanceQueryConfig(
+            isEnabled: true,
+            urlText: "https://relay.example.com/balance",
+            jsonPath: "data.balance",
+            refreshIntervalSeconds: 600
+        )
+        state.updateAPIProviderAccount(
+            account,
+            alias: account.alias,
+            baseURLText: account.apiProvider!.baseURL.absoluteString,
+            apiKey: "",
+            defaultModel: "",
+            balanceQuery: config
+        )
+
+        let result = await state.refreshAPIBalance(for: try XCTUnwrap(state.accounts.first))
+
+        XCTAssertTrue(result.isSuccess)
+        XCTAssertEqual(state.accounts.first?.apiProvider?.balanceQuery?.lastBalanceText, "12.34")
+        XCTAssertEqual(state.accounts.first?.apiProvider?.balanceQuery?.lastRefreshedAt, observedAt)
+        XCTAssertEqual(balanceTester.callCount, 1)
+    }
+
+    func testAutomaticAPIBalanceRefreshSkipsAccountsBeforeInterval() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let apiKeyVault = InMemoryAPIKeyVault()
+        let balanceTester = APIBalanceQueryTesterSpy(result: APIBalanceQueryResult(isSuccess: true, message: "Balance: 99", balanceText: "99"))
+        var now = Date(timeIntervalSince1970: 1_778_300_000)
+        let state = AppState(
+            paths: CodixxPaths(home: directory),
+            vault: InMemoryVault(),
+            apiKeyVault: apiKeyVault,
+            codexDesktopState: NoopCodexDesktopStateCleaner(),
+            codexDesktopManager: CodexDesktopManagerSpy(),
+            balanceQueryTester: balanceTester,
+            now: { now }
+        )
+        state.saveAPIProviderAccount(
+            alias: "Relay",
+            baseURLText: "https://relay.example.com/v1",
+            apiKey: "sk-test-123",
+            defaultModel: ""
+        )
+        let account = try XCTUnwrap(state.accounts.first)
+        state.updateAPIProviderAccount(
+            account,
+            alias: account.alias,
+            baseURLText: account.apiProvider!.baseURL.absoluteString,
+            apiKey: "",
+            defaultModel: "",
+            balanceQuery: APIBalanceQueryConfig(
+                isEnabled: true,
+                urlText: "https://relay.example.com/balance",
+                jsonPath: "data.balance",
+                refreshIntervalSeconds: 600,
+                lastBalanceText: "88",
+                lastRefreshedAt: now
+            )
+        )
+
+        await state.refreshDueAPIBalances()
+        XCTAssertEqual(balanceTester.callCount, 0)
+
+        now = now.addingTimeInterval(601)
+        await state.refreshDueAPIBalances()
+
+        XCTAssertEqual(balanceTester.callCount, 1)
+        XCTAssertEqual(state.accounts.first?.apiProvider?.balanceQuery?.lastBalanceText, "99")
+    }
+
+    func testSwitchClearsStaleSaveStatus() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let paths = CodixxPaths(home: directory)
+        try FileManager.default.createDirectory(at: paths.codexHome, withIntermediateDirectories: true)
+
+        let firstAuth = try AuthSnapshot(jsonData: Data(#"{"account_id":"first","access_token":"first-secret"}"#.utf8))
+        let secondAuth = try AuthSnapshot(jsonData: Data(#"{"account_id":"second","access_token":"second-secret"}"#.utf8))
+        let firstFingerprint = try AccountFingerprint.generate(from: firstAuth)
+        let secondFingerprint = try AccountFingerprint.generate(from: secondAuth)
+        let vault = InMemoryVault()
+        try firstAuth.jsonData.write(to: paths.authJSON)
+        try vault.save(snapshot: firstAuth, fingerprint: firstFingerprint)
+        try vault.save(snapshot: secondAuth, fingerprint: secondFingerprint)
+        let state = AppState(
+            paths: paths,
+            vault: vault,
+            codexDesktopState: NoopCodexDesktopStateCleaner(),
+            codexDesktopManager: CodexDesktopManagerSpy()
+        )
+
+        state.saveCurrentAccount(alias: "First")
+        XCTAssertEqual(state.accountSaveStatus, .success(alias: "First"))
+        var metadata = try AccountMetadataStore(paths: paths).load()
+        let second = CodixxAccount(
+            id: UUID(),
+            alias: "Second",
+            fingerprint: secondFingerprint,
+            createdAt: Date(timeIntervalSince1970: 100),
+            updatedAt: Date(timeIntervalSince1970: 100),
+            lastUsedAt: nil,
+            quota: .unknown(accountId: "second", alias: "Second"),
+            isEnabled: true,
+            priority: 1
+        )
+        metadata.accounts.append(second)
+        try AccountMetadataStore(paths: paths).save(metadata)
+
+        state.switchToAccount(second)
+
+        XCTAssertNil(state.accountSaveStatus)
     }
 
     func testMenuOpenRefreshAppliesLatestQuotaObservationWithoutFullUsageRefresh() async throws {
@@ -139,7 +407,12 @@ final class AppStateTrendRefreshTests: XCTestCase {
         """
         try (observationLine + "\n").write(to: sessionFile, atomically: true, encoding: .utf8)
 
-        let state = AppState(paths: paths, vault: InMemoryVault())
+        let state = AppState(
+            paths: paths,
+            vault: InMemoryVault(),
+            codexDesktopState: NoopCodexDesktopStateCleaner(),
+            codexDesktopManager: CodexDesktopManagerSpy()
+        )
 
         state.refreshFromMenuOpen()
 
@@ -153,7 +426,12 @@ final class AppStateTrendRefreshTests: XCTestCase {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
         defer { try? FileManager.default.removeItem(at: directory) }
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        let state = AppState(paths: CodixxPaths(home: directory), vault: InMemoryVault())
+        let state = AppState(
+            paths: CodixxPaths(home: directory),
+            vault: InMemoryVault(),
+            codexDesktopState: NoopCodexDesktopStateCleaner(),
+            codexDesktopManager: CodexDesktopManagerSpy()
+        )
 
         XCTAssertFalse(state.hasLoadedFullUsageSnapshot)
         XCTAssertFalse(state.isLoadingFullUsageSnapshot)
@@ -255,6 +533,30 @@ private enum InMemoryVaultError: Error {
     case missingSnapshot
 }
 
+@MainActor
+private final class CodexDesktopManagerSpy: CodexDesktopManaging {
+    var isRunning = false
+    var quitForCleanSwitchCallCount = 0
+    var restartCallCount = 0
+    var restoreActivationCallCount = 0
+
+    func currentActivation() -> CodexActivation {
+        CodexActivation(activeProcessIdentifier: nil)
+    }
+
+    func restoreActivationIfNeeded(_ activation: CodexActivation) {
+        restoreActivationCallCount += 1
+    }
+
+    func quitForCleanSwitch() {
+        quitForCleanSwitchCallCount += 1
+    }
+
+    func restart() throws {
+        restartCallCount += 1
+    }
+}
+
 private final class InMemoryAPIKeyVault: APIKeyVault {
     var keys: [String: String] = [:]
 
@@ -271,5 +573,19 @@ private final class InMemoryAPIKeyVault: APIKeyVault {
 
     func delete(fingerprint: String) throws {
         keys.removeValue(forKey: fingerprint)
+    }
+}
+
+private final class APIBalanceQueryTesterSpy: APIBalanceQueryTesting, @unchecked Sendable {
+    let result: APIBalanceQueryResult
+    private(set) var callCount = 0
+
+    init(result: APIBalanceQueryResult) {
+        self.result = result
+    }
+
+    func queryBalance(url: URL, apiKey: String, jsonPath: String) async -> APIBalanceQueryResult {
+        callCount += 1
+        return result
     }
 }

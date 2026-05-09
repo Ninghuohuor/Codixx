@@ -29,6 +29,165 @@ final class PersistenceTests: XCTestCase {
         XCTAssertEqual(selectedURL.lastPathComponent, "state_6.sqlite")
     }
 
+    func testThreadProviderSyncUpdatesMatchingThreadsAndWritesBackup() throws {
+        let tempHome = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: tempHome) }
+        let paths = CodixxPaths(home: tempHome)
+        try paths.createApplicationSupportDirectories()
+        try FileManager.default.createDirectory(at: paths.codexHome, withIntermediateDirectories: true)
+        let databaseURL = paths.codexHome.appendingPathComponent("state_5.sqlite")
+        try runSQLite(
+            databaseURL,
+            sql: """
+            CREATE TABLE threads(id TEXT PRIMARY KEY, model_provider TEXT);
+            INSERT INTO threads VALUES('openai-thread', 'openai');
+            INSERT INTO threads VALUES('custom-thread', 'rightcode');
+            """
+        )
+        let sync = SQLiteCodexThreadProviderSync(paths: paths)
+
+        let changedRows = try sync.syncProvider(from: "openai", to: "openai-custom")
+
+        XCTAssertEqual(changedRows, 1)
+        XCTAssertEqual(try sqliteScalar(databaseURL, sql: "SELECT model_provider FROM threads WHERE id = 'openai-thread'"), "openai-custom")
+        XCTAssertEqual(try sqliteScalar(databaseURL, sql: "SELECT model_provider FROM threads WHERE id = 'custom-thread'"), "rightcode")
+        let backups = try FileManager.default.contentsOfDirectory(atPath: paths.backups.path)
+        XCTAssertTrue(backups.contains { $0.hasPrefix("state_5.sqlite.provider-sync-") })
+    }
+
+    func testThreadProviderSyncUpdatesSessionMetadataRolloutFiles() throws {
+        let tempHome = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: tempHome) }
+        let paths = CodixxPaths(home: tempHome)
+        try paths.createApplicationSupportDirectories()
+        try FileManager.default.createDirectory(at: paths.codexHome, withIntermediateDirectories: true)
+        let sessionURL = paths.codexHome.appendingPathComponent("sessions/rollout-test.jsonl")
+        try FileManager.default.createDirectory(at: sessionURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try """
+        {"type":"session_meta","payload":{"id":"thread-1","model_provider":"openai","source":"vscode"}}
+        {"type":"event_msg","payload":{"type":"user_message","message":"hi"}}
+        """.write(to: sessionURL, atomically: true, encoding: .utf8)
+        let databaseURL = paths.codexHome.appendingPathComponent("state_5.sqlite")
+        try runSQLite(
+            databaseURL,
+            sql: """
+            CREATE TABLE threads(id TEXT PRIMARY KEY, model_provider TEXT, rollout_path TEXT);
+            INSERT INTO threads VALUES('thread-1', 'openai', '\(sessionURL.path)');
+            """
+        )
+        let sync = SQLiteCodexThreadProviderSync(paths: paths)
+
+        let changedRows = try sync.syncProvider(from: "openai", to: "openai-custom")
+
+        XCTAssertEqual(changedRows, 1)
+        XCTAssertEqual(try sqliteScalar(databaseURL, sql: "SELECT model_provider FROM threads WHERE id = 'thread-1'"), "openai-custom")
+        let firstLine = try String(contentsOf: sessionURL, encoding: .utf8)
+            .split(separator: "\n", omittingEmptySubsequences: false)
+            .first
+        XCTAssertTrue(firstLine?.contains(#""model_provider":"openai-custom""#) == true)
+        let backups = try FileManager.default.contentsOfDirectory(atPath: paths.backups.path)
+        XCTAssertTrue(backups.contains { $0.hasPrefix("rollout-test.jsonl.provider-sync-") })
+    }
+
+    func testThreadProviderSyncRestoresSessionMetadataWhenDatabaseUpdateFails() throws {
+        let tempHome = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: tempHome) }
+        let paths = CodixxPaths(home: tempHome)
+        try paths.createApplicationSupportDirectories()
+        try FileManager.default.createDirectory(at: paths.codexHome, withIntermediateDirectories: true)
+        let sessionURL = paths.codexHome.appendingPathComponent("sessions/rollout-test.jsonl")
+        try FileManager.default.createDirectory(at: sessionURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+        let originalSessionText = """
+        {"type":"session_meta","payload":{"id":"thread-1","model_provider":"openai","source":"vscode"}}
+        {"type":"event_msg","payload":{"type":"user_message","message":"hi"}}
+        """
+        try originalSessionText.write(to: sessionURL, atomically: true, encoding: .utf8)
+        let databaseURL = paths.codexHome.appendingPathComponent("state_5.sqlite")
+        try runSQLite(
+            databaseURL,
+            sql: """
+            CREATE TABLE threads(id TEXT PRIMARY KEY, model_provider TEXT, rollout_path TEXT);
+            CREATE TRIGGER fail_provider_update BEFORE UPDATE OF model_provider ON threads
+            BEGIN
+                SELECT RAISE(ABORT, 'forced provider update failure');
+            END;
+            INSERT INTO threads VALUES('thread-1', 'openai', '\(sessionURL.path)');
+            """
+        )
+        let sync = SQLiteCodexThreadProviderSync(paths: paths)
+
+        XCTAssertThrowsError(try sync.syncProvider(from: "openai", to: "openai-custom"))
+
+        XCTAssertEqual(try String(contentsOf: sessionURL, encoding: .utf8), originalSessionText)
+        XCTAssertEqual(try sqliteScalar(databaseURL, sql: "SELECT model_provider FROM threads WHERE id = 'thread-1'"), "openai")
+    }
+
+    func testThreadProviderSyncOnlyUpdatesVisibleDesktopThreads() throws {
+        let tempHome = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: tempHome) }
+        let paths = CodixxPaths(home: tempHome)
+        try paths.createApplicationSupportDirectories()
+        try FileManager.default.createDirectory(at: paths.codexHome, withIntermediateDirectories: true)
+        let visibleSessionURL = paths.codexHome.appendingPathComponent("sessions/visible.jsonl")
+        let subagentSessionURL = paths.codexHome.appendingPathComponent("sessions/subagent.jsonl")
+        try FileManager.default.createDirectory(at: visibleSessionURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try sessionText(id: "visible", provider: "openai", source: "vscode")
+            .write(to: visibleSessionURL, atomically: true, encoding: .utf8)
+        try sessionText(id: "subagent", provider: "openai", source: #"subagent"#)
+            .write(to: subagentSessionURL, atomically: true, encoding: .utf8)
+        let databaseURL = paths.codexHome.appendingPathComponent("state_5.sqlite")
+        try runSQLite(
+            databaseURL,
+            sql: """
+            CREATE TABLE threads(id TEXT PRIMARY KEY, model_provider TEXT, source TEXT, rollout_path TEXT);
+            INSERT INTO threads VALUES('visible', 'openai', 'vscode', '\(visibleSessionURL.path)');
+            INSERT INTO threads VALUES('subagent', 'openai', '{"subagent":true}', '\(subagentSessionURL.path)');
+            """
+        )
+        let sync = SQLiteCodexThreadProviderSync(paths: paths)
+
+        let changedRows = try sync.syncProvider(from: "openai", to: "openai-custom")
+
+        XCTAssertEqual(changedRows, 1)
+        XCTAssertEqual(try sqliteScalar(databaseURL, sql: "SELECT model_provider FROM threads WHERE id = 'visible'"), "openai-custom")
+        XCTAssertEqual(try sqliteScalar(databaseURL, sql: "SELECT model_provider FROM threads WHERE id = 'subagent'"), "openai")
+        XCTAssertTrue(try String(contentsOf: visibleSessionURL).contains(#""model_provider":"openai-custom""#))
+        XCTAssertTrue(try String(contentsOf: subagentSessionURL).contains(#""model_provider":"openai""#))
+    }
+
+    func testThreadProviderSyncCanUpdateAllThreads() throws {
+        let tempHome = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: tempHome) }
+        let paths = CodixxPaths(home: tempHome)
+        try paths.createApplicationSupportDirectories()
+        try FileManager.default.createDirectory(at: paths.codexHome, withIntermediateDirectories: true)
+        let visibleSessionURL = paths.codexHome.appendingPathComponent("sessions/visible.jsonl")
+        let subagentSessionURL = paths.codexHome.appendingPathComponent("sessions/subagent.jsonl")
+        try FileManager.default.createDirectory(at: visibleSessionURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try sessionText(id: "visible", provider: "openai", source: "vscode")
+            .write(to: visibleSessionURL, atomically: true, encoding: .utf8)
+        try sessionText(id: "subagent", provider: "openai", source: #"subagent"#)
+            .write(to: subagentSessionURL, atomically: true, encoding: .utf8)
+        let databaseURL = paths.codexHome.appendingPathComponent("state_5.sqlite")
+        try runSQLite(
+            databaseURL,
+            sql: """
+            CREATE TABLE threads(id TEXT PRIMARY KEY, model_provider TEXT, source TEXT, rollout_path TEXT);
+            INSERT INTO threads VALUES('visible', 'openai', 'vscode', '\(visibleSessionURL.path)');
+            INSERT INTO threads VALUES('subagent', 'openai', '{"subagent":true}', '\(subagentSessionURL.path)');
+            """
+        )
+        let sync = SQLiteCodexThreadProviderSync(paths: paths)
+
+        let changedRows = try sync.syncProvider(from: "openai", to: "openai-custom", scope: .allThreads)
+
+        XCTAssertEqual(changedRows, 2)
+        XCTAssertEqual(try sqliteScalar(databaseURL, sql: "SELECT model_provider FROM threads WHERE id = 'visible'"), "openai-custom")
+        XCTAssertEqual(try sqliteScalar(databaseURL, sql: "SELECT model_provider FROM threads WHERE id = 'subagent'"), "openai-custom")
+        XCTAssertTrue(try String(contentsOf: visibleSessionURL).contains(#""model_provider":"openai-custom""#))
+        XCTAssertTrue(try String(contentsOf: subagentSessionURL).contains(#""model_provider":"openai-custom""#))
+    }
+
     func testConfigStoreLoadsDefaultConfigWhenFileIsAbsent() throws {
         let tempHome = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
         defer { try? FileManager.default.removeItem(at: tempHome) }
@@ -47,6 +206,7 @@ final class PersistenceTests: XCTestCase {
         XCTAssertEqual(config.usageRefreshIntervalSeconds, 300)
         XCTAssertEqual(config.language, .english)
         XCTAssertEqual(config.postSwitchAction, .notifyRestartRecommended)
+        XCTAssertEqual(config.apiSwitchThreadSyncScope, .visibleDesktopThreads)
     }
 
     func testConfigStoreSavesAndLoadsConfigJSON() throws {
@@ -64,7 +224,8 @@ final class PersistenceTests: XCTestCase {
             quotaRefreshIntervalSeconds: 30,
             usageRefreshIntervalSeconds: 120,
             language: .chinese,
-            postSwitchAction: .restartCodexApp
+            postSwitchAction: .restartCodexApp,
+            apiSwitchThreadSyncScope: .allThreads
         )
 
         try store.save(config)
@@ -99,6 +260,7 @@ final class PersistenceTests: XCTestCase {
         XCTAssertEqual(loaded.codexDirectoryPath, "/tmp/codex")
         XCTAssertEqual(loaded.language, .english)
         XCTAssertEqual(loaded.postSwitchAction, .notifyRestartRecommended)
+        XCTAssertEqual(loaded.apiSwitchThreadSyncScope, .visibleDesktopThreads)
         XCTAssertEqual(loaded.secondaryThresholdPercent, 90)
     }
 
@@ -227,6 +389,25 @@ final class PersistenceTests: XCTestCase {
         XCTAssertTrue(text.contains("[projects.\"/tmp/example\"]"))
     }
 
+    func testProviderConfigStoreDoesNotDefaultModelWhenUnset() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let paths = CodixxPaths(home: directory)
+        let store = CodexProviderConfigStore(paths: paths)
+
+        try store.writeAPIProvider(
+            providerID: "codixx-relay",
+            providerName: "Relay",
+            baseURL: URL(string: "https://relay.example.com/v1")!,
+            defaultModel: nil
+        )
+
+        let text = try String(contentsOf: paths.configTOML)
+        XCTAssertTrue(text.contains("model_provider = \"codixx-relay\""))
+        XCTAssertFalse(text.contains("model = \"gpt-5\""))
+        XCTAssertFalse(text.contains("model = "))
+    }
+
     func testProviderConfigStoreRestoresBackup() throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
         defer { try? FileManager.default.removeItem(at: directory) }
@@ -274,6 +455,37 @@ final class PersistenceTests: XCTestCase {
         XCTAssertFalse(text.contains("model_provider = \"codixx-relay\""))
         XCTAssertFalse(text.contains("BEGIN CODIXX API PROVIDER"))
         XCTAssertFalse(text.contains("[model_providers.codixx-relay]"))
+        XCTAssertTrue(text.contains("model = \"gpt-5\""))
+        XCTAssertTrue(text.contains("[projects.\"/tmp/example\"]"))
+    }
+
+    func testProviderConfigStoreClearsManagedOpenAICustomProviderForChatGPTSwitch() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let paths = CodixxPaths(home: directory)
+        try FileManager.default.createDirectory(at: paths.codexHome, withIntermediateDirectories: true)
+        try """
+        model = "gpt-5"
+        model_provider = "openai-custom"
+
+        # BEGIN CODIXX API PROVIDER
+        [model_providers.openai-custom]
+        name = "Relay"
+        base_url = "https://relay.example.com/v1"
+        wire_api = "responses"
+        # END CODIXX API PROVIDER
+
+        [projects."/tmp/example"]
+        trust_level = "trusted"
+        """.write(to: paths.configTOML, atomically: true, encoding: .utf8)
+        let store = CodexProviderConfigStore(paths: paths)
+
+        try store.clearManagedAPIProvider()
+
+        let text = try String(contentsOf: paths.configTOML)
+        XCTAssertFalse(text.contains("model_provider = \"openai-custom\""))
+        XCTAssertFalse(text.contains("BEGIN CODIXX API PROVIDER"))
+        XCTAssertFalse(text.contains("[model_providers.openai-custom]"))
         XCTAssertTrue(text.contains("model = \"gpt-5\""))
         XCTAssertTrue(text.contains("[projects.\"/tmp/example\"]"))
     }
@@ -354,5 +566,34 @@ final class PersistenceTests: XCTestCase {
 
     private func switchAuditHistoryURL(paths: CodixxPaths, index: Int) -> URL {
         paths.applicationSupport.appendingPathComponent("switch_audit.\(index).jsonl")
+    }
+
+    private func sessionText(id: String, provider: String, source: String) -> String {
+        """
+        {"type":"session_meta","payload":{"id":"\(id)","model_provider":"\(provider)","source":"\(source)"}}
+        {"type":"event_msg","payload":{"type":"user_message","message":"hi"}}
+        """
+    }
+
+    private func runSQLite(_ databaseURL: URL, sql: String) throws {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/sqlite3")
+        process.arguments = [databaseURL.path, sql]
+        try process.run()
+        process.waitUntilExit()
+        XCTAssertEqual(process.terminationStatus, 0)
+    }
+
+    private func sqliteScalar(_ databaseURL: URL, sql: String) throws -> String {
+        let output = Pipe()
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/sqlite3")
+        process.arguments = ["-noheader", databaseURL.path, sql]
+        process.standardOutput = output
+        try process.run()
+        process.waitUntilExit()
+        XCTAssertEqual(process.terminationStatus, 0)
+        return String(data: output.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8)?
+            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
     }
 }

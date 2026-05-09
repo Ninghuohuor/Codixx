@@ -45,6 +45,74 @@ final class AccountStoreTests: XCTestCase {
         XCTAssertFalse(String(data: try Data(contentsOf: paths.accountsJSON), encoding: .utf8)!.contains("sk-test-123"))
     }
 
+    func testUpdateAPIProviderCanKeepExistingKeyOrReplaceIt() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let paths = CodixxPaths(home: directory)
+        let apiKeyVault = InMemoryAPIKeyVault()
+        let store = AccountStore(
+            paths: paths,
+            vault: InMemoryAuthSnapshotVault(),
+            apiKeyVault: apiKeyVault,
+            now: { Date(timeIntervalSince1970: 10) },
+            idGenerator: { UUID(uuidString: "00000000-0000-0000-0000-000000000001")! }
+        )
+        let account = try store.saveAPIProvider(
+            alias: "Relay",
+            providerName: "Relay",
+            baseURL: URL(string: "https://relay.example.com/v1")!,
+            apiKey: "sk-old-123",
+            defaultModel: "gpt-5"
+        )
+
+        let keptKey = try store.updateAPIProvider(
+            account.id,
+            alias: "Relay 2",
+            baseURL: URL(string: "https://relay2.example.com/v1")!,
+            apiKey: nil,
+            defaultModel: nil,
+            balanceQuery: APIBalanceQueryConfig(
+                isEnabled: true,
+                urlText: "https://relay2.example.com/balance",
+                jsonPath: "data.balance"
+            )
+        )
+
+        XCTAssertEqual(keptKey.alias, "Relay 2")
+        XCTAssertEqual(keptKey.fingerprint, account.fingerprint)
+        XCTAssertEqual(keptKey.apiProvider?.baseURL.absoluteString, "https://relay2.example.com/v1")
+        XCTAssertEqual(keptKey.apiProvider?.defaultModel, nil)
+        XCTAssertEqual(keptKey.apiProvider?.balanceQuery?.isEnabled, true)
+        XCTAssertEqual(keptKey.apiProvider?.balanceQuery?.jsonPath, "data.balance")
+        XCTAssertEqual(keptKey.apiProvider?.keyFingerprint, account.apiProvider?.keyFingerprint)
+        XCTAssertEqual(apiKeyVault.keys[account.apiProvider!.keyFingerprint], "sk-old-123")
+
+        let replacedKey = try store.updateAPIProvider(
+            account.id,
+            alias: "Relay 3",
+            baseURL: URL(string: "https://relay3.example.com/v1")!,
+            apiKey: "sk-new-456",
+            defaultModel: "gpt-5.1"
+        )
+
+        XCTAssertEqual(replacedKey.alias, "Relay 3")
+        XCTAssertEqual(replacedKey.fingerprint, "api-provider:api-key:\(sha256Prefix16("sk-new-456"))")
+        XCTAssertEqual(replacedKey.apiProvider?.keyFingerprint, "api-key:\(sha256Prefix16("sk-new-456"))")
+        XCTAssertNil(apiKeyVault.keys[account.apiProvider!.keyFingerprint])
+        XCTAssertEqual(apiKeyVault.keys[replacedKey.apiProvider!.keyFingerprint], "sk-new-456")
+    }
+
+    func testLegacyAPIBalanceQueryConfigDefaultsRefreshFields() throws {
+        let json = #"{"isEnabled":true,"urlText":"https://relay.example.com/balance","jsonPath":"data.balance"}"#
+
+        let config = try JSONDecoder().decode(APIBalanceQueryConfig.self, from: Data(json.utf8))
+
+        XCTAssertTrue(config.isEnabled)
+        XCTAssertEqual(config.refreshIntervalSeconds, 900)
+        XCTAssertNil(config.lastBalanceText)
+        XCTAssertNil(config.lastRefreshedAt)
+    }
+
     func testFingerprintPrefersStableAccountIdThenEmailThenAccessTokenHash() throws {
         let accountIdAuth = try AuthSnapshot(jsonData: Data(#"{"account_id":"acct_123","email":"main@example.com","access_token":"secret"}"#.utf8))
         let emailAuth = try AuthSnapshot(jsonData: Data(#"{"email":"main@example.com","access_token":"secret"}"#.utf8))
@@ -202,6 +270,60 @@ final class AccountStoreTests: XCTestCase {
 
         XCTAssertEqual(metadata.accounts, [])
         XCTAssertNil(vault.snapshotDataByFingerprint[account.fingerprint])
+    }
+
+    func testSaveCurrentAuthRestoresQuotaHistoryAfterDeletingAndReaddingSameFingerprint() throws {
+        let home = try makeTempHome()
+        defer { try? FileManager.default.removeItem(at: home) }
+        let paths = CodixxPaths(home: home)
+        try FileManager.default.createDirectory(at: paths.codexHome, withIntermediateDirectories: true)
+        try Data(#"{"account_id":"acct_main","access_token":"secret"}"#.utf8).write(to: paths.authJSON)
+        let vault = InMemoryAuthSnapshotVault()
+        let ids = [
+            UUID(uuidString: "11111111-1111-1111-1111-111111111111")!,
+            UUID(uuidString: "22222222-2222-2222-2222-222222222222")!
+        ]
+        var idIndex = 0
+        let store = AccountStore(
+            paths: paths,
+            metadataStore: AccountMetadataStore(paths: paths),
+            vault: vault,
+            now: { Date(timeIntervalSince1970: 200) },
+            idGenerator: {
+                defer { idIndex += 1 }
+                return ids[idIndex]
+            }
+        )
+        var account = try store.saveCurrentAuth(alias: "Main")
+        account.quota = AccountQuotaState(
+            accountId: account.id.uuidString,
+            alias: account.alias,
+            planType: "plus",
+            primaryUsedPercent: 100,
+            primaryWindowMinutes: 300,
+            primaryResetsAt: Date(timeIntervalSince1970: 500),
+            secondaryUsedPercent: 72,
+            secondaryWindowMinutes: 10_080,
+            secondaryResetsAt: Date(timeIntervalSince1970: 900),
+            lastObservedAt: Date(timeIntervalSince1970: 180),
+            confidence: .recent
+        )
+        try AccountMetadataStore(paths: paths).save(AccountMetadataList(accounts: [account]))
+
+        try store.deleteAccount(account.id)
+        let readded = try store.saveCurrentAuth(alias: "Main Again")
+
+        XCTAssertEqual(readded.id, ids[1])
+        XCTAssertEqual(readded.alias, "Main Again")
+        XCTAssertEqual(readded.quota.accountId, ids[1].uuidString)
+        XCTAssertEqual(readded.quota.alias, "Main Again")
+        XCTAssertEqual(readded.quota.planType, "plus")
+        XCTAssertEqual(readded.quota.primaryUsedPercent, 100)
+        XCTAssertEqual(readded.quota.primaryResetsAt, Date(timeIntervalSince1970: 500))
+        XCTAssertEqual(readded.quota.secondaryUsedPercent, 72)
+        XCTAssertEqual(readded.quota.secondaryResetsAt, Date(timeIntervalSince1970: 900))
+        XCTAssertEqual(readded.quota.lastObservedAt, Date(timeIntervalSince1970: 180))
+        XCTAssertEqual(readded.quota.confidence, .recent)
     }
 
     func testDeleteAPIProviderRemovesMetadataAndAPIKey() throws {

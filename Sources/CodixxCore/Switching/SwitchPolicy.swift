@@ -39,13 +39,16 @@ public struct SwitchPolicy: Sendable {
     }
 
     public func shouldAutoSwitch(currentAccount: CodixxAccount?, allAccounts: [CodixxAccount] = [], context: SwitchSafetyContext) -> Bool {
-        guard let currentAccount,
-              currentAccount.isChatGPT,
+        guard let currentAccount else { return false }
+        if currentAccount.isAPIProvider {
+            guard isSafeToAutoSwitch(context: context) else { return false }
+            let others = allAccounts.filter { $0.id != currentAccount.id }
+            return !orderedCandidates(from: others) { _ in true }.isEmpty
+        }
+        guard currentAccount.isChatGPT,
               currentAccount.quota.confidence == .fresh || currentAccount.quota.confidence == .recent,
               currentAccount.quota.primaryUsedPercent != nil || currentAccount.quota.secondaryUsedPercent != nil
-        else {
-            return false
-        }
+        else { return false }
         if isDepleted(currentAccount) {
             let others = allAccounts.filter { $0.id != currentAccount.id }
             let hasAvailable = !orderedCandidates(from: others) { _ in true }.isEmpty

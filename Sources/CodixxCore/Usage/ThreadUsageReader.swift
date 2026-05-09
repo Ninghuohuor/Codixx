@@ -395,10 +395,20 @@ public struct ThreadUsageReader: Sendable {
 
             var previousTotal: Int?
             for event in events {
-                defer { previousTotal = event.totalTokens }
-                guard let accountWindow = accountWindow(for: event.timestamp, in: accountWindows) else { continue }
+                guard let accountWindow = accountWindow(for: event.timestamp, in: accountWindows) else {
+                    previousTotal = event.totalTokens
+                    continue
+                }
                 let accountId = accountWindow.accountId
-                let baseline = previousTotal ?? (thread.createdAt >= accountWindow.start ? 0 : event.totalTokens)
+                let baseline: Int
+                if let previousTotal {
+                    baseline = previousTotal
+                } else if thread.createdAt >= accountWindow.start {
+                    baseline = 0
+                } else {
+                    baseline = event.totalTokens
+                }
+                previousTotal = event.totalTokens
                 let delta = max(0, event.totalTokens - baseline)
                 guard delta > 0 else { continue }
 
