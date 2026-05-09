@@ -11,6 +11,7 @@ final class AppLifecycleCoordinator: ObservableObject {
     private let shouldStartAuthFileObservation: Bool
     private var quotaTimer: Timer?
     private var usageTimer: Timer?
+    private var apiBalanceTimer: Timer?
     private var authFileDescriptor: Int32 = -1
     private var authFileSource: DispatchSourceFileSystemObject?
     private var isStarted = false
@@ -31,6 +32,7 @@ final class AppLifecycleCoordinator: ObservableObject {
         isStarted = false
         quotaTimer?.invalidate()
         usageTimer?.invalidate()
+        apiBalanceTimer?.invalidate()
         authFileSource?.cancel()
         NotificationCenter.default.removeObserver(self)
         DistributedNotificationCenter.default().removeObserver(self)
@@ -65,9 +67,11 @@ final class AppLifecycleCoordinator: ObservableObject {
     private func scheduleTimers() {
         quotaTimer?.invalidate()
         usageTimer?.invalidate()
+        apiBalanceTimer?.invalidate()
 
         scheduleQuotaTimer()
         scheduleUsageTimer()
+        scheduleAPIBalanceTimer()
     }
 
     private func scheduleQuotaTimer() {
@@ -94,6 +98,17 @@ final class AppLifecycleCoordinator: ObservableObject {
                 guard let self, self.isStarted else { return }
                 self.refreshUsageAndNotify()
                 self.scheduleUsageTimer()
+            }
+        }
+    }
+
+    private func scheduleAPIBalanceTimer() {
+        apiBalanceTimer?.invalidate()
+        apiBalanceTimer = Timer.scheduledTimer(withTimeInterval: 60, repeats: false) { [weak self] _ in
+            Task { @MainActor in
+                guard let self, self.isStarted else { return }
+                self.state.refreshAPIBalancesNow()
+                self.scheduleAPIBalanceTimer()
             }
         }
     }
@@ -158,6 +173,7 @@ final class AppLifecycleCoordinator: ObservableObject {
     @objc private func workspaceWillSleep() {
         quotaTimer?.invalidate()
         usageTimer?.invalidate()
+        apiBalanceTimer?.invalidate()
     }
 
     @objc private func workspaceDidWake() {

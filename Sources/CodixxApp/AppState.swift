@@ -8,12 +8,6 @@ enum AccountSaveStatus: Equatable {
     case failure(message: String)
 }
 
-private struct CodexActivation {
-    static let bundleIdentifier = "com.openai.codex"
-
-    var activeProcessIdentifier: pid_t?
-}
-
 @MainActor
 protocol LifecycleStateManaging: AnyObject {
     var config: CodixxConfig { get }
@@ -25,6 +19,7 @@ protocol LifecycleStateManaging: AnyObject {
     func refreshNow()
     func refreshQuotaNow()
     func refreshUsageNow()
+    func refreshAPIBalancesNow()
 }
 
 @MainActor
@@ -58,6 +53,9 @@ final class AppState: ObservableObject, LifecycleStateManaging {
     private let switcher: AccountSwitcher
     private let vault: AuthSnapshotVault
     private let apiKeyVault: APIKeyVault
+    private let codexDesktopManager: CodexDesktopManaging
+    private let connectivityTester: APIProviderConnectivityTesting
+    private let balanceQueryTester: APIBalanceQueryTesting
     private let now: () -> Date
     private var isRefreshInProgress = false
     private var isSwitchInProgress = false
@@ -73,11 +71,18 @@ final class AppState: ObservableObject, LifecycleStateManaging {
         paths: CodixxPaths = CodixxPaths(),
         vault: AuthSnapshotVault = KeychainVault(),
         apiKeyVault: APIKeyVault = KeychainAPIKeyVault(),
+        codexDesktopState: CodexDesktopStateCleaning? = nil,
+        codexDesktopManager: CodexDesktopManaging? = nil,
+        connectivityTester: APIProviderConnectivityTesting = APIProviderConnectivityTester(),
+        balanceQueryTester: APIBalanceQueryTesting = APIBalanceQueryTester(),
         now: @escaping () -> Date = Date.init
     ) {
         self.paths = paths
         self.vault = vault
         self.apiKeyVault = apiKeyVault
+        self.codexDesktopManager = codexDesktopManager ?? SystemCodexDesktopManager()
+        self.connectivityTester = connectivityTester
+        self.balanceQueryTester = balanceQueryTester
         self.now = now
         self.configStore = CodixxConfigStore(paths: paths)
         self.metadataStore = AccountMetadataStore(paths: paths)
@@ -94,6 +99,14 @@ final class AppState: ObservableObject, LifecycleStateManaging {
             apiKeyVault: apiKeyVault,
             now: now
         )
+        let resolvedCodexDesktopState = codexDesktopState ?? FileSystemCodexDesktopStateCleaner(
+            paths: paths,
+            isRunning: {
+                !NSRunningApplication.runningApplications(
+                    withBundleIdentifier: CodexActivation.bundleIdentifier
+                ).isEmpty
+            }
+        )
         self.switcher = AccountSwitcher(
             paths: paths,
             metadataStore: metadataStore,
@@ -101,7 +114,12 @@ final class AppState: ObservableObject, LifecycleStateManaging {
             backupManager: SwitchBackupManager(paths: paths),
             auditLog: auditLog,
             now: now,
-            apiKeyVault: apiKeyVault
+            apiKeyVault: apiKeyVault,
+            codexDesktopState: resolvedCodexDesktopState,
+            threadProviderSync: SQLiteCodexThreadProviderSync(paths: paths),
+            apiSwitchThreadSyncScope: {
+                ((try? CodixxConfigStore(paths: paths).load()) ?? .default(paths: paths)).apiSwitchThreadSyncScope
+            }
         )
         self.config = (try? configStore.load()) ?? .default(paths: paths)
     }
@@ -185,6 +203,12 @@ final class AppState: ObservableObject, LifecycleStateManaging {
             preservingError: nil,
             throttled: false
         )
+    }
+
+    func refreshAPIBalancesNow() {
+        Task {
+            await refreshDueAPIBalances(force: true)
+        }
     }
 
     func refreshTrendsIfNeeded() {
@@ -398,8 +422,12 @@ final class AppState: ObservableObject, LifecycleStateManaging {
 
         isSwitchInProgress = true
         defer { isSwitchInProgress = false }
+        accountSaveStatus = nil
 
         do {
+            if target.isChatGPT {
+                codexDesktopManager.quitForCleanSwitch()
+            }
             _ = try switcher.switchToAccount(target.id, trigger: .autoPrimaryThreshold)
             refresh(
                 applyRateLimitObservations: false,
@@ -409,7 +437,12 @@ final class AppState: ObservableObject, LifecycleStateManaging {
                 refreshUsage: false,
                 refreshUsageIfEmpty: false
             )
-            handlePostSwitchAction()
+            if target.isChatGPT {
+                postSwitchRestartMessage = nil
+                try codexDesktopManager.restart()
+            } else {
+                handlePostSwitchAction()
+            }
         } catch {
             let preservedError = pauseAutoSwitchIfRollbackFailed(error)
             refresh(
@@ -438,11 +471,17 @@ final class AppState: ObservableObject, LifecycleStateManaging {
 
     func saveAPIProviderAccount(
         alias: String,
-        providerName: String,
         baseURLText: String,
         apiKey: String,
         defaultModel: String
     ) {
+        let trimmedAlias = alias.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedAlias.isEmpty else {
+            errorMessage = strings.aliasRequired
+            accountSaveStatus = .failure(message: strings.aliasRequired)
+            return
+        }
+
         guard let baseURL = URL(string: baseURLText),
               baseURL.scheme?.hasPrefix("http") == true
         else {
@@ -451,14 +490,12 @@ final class AppState: ObservableObject, LifecycleStateManaging {
             return
         }
 
-        let trimmedProvider = providerName.trimmingCharacters(in: .whitespacesAndNewlines)
-        let savedProvider = trimmedProvider.isEmpty ? "API Provider" : trimmedProvider
         let trimmedModel = defaultModel.trimmingCharacters(in: .whitespacesAndNewlines)
 
         do {
             let account = try accountStore.saveAPIProvider(
-                alias: alias,
-                providerName: savedProvider,
+                alias: trimmedAlias,
+                providerName: trimmedAlias,
                 baseURL: baseURL,
                 apiKey: apiKey,
                 defaultModel: trimmedModel.isEmpty ? nil : trimmedModel
@@ -471,12 +508,181 @@ final class AppState: ObservableObject, LifecycleStateManaging {
         }
     }
 
+    func updateAPIProviderAccount(
+        _ account: CodixxAccount,
+        alias: String,
+        baseURLText: String,
+        apiKey: String,
+        defaultModel: String,
+        balanceQuery: APIBalanceQueryConfig? = nil
+    ) {
+        accountSaveStatus = nil
+        let trimmedAlias = alias.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedAlias.isEmpty else {
+            errorMessage = strings.aliasRequired
+            accountSaveStatus = .failure(message: strings.aliasRequired)
+            return
+        }
+
+        guard let baseURL = URL(string: baseURLText),
+              baseURL.scheme?.hasPrefix("http") == true
+        else {
+            errorMessage = strings.invalidBaseURL
+            accountSaveStatus = .failure(message: strings.invalidBaseURL)
+            return
+        }
+
+        let trimmedKey = apiKey.trimmingCharacters(in: .whitespacesAndNewlines)
+        let apiKeyToSave = trimmedKey == maskedAPIKey(for: account) ? nil : trimmedKey
+        let trimmedModel = defaultModel.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        do {
+            let updatedAccount = try accountStore.updateAPIProvider(
+                account.id,
+                alias: trimmedAlias,
+                baseURL: baseURL,
+                apiKey: apiKeyToSave?.isEmpty == true ? nil : apiKeyToSave,
+                defaultModel: trimmedModel.isEmpty ? nil : trimmedModel,
+                balanceQuery: balanceQuery
+            )
+            if let index = accounts.firstIndex(where: { $0.id == updatedAccount.id }) {
+                accounts[index] = updatedAccount
+            }
+            if currentAccount?.id == updatedAccount.id {
+                currentAccount = updatedAccount
+            }
+            refresh(
+                applyRateLimitObservations: false,
+                allowAutoSwitch: false,
+                preservingError: nil,
+                throttled: false
+            )
+        } catch {
+            accountSaveStatus = .failure(message: error.localizedDescription)
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    func maskedAPIKey(for account: CodixxAccount) -> String? {
+        guard let fingerprint = account.apiProvider?.keyFingerprint else { return nil }
+        if let apiKey = try? apiKeyVault.load(fingerprint: fingerprint) {
+            return Self.maskAPIKey(apiKey)
+        }
+        return Self.maskAPIKeyFingerprint(fingerprint)
+    }
+
+    func resolveAPIKeyForTesting(account: CodixxAccount?, apiKeyText: String) -> String? {
+        let trimmedKey = apiKeyText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let account else { return trimmedKey.isEmpty ? nil : trimmedKey }
+        if trimmedKey == maskedAPIKey(for: account),
+           let fingerprint = account.apiProvider?.keyFingerprint,
+           let storedKey = try? apiKeyVault.load(fingerprint: fingerprint)
+        {
+            return storedKey
+        }
+        return trimmedKey.isEmpty ? nil : trimmedKey
+    }
+
+    func testAPIProviderConnection(
+        account: CodixxAccount?,
+        baseURLText: String,
+        apiKeyText: String,
+        defaultModel: String
+    ) async -> APIProviderConnectivityResult {
+        guard let baseURL = URL(string: baseURLText),
+              baseURL.scheme?.hasPrefix("http") == true
+        else {
+            return APIProviderConnectivityResult(isSuccess: false, message: strings.invalidBaseURL)
+        }
+        guard let apiKey = resolveAPIKeyForTesting(account: account, apiKeyText: apiKeyText), !apiKey.isEmpty else {
+            return APIProviderConnectivityResult(isSuccess: false, message: strings.requiredField(strings.apiKeyAccount))
+        }
+        let trimmedModel = defaultModel.trimmingCharacters(in: .whitespacesAndNewlines)
+        let result = await connectivityTester.testConnection(
+            baseURL: baseURL,
+            apiKey: apiKey,
+            defaultModel: trimmedModel.isEmpty ? nil : trimmedModel
+        )
+        if result.isSuccess {
+            return APIProviderConnectivityResult(isSuccess: true, message: strings.connectionSucceeded)
+        }
+        return result
+    }
+
+    func testAPIBalanceQuery(account: CodixxAccount, config balanceQuery: APIBalanceQueryConfig) async -> APIBalanceQueryResult {
+        guard let url = URL(string: balanceQuery.urlText),
+              url.scheme?.hasPrefix("http") == true
+        else {
+            return APIBalanceQueryResult(isSuccess: false, message: strings.invalidBaseURL)
+        }
+        guard let fingerprint = account.apiProvider?.keyFingerprint,
+              let apiKey = try? apiKeyVault.load(fingerprint: fingerprint)
+        else {
+            return APIBalanceQueryResult(isSuccess: false, message: strings.noAPIAccountForBalance)
+        }
+        let result = await balanceQueryTester.queryBalance(
+            url: url,
+            apiKey: apiKey,
+            jsonPath: balanceQuery.jsonPath
+        )
+        return result
+    }
+
+    @discardableResult
+    func refreshAPIBalance(for account: CodixxAccount) async -> APIBalanceQueryResult {
+        guard var balanceQuery = account.apiProvider?.balanceQuery else {
+            return APIBalanceQueryResult(isSuccess: false, message: strings.noAPIAccountForBalance)
+        }
+
+        let result = await testAPIBalanceQuery(account: account, config: balanceQuery)
+        guard result.isSuccess else { return result }
+
+        balanceQuery.lastBalanceText = result.balanceText ?? result.message
+        balanceQuery.lastRefreshedAt = now()
+        do {
+            let updatedAccount = try accountStore.updateAPIBalanceQuery(account.id, balanceQuery: balanceQuery)
+            if let index = accounts.firstIndex(where: { $0.id == updatedAccount.id }) {
+                accounts[index] = updatedAccount
+            }
+            if currentAccount?.id == updatedAccount.id {
+                currentAccount = updatedAccount
+            }
+        } catch {
+            errorMessage = error.localizedDescription
+            return APIBalanceQueryResult(isSuccess: false, message: error.localizedDescription)
+        }
+        return result
+    }
+
+    func refreshDueAPIBalances(force: Bool = false) async {
+        let timestamp = now()
+        for account in accounts where account.isAPIProvider {
+            guard let balanceQuery = account.apiProvider?.balanceQuery,
+                  balanceQuery.isEnabled
+            else {
+                continue
+            }
+            if !force,
+               let lastRefreshedAt = balanceQuery.lastRefreshedAt,
+               timestamp.timeIntervalSince(lastRefreshedAt) < balanceQuery.refreshIntervalSeconds
+            {
+                continue
+            }
+            _ = await refreshAPIBalance(for: account)
+        }
+    }
+
     func switchToAccount(_ account: CodixxAccount) {
+        accountSaveStatus = nil
+        guard account.isAPIProvider else {
+            switchToAccountAndRestartCodex(account)
+            return
+        }
         guard !isSwitchInProgress else { return }
         isSwitchInProgress = true
         defer { isSwitchInProgress = false }
 
-        let codexActivation = currentCodexActivation()
+        let codexActivation = codexDesktopManager.currentActivation()
         refresh(
             applyRateLimitObservations: true,
             allowAutoSwitch: false,
@@ -498,7 +704,7 @@ final class AppState: ObservableObject, LifecycleStateManaging {
                 refreshUsageIfEmpty: false
             )
             handlePostSwitchAction()
-            restoreCodexActivationIfNeeded(codexActivation)
+            codexDesktopManager.restoreActivationIfNeeded(codexActivation)
         } catch {
             let preservedError = pauseAutoSwitchIfRollbackFailed(error)
             refresh(
@@ -516,6 +722,7 @@ final class AppState: ObservableObject, LifecycleStateManaging {
         guard !isSwitchInProgress else { return }
         isSwitchInProgress = true
         defer { isSwitchInProgress = false }
+        accountSaveStatus = nil
 
         refresh(
             applyRateLimitObservations: true,
@@ -527,6 +734,7 @@ final class AppState: ObservableObject, LifecycleStateManaging {
         )
 
         do {
+            codexDesktopManager.quitForCleanSwitch()
             _ = try switcher.switchToAccount(account.id, trigger: .manual)
             suppressAutoSwitchAfterManualSwitch()
             refresh(
@@ -538,7 +746,7 @@ final class AppState: ObservableObject, LifecycleStateManaging {
                 refreshUsageIfEmpty: false
             )
             postSwitchRestartMessage = nil
-            try restartCodexDesktop()
+            try codexDesktopManager.restart()
         } catch {
             let preservedError = pauseAutoSwitchIfRollbackFailed(error)
             refresh(
@@ -565,6 +773,7 @@ final class AppState: ObservableObject, LifecycleStateManaging {
     }
 
     func renameAccount(_ account: CodixxAccount, alias: String) {
+        accountSaveStatus = nil
         do {
             _ = try accountStore.renameAccount(account.id, alias: alias)
             refresh(
@@ -579,6 +788,7 @@ final class AppState: ObservableObject, LifecycleStateManaging {
     }
 
     func deleteAccount(_ account: CodixxAccount) {
+        accountSaveStatus = nil
         do {
             try accountStore.deleteAccount(account.id)
             refresh(
@@ -627,10 +837,14 @@ final class AppState: ObservableObject, LifecycleStateManaging {
         updateConfig { $0.postSwitchAction = action }
     }
 
+    func setAPISwitchThreadSyncScope(_ scope: APISwitchThreadSyncScope) {
+        updateConfig { $0.apiSwitchThreadSyncScope = scope }
+    }
+
     func restartCodexNow() {
         do {
             postSwitchRestartMessage = nil
-            try restartCodexDesktop()
+            try codexDesktopManager.restart()
         } catch {
             errorMessage = "\(strings.restartCodexFailed): \(error.localizedDescription)"
         }
@@ -706,101 +920,6 @@ final class AppState: ObservableObject, LifecycleStateManaging {
             postSwitchRestartMessage = strings.restartCodexHint
         case .restartCodexApp:
             postSwitchRestartMessage = strings.restartCodexHint
-        }
-    }
-
-    private func restartCodexDesktop() throws {
-        let bundleIdentifier = "com.openai.codex"
-        let applicationURL = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleIdentifier)
-            ?? URL(fileURLWithPath: "/Applications/Codex.app", isDirectory: true)
-
-        let runningApplications = NSRunningApplication.runningApplications(withBundleIdentifier: bundleIdentifier)
-        runningApplications.forEach { application in
-            application.terminate()
-        }
-
-        guard !runningApplications.isEmpty else {
-            openCodexDesktop(at: applicationURL)
-            return
-        }
-
-        waitForCodexExitThenOpen(applicationURL: applicationURL, remainingAttempts: 25)
-    }
-
-    private func waitForCodexExitThenOpen(applicationURL: URL, remainingAttempts: Int) {
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) { [weak self] in
-            guard let self else { return }
-            let runningApplications = NSRunningApplication.runningApplications(withBundleIdentifier: CodexActivation.bundleIdentifier)
-            guard !runningApplications.isEmpty, remainingAttempts > 0 else {
-                self.openCodexDesktop(at: applicationURL)
-                return
-            }
-
-            if remainingAttempts == 15 {
-                runningApplications.forEach { $0.forceTerminate() }
-            }
-
-            self.waitForCodexExitThenOpen(applicationURL: applicationURL, remainingAttempts: remainingAttempts - 1)
-        }
-    }
-
-    private func openCodexDesktop(at applicationURL: URL) {
-        let configuration = NSWorkspace.OpenConfiguration()
-        configuration.activates = true
-        NSWorkspace.shared.openApplication(at: applicationURL, configuration: configuration) { [weak self] _, error in
-            guard let error else {
-                Task { @MainActor in
-                    self?.verifyCodexLaunchFallback(applicationURL: applicationURL)
-                }
-                return
-            }
-            Task { @MainActor in
-                self?.launchCodexWithOpenCommand(applicationURL: applicationURL, previousError: error)
-            }
-        }
-    }
-
-    private func verifyCodexLaunchFallback(applicationURL: URL) {
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1) { [weak self] in
-            let runningApplications = NSRunningApplication.runningApplications(withBundleIdentifier: CodexActivation.bundleIdentifier)
-            guard runningApplications.isEmpty else { return }
-            self?.launchCodexWithOpenCommand(applicationURL: applicationURL, previousError: nil)
-        }
-    }
-
-    private func launchCodexWithOpenCommand(applicationURL: URL, previousError: Error?) {
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/usr/bin/open")
-        process.arguments = ["-b", CodexActivation.bundleIdentifier]
-
-        do {
-            try process.run()
-        } catch {
-            let fallbackProcess = Process()
-            fallbackProcess.executableURL = URL(fileURLWithPath: "/usr/bin/open")
-            fallbackProcess.arguments = [applicationURL.path]
-            do {
-                try fallbackProcess.run()
-            } catch {
-                let prefix = strings.restartCodexFailed
-                let original = previousError.map { "\($0.localizedDescription)\n" } ?? ""
-                errorMessage = "\(prefix): \(original)\(error.localizedDescription)"
-            }
-        }
-    }
-
-    private func currentCodexActivation() -> CodexActivation {
-        let applications = NSRunningApplication.runningApplications(withBundleIdentifier: CodexActivation.bundleIdentifier)
-        let activeApplication = applications.first { $0.isActive }
-        return CodexActivation(activeProcessIdentifier: activeApplication?.processIdentifier)
-    }
-
-    private func restoreCodexActivationIfNeeded(_ activation: CodexActivation) {
-        guard let processIdentifier = activation.activeProcessIdentifier else { return }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
-            let applications = NSRunningApplication.runningApplications(withBundleIdentifier: CodexActivation.bundleIdentifier)
-            let application = applications.first { $0.processIdentifier == processIdentifier } ?? applications.first
-            application?.activate(options: [.activateAllWindows, .activateIgnoringOtherApps])
         }
     }
 
@@ -913,6 +1032,20 @@ final class AppState: ObservableObject, LifecycleStateManaging {
             .filter { $0.result == .success }
             .map(\.timestamp)
             .max()
+    }
+
+    private static func maskAPIKey(_ apiKey: String) -> String {
+        let trimmedKey = apiKey.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmedKey.count > 8 else { return "••••" }
+        let prefix = trimmedKey.prefix(6)
+        let suffix = trimmedKey.suffix(4)
+        return "\(prefix)...\(suffix)"
+    }
+
+    private static func maskAPIKeyFingerprint(_ fingerprint: String) -> String {
+        let hash = fingerprint.replacingOccurrences(of: "api-key:", with: "")
+        guard hash.count >= 8 else { return "sk-..." }
+        return "sk-\(hash.prefix(4))...\(hash.suffix(4))"
     }
 
     private static let percentFormatter: NumberFormatter = {

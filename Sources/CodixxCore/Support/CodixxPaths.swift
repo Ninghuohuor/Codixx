@@ -6,10 +6,12 @@ public struct CodixxPaths: Sendable {
     public var authJSON: URL
     public var configTOML: URL
     public var applicationSupport: URL
+    public var codexDesktopApplicationSupport: URL
     public var backups: URL
     public var logs: URL
     public var configJSON: URL
     public var accountsJSON: URL
+    public var accountQuotaHistoryJSON: URL
     public var parseCursorsJSON: URL
     public var trendCacheJSON: URL
     public var switchAuditJSONL: URL
@@ -20,10 +22,12 @@ public struct CodixxPaths: Sendable {
         self.authJSON = codexHome.appendingPathComponent("auth.json")
         self.configTOML = codexHome.appendingPathComponent("config.toml")
         self.applicationSupport = home.appendingPathComponent("Library/Application Support/Codixx", isDirectory: true)
+        self.codexDesktopApplicationSupport = home.appendingPathComponent("Library/Application Support/Codex", isDirectory: true)
         self.backups = applicationSupport.appendingPathComponent("backups", isDirectory: true)
         self.logs = applicationSupport.appendingPathComponent("logs", isDirectory: true)
         self.configJSON = applicationSupport.appendingPathComponent("config.json")
         self.accountsJSON = applicationSupport.appendingPathComponent("accounts.json")
+        self.accountQuotaHistoryJSON = applicationSupport.appendingPathComponent("account_quota_history.json")
         self.parseCursorsJSON = applicationSupport.appendingPathComponent("parse_cursors.json")
         self.trendCacheJSON = applicationSupport.appendingPathComponent("trend_cache.json")
         self.switchAuditJSONL = applicationSupport.appendingPathComponent("switch_audit.jsonl")

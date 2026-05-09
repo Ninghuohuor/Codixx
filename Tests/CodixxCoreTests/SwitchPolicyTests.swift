@@ -59,8 +59,7 @@ final class SwitchPolicyTests: XCTestCase {
             "Same Priority Less Recent",
             "Same Priority Lower Quota",
             "Higher Priority",
-            "Lower Priority",
-            "Unknown"
+            "Lower Priority"
         ])
     }
 
@@ -196,6 +195,43 @@ final class SwitchPolicyTests: XCTestCase {
         ))
     }
 
+    func testDepletedAccountDoesNotAutoSwitchToUnknownAlternative() {
+        let now = Date(timeIntervalSince1970: 1_000)
+        let policy = SwitchPolicy(
+            primaryThresholdPercent: 93,
+            secondaryThresholdPercent: 90,
+            autoSwitchCooldownSeconds: 300,
+            activeThreadIdleSeconds: 120
+        )
+        let current = account(alias: "Main", primary: 100, secondary: 100, confidence: .fresh, now: now)
+        let unknown = account(alias: "Unknown", primary: nil, secondary: nil, confidence: .unknown, now: now)
+
+        XCTAssertFalse(policy.shouldAutoSwitch(
+            currentAccount: current,
+            allAccounts: [current, unknown],
+            context: .idle(now: now)
+        ))
+        XCTAssertTrue(policy.orderedCandidates(from: [unknown]) { _ in true }.isEmpty)
+    }
+
+    func testAutoSwitchCandidateRequiresRecentCompleteQuotaEvidence() {
+        let now = Date(timeIntervalSince1970: 1_000)
+        let policy = SwitchPolicy(primaryThresholdPercent: 93, secondaryThresholdPercent: 90)
+
+        let ordered = policy.orderedCandidates(
+            from: [
+                account(alias: "Known", primary: 10, secondary: 10, confidence: .recent, now: now),
+                account(alias: "Missing Weekly", primary: 10, secondary: nil, confidence: .fresh, now: now),
+                account(alias: "Missing Five Hour", primary: nil, secondary: 10, confidence: .fresh, now: now),
+                account(alias: "Stale", primary: 10, secondary: 10, confidence: .stale, now: now),
+                account(alias: "Unknown", primary: nil, secondary: nil, confidence: .unknown, now: now)
+            ],
+            snapshotExists: { _ in true }
+        )
+
+        XCTAssertEqual(ordered.map(\.alias), ["Known"])
+    }
+
     func testAutoSwitchRespectsCooldownAfterLastSuccessfulSwitch() {
         let now = Date(timeIntervalSince1970: 1_000)
         let policy = SwitchPolicy(primaryThresholdPercent: 93, autoSwitchCooldownSeconds: 300)
@@ -249,7 +285,7 @@ final class SwitchPolicyTests: XCTestCase {
         XCTAssertEqual(ordered.map(\.alias), ["Under Weekly Threshold"])
     }
 
-    func testAutoSwitchSkipsAPIProviderAccounts() {
+    func testAutoSwitchSkipsAPIProviderAccountsAsTargetsButCanReturnFromAPIProvider() {
         let now = Date(timeIntervalSince1970: 1_000)
         let policy = SwitchPolicy(primaryThresholdPercent: 90, secondaryThresholdPercent: 90)
         let api = account(
@@ -265,7 +301,37 @@ final class SwitchPolicyTests: XCTestCase {
         let ordered = policy.orderedCandidates(from: [api, chatgpt]) { _ in true }
 
         XCTAssertEqual(ordered.map(\.alias), ["ChatGPT"])
-        XCTAssertFalse(policy.shouldAutoSwitch(currentAccount: api, allAccounts: [chatgpt]))
+        XCTAssertTrue(policy.shouldAutoSwitch(
+            currentAccount: api,
+            allAccounts: [api, chatgpt],
+            context: .idle(now: now)
+        ))
+    }
+
+    func testAutoSwitchFromAPIProviderRespectsSafetyContext() {
+        let now = Date(timeIntervalSince1970: 1_000)
+        let policy = SwitchPolicy(autoSwitchCooldownSeconds: 300, activeThreadIdleSeconds: 120)
+        let api = account(alias: "Relay", primary: nil, secondary: nil, confidence: .unknown, credentialKind: .apiProvider, now: now)
+        let chatgpt = account(alias: "ChatGPT", primary: 20, secondary: 20, confidence: .fresh, now: now)
+
+        XCTAssertFalse(policy.shouldAutoSwitch(
+            currentAccount: api,
+            allAccounts: [api, chatgpt],
+            context: SwitchSafetyContext(
+                now: now,
+                activeThreadUpdatedAt: now.addingTimeInterval(-119),
+                lastSwitchAt: nil
+            )
+        ))
+        XCTAssertFalse(policy.shouldAutoSwitch(
+            currentAccount: api,
+            allAccounts: [api, chatgpt],
+            context: SwitchSafetyContext(
+                now: now,
+                activeThreadUpdatedAt: nil,
+                lastSwitchAt: now.addingTimeInterval(-299)
+            )
+        ))
     }
 
     private func account(

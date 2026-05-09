@@ -105,6 +105,23 @@ struct SettingsView: View {
                         }
                     }
                     .pickerStyle(.menu)
+
+                    Divider()
+
+                    Picker(state.strings.apiSwitchThreadSyncScope, selection: Binding(
+                        get: { state.config.apiSwitchThreadSyncScope },
+                        set: { state.setAPISwitchThreadSyncScope($0) }
+                    )) {
+                        ForEach(APISwitchThreadSyncScope.allCases) { scope in
+                            Text(state.strings.apiSwitchThreadSyncScopeLabel(scope)).tag(scope)
+                        }
+                    }
+                    .pickerStyle(.menu)
+
+                    Text(state.strings.apiSwitchThreadSyncScopeHint)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
 
                 settingsSection(title: state.strings.refreshIntervalSection) {
@@ -214,4 +231,5 @@ struct SettingsView: View {
             .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 8))
         }
     }
+
 }

@@ -48,12 +48,13 @@ public struct CodexProviderConfigStore {
 
         let existing = (try? String(contentsOf: paths.configTOML, encoding: .utf8)) ?? ""
         let withoutManagedBlock = removeManagedBlock(from: existing)
+        var rootKeys = ["model_provider": providerID]
+        if let defaultModel, !defaultModel.isEmpty {
+            rootKeys["model"] = defaultModel
+        }
         let withRootKeys = upsertRootKeys(
             in: withoutManagedBlock,
-            keys: [
-                "model": defaultModel ?? "gpt-5",
-                "model_provider": providerID
-            ]
+            keys: rootKeys
         )
         let managedBlock = """
         # BEGIN CODIXX API PROVIDER
@@ -74,8 +75,12 @@ public struct CodexProviderConfigStore {
     public func clearManagedAPIProvider() throws {
         guard fileManager.fileExists(atPath: paths.configTOML.path) else { return }
         let existing = try String(contentsOf: paths.configTOML, encoding: .utf8)
+        let managedProviderID = managedProviderID(in: existing)
         let withoutManagedBlock = removeManagedBlock(from: existing)
-        let withoutManagedRootProvider = removeManagedRootModelProvider(from: withoutManagedBlock)
+        let withoutManagedRootProvider = removeManagedRootModelProvider(
+            from: withoutManagedBlock,
+            managedProviderID: managedProviderID
+        )
         try withoutManagedRootProvider
             .trimmingCharacters(in: .newlines)
             .appending("\n")
@@ -94,7 +99,29 @@ public struct CodexProviderConfigStore {
         return updated
     }
 
-    private func removeManagedRootModelProvider(from text: String) -> String {
+    private func managedProviderID(in text: String) -> String? {
+        guard let start = text.range(of: "# BEGIN CODIXX API PROVIDER"),
+              let end = text.range(of: "# END CODIXX API PROVIDER", range: start.upperBound..<text.endIndex)
+        else {
+            return nil
+        }
+
+        let block = text[start.upperBound..<end.lowerBound]
+        let lines = block
+            .split(separator: "\n", omittingEmptySubsequences: false)
+            .map(String.init)
+        for line in lines {
+            let trimmed = line.trimmingCharacters(in: .whitespaces)
+            guard trimmed.hasPrefix("[model_providers."), trimmed.hasSuffix("]") else { continue }
+            let prefix = "[model_providers."
+            let startIndex = trimmed.index(trimmed.startIndex, offsetBy: prefix.count)
+            let endIndex = trimmed.index(before: trimmed.endIndex)
+            return String(trimmed[startIndex..<endIndex])
+        }
+        return nil
+    }
+
+    private func removeManagedRootModelProvider(from text: String, managedProviderID: String?) -> String {
         let lines = text
             .split(separator: "\n", omittingEmptySubsequences: false)
             .map(String.init)
@@ -104,7 +131,13 @@ public struct CodexProviderConfigStore {
         let rootLines = Array(lines[..<firstTableIndex]).filter { line in
             let trimmed = line.trimmingCharacters(in: .whitespaces)
             guard trimmed.hasPrefix("model_provider =") else { return true }
-            return !trimmed.contains("\"codixx-")
+            if trimmed.contains("\"codixx-") {
+                return false
+            }
+            guard let managedProviderID else {
+                return true
+            }
+            return !trimmed.contains("\"\(managedProviderID)\"")
         }
         return (rootLines + Array(lines[firstTableIndex...])).joined(separator: "\n")
     }

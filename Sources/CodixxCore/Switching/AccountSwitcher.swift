@@ -11,6 +11,7 @@ public enum AccountSwitchError: Error, Equatable, LocalizedError, Sendable {
     case expiredAuthSnapshot(alias: String)
     case couldNotRefreshSourceSnapshot(String)
     case protectedPathChanged(String)
+    case codexDesktopRunning
 
     public var errorDescription: String? {
         switch self {
@@ -24,6 +25,8 @@ public enum AccountSwitchError: Error, Equatable, LocalizedError, Sendable {
             return "Could not refresh the current account snapshot before switching. \(message)"
         case .protectedPathChanged(let message):
             return "Codex history files changed unexpectedly during account switching. \(message)"
+        case .codexDesktopRunning:
+            return "Quit Codex Desktop before switching accounts so stale login and quota caches cannot be reused."
         }
     }
 }
@@ -61,6 +64,9 @@ public struct AccountSwitcher {
     private let providerConfigStore: CodexProviderConfigStore
     private let writer: AtomicAuthFileWriting
     private let diskSpaceChecker: DiskSpaceChecking
+    private let codexDesktopState: CodexDesktopStateCleaning
+    private let threadProviderSync: CodexThreadProviderSyncing
+    private let apiSwitchThreadSyncScope: () -> APISwitchThreadSyncScope
 
     public init(
         paths: CodixxPaths = CodixxPaths(),
@@ -73,7 +79,10 @@ public struct AccountSwitcher {
         apiKeyVault: APIKeyVault = KeychainAPIKeyVault(),
         providerConfigStore: CodexProviderConfigStore? = nil,
         writer: AtomicAuthFileWriting = AtomicFileWriter(),
-        diskSpaceChecker: DiskSpaceChecking = FileManagerDiskSpaceChecker()
+        diskSpaceChecker: DiskSpaceChecking = FileManagerDiskSpaceChecker(),
+        codexDesktopState: CodexDesktopStateCleaning = NoopCodexDesktopStateCleaner(),
+        threadProviderSync: CodexThreadProviderSyncing = NoopCodexThreadProviderSync(),
+        apiSwitchThreadSyncScope: @escaping () -> APISwitchThreadSyncScope = { .visibleDesktopThreads }
     ) {
         self.paths = paths
         self.metadataStore = metadataStore
@@ -86,6 +95,9 @@ public struct AccountSwitcher {
         self.providerConfigStore = providerConfigStore ?? CodexProviderConfigStore(paths: paths)
         self.writer = writer
         self.diskSpaceChecker = diskSpaceChecker
+        self.codexDesktopState = codexDesktopState
+        self.threadProviderSync = threadProviderSync
+        self.apiSwitchThreadSyncScope = apiSwitchThreadSyncScope
     }
 
     public func switchToAccount(_ targetId: UUID, trigger: SwitchTrigger) throws -> AccountSwitchResult {
@@ -110,6 +122,19 @@ public struct AccountSwitcher {
         let target = metadata.accounts[targetIndex]
         let source = currentAccount(in: metadata)
         try refreshSourceSnapshotIfCurrentAuthMatches(source)
+
+        if target.isChatGPT, codexDesktopState.isCodexDesktopRunning {
+            let error = AccountSwitchError.codexDesktopRunning
+            try auditLog.append(event(
+                trigger: trigger,
+                source: source,
+                target: target,
+                result: .failedBeforeWrite,
+                error: error,
+                backupURL: nil
+            ))
+            throw error
+        }
 
         guard diskSpaceChecker.hasAvailableSpace(
             at: paths.applicationSupport,
@@ -180,10 +205,15 @@ public struct AccountSwitcher {
             throw error
         }
 
+        let configBackup = try providerConfigStore.backupConfig()
+
         do {
             try providerConfigStore.clearManagedAPIProvider()
             try writer.write(targetSnapshot.jsonData, to: paths.authJSON, fileManager: .default)
+            try codexDesktopState.clearState()
+            try threadProviderSync.syncProvider(from: "openai-custom", to: "openai", scope: apiSwitchThreadSyncScope())
         } catch {
+            try? providerConfigStore.restoreConfig(from: configBackup)
             try auditLog.append(event(
                 trigger: trigger,
                 source: source,
@@ -207,6 +237,7 @@ public struct AccountSwitcher {
             let writtenSnapshot = try AuthSnapshot(jsonData: Data(contentsOf: paths.authJSON))
             writtenFingerprint = try fingerprintGenerator(writtenSnapshot)
         } catch {
+            try? providerConfigStore.restoreConfig(from: configBackup)
             try auditLog.append(event(
                 trigger: trigger,
                 source: source,
@@ -225,6 +256,7 @@ public struct AccountSwitcher {
             return .rolledBack
         }
         guard writtenFingerprint == target.fingerprint else {
+            try? providerConfigStore.restoreConfig(from: configBackup)
             try auditLog.append(event(
                 trigger: trigger,
                 source: source,
@@ -298,8 +330,9 @@ public struct AccountSwitcher {
             let apiKey = try apiKeyVault.load(fingerprint: apiProvider.keyFingerprint)
             let apiSnapshot = try AuthSnapshot.apiKey(apiKey)
             try writer.write(apiSnapshot.jsonData, to: paths.authJSON, fileManager: .default)
+            let providerID = providerID(for: target)
             try providerConfigStore.writeAPIProvider(
-                providerID: providerID(for: target),
+                providerID: providerID,
                 providerName: apiProvider.providerName,
                 baseURL: apiProvider.baseURL,
                 defaultModel: apiProvider.defaultModel
@@ -310,6 +343,7 @@ public struct AccountSwitcher {
             guard changes.isEmpty else {
                 throw AccountSwitchError.protectedPathChanged(changes.map { String(describing: $0) }.joined(separator: ", "))
             }
+            try threadProviderSync.syncProvider(from: "openai", to: providerID, scope: apiSwitchThreadSyncScope())
 
             metadata.accounts[targetIndex].lastUsedAt = now()
             metadata.accounts[targetIndex].updatedAt = now()
@@ -345,7 +379,9 @@ public struct AccountSwitcher {
     }
 
     private func providerID(for account: CodixxAccount) -> String {
-        "codixx-\(account.id.uuidString.lowercased())"
+        // Codex reserves built-in provider ids like "openai", but recommends
+        // an OpenAI-compatible custom id for relay/base URL providers.
+        "openai-custom"
     }
 
     private func backupCurrentAuthIfPresent(alias: String) throws -> URL? {

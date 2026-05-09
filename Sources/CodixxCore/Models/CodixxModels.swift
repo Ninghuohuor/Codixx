@@ -114,22 +114,69 @@ public enum CredentialKind: String, Codable, Equatable, Hashable, Sendable {
     case apiProvider
 }
 
+public struct APIBalanceQueryConfig: Codable, Equatable, Sendable {
+    private enum CodingKeys: String, CodingKey {
+        case isEnabled
+        case urlText
+        case jsonPath
+        case refreshIntervalSeconds
+        case lastBalanceText
+        case lastRefreshedAt
+    }
+
+    public var isEnabled: Bool
+    public var urlText: String
+    public var jsonPath: String
+    public var refreshIntervalSeconds: TimeInterval
+    public var lastBalanceText: String?
+    public var lastRefreshedAt: Date?
+
+    public init(
+        isEnabled: Bool = false,
+        urlText: String = "",
+        jsonPath: String = "",
+        refreshIntervalSeconds: TimeInterval = 900,
+        lastBalanceText: String? = nil,
+        lastRefreshedAt: Date? = nil
+    ) {
+        self.isEnabled = isEnabled
+        self.urlText = urlText
+        self.jsonPath = jsonPath
+        self.refreshIntervalSeconds = refreshIntervalSeconds
+        self.lastBalanceText = lastBalanceText
+        self.lastRefreshedAt = lastRefreshedAt
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.isEnabled = try container.decode(Bool.self, forKey: .isEnabled)
+        self.urlText = try container.decode(String.self, forKey: .urlText)
+        self.jsonPath = try container.decode(String.self, forKey: .jsonPath)
+        self.refreshIntervalSeconds = try container.decodeIfPresent(TimeInterval.self, forKey: .refreshIntervalSeconds) ?? 900
+        self.lastBalanceText = try container.decodeIfPresent(String.self, forKey: .lastBalanceText)
+        self.lastRefreshedAt = try container.decodeIfPresent(Date.self, forKey: .lastRefreshedAt)
+    }
+}
+
 public struct APIProviderAccount: Codable, Equatable, Sendable {
     public var providerName: String
     public var baseURL: URL
     public var defaultModel: String?
     public var keyFingerprint: String
+    public var balanceQuery: APIBalanceQueryConfig?
 
     public init(
         providerName: String,
         baseURL: URL,
         defaultModel: String?,
-        keyFingerprint: String
+        keyFingerprint: String,
+        balanceQuery: APIBalanceQueryConfig? = nil
     ) {
         self.providerName = providerName
         self.baseURL = baseURL
         self.defaultModel = defaultModel
         self.keyFingerprint = keyFingerprint
+        self.balanceQuery = balanceQuery
     }
 }
 
@@ -215,8 +262,14 @@ public struct CodixxAccount: Codable, Identifiable, Equatable, Sendable {
         secondaryThresholdPercent: Double = 90.0
     ) -> Bool {
         guard isChatGPT, isEnabled, hasSnapshot else { return false }
-        let primaryOK = quota.primaryUsedPercent.map { $0 < primaryThresholdPercent } ?? true
-        let secondaryOK = quota.secondaryUsedPercent.map { $0 < secondaryThresholdPercent } ?? true
+        guard quota.confidence == .fresh || quota.confidence == .recent,
+              let primaryUsedPercent = quota.primaryUsedPercent,
+              let secondaryUsedPercent = quota.secondaryUsedPercent
+        else {
+            return false
+        }
+        let primaryOK = primaryUsedPercent < primaryThresholdPercent
+        let secondaryOK = secondaryUsedPercent < secondaryThresholdPercent
         return primaryOK && secondaryOK
     }
 }

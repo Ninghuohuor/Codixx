@@ -33,7 +33,7 @@ struct CodixxApp: App {
                 if let image = Self.menuBarIconImage {
                     Image(nsImage: image)
                         .resizable()
-                        .frame(width: 18, height: 18)
+                        .frame(width: 20, height: 20)
                 } else {
                     Image(systemName: state.menuBarSystemImage)
                 }
@@ -49,8 +49,34 @@ struct CodixxApp: App {
         else {
             return nil
         }
-        image.size = NSSize(width: 18, height: 18)
-        image.isTemplate = false
-        return image
+        let displaySize: CGFloat = 20
+        let scale: CGFloat = NSScreen.main?.backingScaleFactor ?? 2
+        let pixelSize = Int(displaySize * scale)
+        guard let bitmap = NSBitmapImageRep(
+            bitmapDataPlanes: nil,
+            pixelsWide: pixelSize,
+            pixelsHigh: pixelSize,
+            bitsPerSample: 8,
+            samplesPerPixel: 4,
+            hasAlpha: true,
+            isPlanar: false,
+            colorSpaceName: .deviceRGB,
+            bytesPerRow: 0,
+            bitsPerPixel: 0
+        ) else { return image }
+        bitmap.size = NSSize(width: displaySize, height: displaySize)
+        NSGraphicsContext.saveGraphicsState()
+        NSGraphicsContext.current = NSGraphicsContext(bitmapImageRep: bitmap)
+        image.draw(
+            in: NSRect(x: 0, y: 0, width: displaySize, height: displaySize),
+            from: NSRect(origin: .zero, size: image.size),
+            operation: .copy,
+            fraction: 1.0
+        )
+        NSGraphicsContext.restoreGraphicsState()
+        let scaled = NSImage(size: NSSize(width: displaySize, height: displaySize))
+        scaled.addRepresentation(bitmap)
+        scaled.isTemplate = false
+        return scaled
     }()
 }
