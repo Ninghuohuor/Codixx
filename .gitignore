@@ -4,6 +4,8 @@ DerivedData/
 build/
 .DS_Store
 .claude/
+Codixx_PRD.md
+docs/superpowers/
 *.xcuserstate
 *.xcworkspace/xcuserdata/
 *.xcodeproj/xcuserdata/
