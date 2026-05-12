@@ -1,5 +1,7 @@
 # Codixx
 
+Current version: **1.0.1**
+
 Codixx is a native macOS menu bar app for people who use Codex heavily and want a local way to track usage, monitor quota state, and switch between saved Codex accounts.
 
 The app is local-first. It reads Codex data from files on your Mac, stores account snapshots and API keys in macOS Keychain, and does not upload your authentication data, API keys, token logs, or account data to any remote server.
@@ -80,6 +82,12 @@ Package a local `.app` bundle:
 
 ```bash
 ./scripts/package_app.sh
+```
+
+Package and restart the local menu bar app:
+
+```bash
+./scripts/restart_app.sh
 ```
 
 The packaged app is created at:
@@ -208,6 +216,12 @@ swift build -c release
 
 ```bash
 ./scripts/package_app.sh
+```
+
+打包并重启本地菜单栏 App：
+
+```bash
+./scripts/restart_app.sh
 ```
 
 打包后的 App 位于：

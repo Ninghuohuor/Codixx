@@ -15,6 +15,7 @@ public struct CodixxPaths: Sendable {
     public var parseCursorsJSON: URL
     public var trendCacheJSON: URL
     public var switchAuditJSONL: URL
+    public var appActivityJSONL: URL
 
     public init(home: URL = FileManager.default.homeDirectoryForCurrentUser) {
         self.home = home
@@ -31,6 +32,7 @@ public struct CodixxPaths: Sendable {
         self.parseCursorsJSON = applicationSupport.appendingPathComponent("parse_cursors.json")
         self.trendCacheJSON = applicationSupport.appendingPathComponent("trend_cache.json")
         self.switchAuditJSONL = applicationSupport.appendingPathComponent("switch_audit.jsonl")
+        self.appActivityJSONL = applicationSupport.appendingPathComponent("app_activity.jsonl")
     }
 
     public func createApplicationSupportDirectories(fileManager: FileManager = .default) throws {

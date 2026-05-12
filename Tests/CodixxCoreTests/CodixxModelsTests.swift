@@ -2,6 +2,34 @@ import XCTest
 @testable import CodixxCore
 
 final class CodixxModelsTests: XCTestCase {
+    func testThreadUsageDetectsArchivedRolloutPath() {
+        let archived = ThreadUsage(
+            id: "thread-1",
+            title: "Old session",
+            model: "gpt-5",
+            reasoningEffort: "medium",
+            tokensUsed: 123,
+            cwd: "/tmp/project",
+            createdAt: Date(timeIntervalSince1970: 1),
+            updatedAt: Date(timeIntervalSince1970: 2),
+            rolloutPath: "/Users/me/.codex/archived_sessions/thread-1.jsonl"
+        )
+        let active = ThreadUsage(
+            id: "thread-2",
+            title: "Active session",
+            model: "gpt-5",
+            reasoningEffort: "medium",
+            tokensUsed: 456,
+            cwd: "/tmp/project",
+            createdAt: Date(timeIntervalSince1970: 1),
+            updatedAt: Date(timeIntervalSince1970: 2),
+            rolloutPath: "/Users/me/.codex/sessions/thread-2.jsonl"
+        )
+
+        XCTAssertTrue(archived.isArchived)
+        XCTAssertFalse(active.isArchived)
+    }
+
     func testQuotaConfidenceFromObservationAge() {
         let now = Date(timeIntervalSince1970: 1_800)
         XCTAssertEqual(QuotaConfidence.observed(at: now.addingTimeInterval(-60), now: now), .fresh)

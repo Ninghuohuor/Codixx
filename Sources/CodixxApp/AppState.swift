@@ -34,6 +34,7 @@ final class AppState: ObservableObject, LifecycleStateManaging {
     )
     @Published private(set) var topThreads: [ThreadUsage] = []
     @Published private(set) var switchEvents: [SwitchAuditEvent] = []
+    @Published private(set) var appLogEvents: [AppLogEvent] = []
     @Published private(set) var lastUpdatedAt: Date?
     @Published private(set) var isRefreshing = false
     @Published private(set) var hasLoadedFullUsageSnapshot = false
@@ -49,6 +50,7 @@ final class AppState: ObservableObject, LifecycleStateManaging {
     private let rateLimitReader: RateLimitReader
     private let threadUsageReader: ThreadUsageReader
     private let auditLog: SwitchAuditLog
+    private let appActivityLog: AppActivityLog
     private let accountStore: AccountStore
     private let switcher: AccountSwitcher
     private let vault: AuthSnapshotVault
@@ -92,6 +94,7 @@ final class AppState: ObservableObject, LifecycleStateManaging {
             trendCacheStore: TrendCacheStore(paths: paths)
         )
         self.auditLog = SwitchAuditLog(paths: paths)
+        self.appActivityLog = AppActivityLog(paths: paths)
         self.accountStore = AccountStore(
             paths: paths,
             metadataStore: metadataStore,
@@ -287,6 +290,11 @@ final class AppState: ObservableObject, LifecycleStateManaging {
         } catch {
             refreshErrors.append(error.localizedDescription)
         }
+        do {
+            appLogEvents = try appActivityLog.loadEvents().sorted { $0.timestamp > $1.timestamp }
+        } catch {
+            refreshErrors.append(error.localizedDescription)
+        }
 
         let shouldRefreshUsage = refreshUsage || (refreshUsageIfEmpty && usageSnapshot.threads.isEmpty)
         if shouldRefreshUsage, !refreshUsageActivityOnly {
@@ -409,6 +417,14 @@ final class AppState: ObservableObject, LifecycleStateManaging {
             primaryThresholdPercent: config.primaryThresholdPercent,
             secondaryThresholdPercent: config.secondaryThresholdPercent
         )
+        if currentAccount?.isAPIProvider == true {
+            let latestUsageSnapshot = threadUsageReader.readActivitySnapshot(now: timestamp)
+            if latestUsageSnapshot.isDegraded, !usageSnapshot.threads.isEmpty {
+                errorMessage = latestUsageSnapshot.errorSummary ?? strings.usageReadFailed
+                return
+            }
+            applyUsageSnapshot(latestUsageSnapshot, preservingTokenBuckets: true)
+        }
         let context = SwitchSafetyContext(
             now: timestamp,
             activeThreadUpdatedAt: usageSnapshot.activeThread?.updatedAt,
@@ -462,6 +478,26 @@ final class AppState: ObservableObject, LifecycleStateManaging {
         do {
             let account = try accountStore.saveCurrentAuth(alias: savedAlias)
             accountSaveStatus = .success(alias: account.alias)
+            recordAppLog(kind: .accountSaved, account: account)
+            refreshNow()
+        } catch {
+            accountSaveStatus = .failure(message: error.localizedDescription)
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    func importAuthSnapshot(alias: String, fileURL: URL) {
+        let trimmedAlias = alias.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedAlias.isEmpty else {
+            errorMessage = strings.aliasRequired
+            accountSaveStatus = .failure(message: strings.aliasRequired)
+            return
+        }
+
+        do {
+            let account = try accountStore.importAuthSnapshot(from: fileURL, alias: trimmedAlias)
+            accountSaveStatus = .success(alias: account.alias)
+            recordAppLog(kind: .authImported, account: account)
             refreshNow()
         } catch {
             accountSaveStatus = .failure(message: error.localizedDescription)
@@ -501,6 +537,7 @@ final class AppState: ObservableObject, LifecycleStateManaging {
                 defaultModel: trimmedModel.isEmpty ? nil : trimmedModel
             )
             accountSaveStatus = .success(alias: account.alias)
+            recordAppLog(kind: .apiProviderSaved, account: account)
             refreshNow()
         } catch {
             accountSaveStatus = .failure(message: error.localizedDescription)
@@ -551,6 +588,7 @@ final class AppState: ObservableObject, LifecycleStateManaging {
             if currentAccount?.id == updatedAccount.id {
                 currentAccount = updatedAccount
             }
+            recordAppLog(kind: .apiProviderUpdated, account: updatedAccount)
             refresh(
                 applyRateLimitObservations: false,
                 allowAutoSwitch: false,
@@ -635,7 +673,15 @@ final class AppState: ObservableObject, LifecycleStateManaging {
         }
 
         let result = await testAPIBalanceQuery(account: account, config: balanceQuery)
-        guard result.isSuccess else { return result }
+        guard result.isSuccess else {
+            recordAppLog(
+                kind: .apiBalanceRefreshFailed,
+                accountID: account.id,
+                accountAlias: account.alias,
+                detail: result.message
+            )
+            return result
+        }
 
         balanceQuery.lastBalanceText = result.balanceText ?? result.message
         balanceQuery.lastRefreshedAt = now()
@@ -649,13 +695,26 @@ final class AppState: ObservableObject, LifecycleStateManaging {
             }
         } catch {
             errorMessage = error.localizedDescription
+            recordAppLog(
+                kind: .apiBalanceRefreshFailed,
+                accountID: account.id,
+                accountAlias: account.alias,
+                detail: error.localizedDescription
+            )
             return APIBalanceQueryResult(isSuccess: false, message: error.localizedDescription)
         }
+        recordAppLog(
+            kind: .apiBalanceRefreshed,
+            accountID: account.id,
+            accountAlias: account.alias,
+            detail: result.balanceText ?? result.message
+        )
         return result
     }
 
     func refreshDueAPIBalances(force: Bool = false) async {
         let timestamp = now()
+        var didRefresh = false
         for account in accounts where account.isAPIProvider {
             guard let balanceQuery = account.apiProvider?.balanceQuery,
                   balanceQuery.isEnabled
@@ -668,7 +727,11 @@ final class AppState: ObservableObject, LifecycleStateManaging {
             {
                 continue
             }
-            _ = await refreshAPIBalance(for: account)
+            let result = await refreshAPIBalance(for: account)
+            didRefresh = didRefresh || result.isSuccess
+        }
+        if didRefresh {
+            attemptAutoSwitchIfNeeded()
         }
     }
 
@@ -772,10 +835,36 @@ final class AppState: ObservableObject, LifecycleStateManaging {
         }
     }
 
+    func moveAccount(_ account: CodixxAccount, before target: CodixxAccount) {
+        guard account.id != target.id,
+              let sourceIndex = accounts.firstIndex(where: { $0.id == account.id }),
+              let targetIndex = accounts.firstIndex(where: { $0.id == target.id })
+        else { return }
+
+        var reorderedAccounts = accounts
+        let movedAccount = reorderedAccounts.remove(at: sourceIndex)
+        let insertionIndex = reorderedAccounts.firstIndex(where: { $0.id == target.id }) ?? targetIndex
+        reorderedAccounts.insert(movedAccount, at: insertionIndex)
+
+        do {
+            try metadataStore.save(AccountMetadataList(accounts: reorderedAccounts))
+            accounts = reorderedAccounts
+            recordAppLog(kind: .accountReordered, account: movedAccount)
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
     func renameAccount(_ account: CodixxAccount, alias: String) {
         accountSaveStatus = nil
         do {
-            _ = try accountStore.renameAccount(account.id, alias: alias)
+            let renamed = try accountStore.renameAccount(account.id, alias: alias)
+            recordAppLog(
+                kind: .accountRenamed,
+                accountID: account.id,
+                accountAlias: account.alias,
+                secondaryAlias: renamed.alias
+            )
             refresh(
                 applyRateLimitObservations: false,
                 allowAutoSwitch: false,
@@ -791,6 +880,7 @@ final class AppState: ObservableObject, LifecycleStateManaging {
         accountSaveStatus = nil
         do {
             try accountStore.deleteAccount(account.id)
+            recordAppLog(kind: .accountDeleted, account: account)
             refresh(
                 applyRateLimitObservations: false,
                 allowAutoSwitch: false,
@@ -845,8 +935,10 @@ final class AppState: ObservableObject, LifecycleStateManaging {
         do {
             postSwitchRestartMessage = nil
             try codexDesktopManager.restart()
+            recordAppLog(kind: .codexRestarted)
         } catch {
             errorMessage = "\(strings.restartCodexFailed): \(error.localizedDescription)"
+            recordAppLog(kind: .codexRestartFailed, detail: error.localizedDescription)
         }
     }
 
@@ -909,6 +1001,26 @@ final class AppState: ObservableObject, LifecycleStateManaging {
             windows.append(AccountUsageWindow(accountId: accountId, start: event.timestamp, end: end))
         }
 
+        if let currentAccount,
+           accountIds.contains(currentAccount.id),
+           let latestSwitchAt = successfulSwitches.last?.timestamp
+        {
+            let currentStart = currentAccount.lastUsedAt ?? currentAccount.updatedAt
+            let currentWindowIsOpen = windows.last { $0.end == nil }?.accountId == currentAccount.id
+            if currentStart > latestSwitchAt, !currentWindowIsOpen {
+                windows = windows.map { window in
+                    guard window.end == nil,
+                          window.start < currentStart
+                    else { return window }
+
+                    var updated = window
+                    updated.end = currentStart
+                    return updated
+                }
+                windows.append(AccountUsageWindow(accountId: currentAccount.id, start: currentStart, end: nil))
+            }
+        }
+
         return windows
     }
 
@@ -948,6 +1060,48 @@ final class AppState: ObservableObject, LifecycleStateManaging {
             try metadataStore.save(AccountMetadataList(accounts: updatedAccounts))
             accounts = updatedAccounts
             currentAccount = currentAccount(in: updatedAccounts)
+            if accounts[index].isEnabled != account.isEnabled {
+                recordAppLog(
+                    kind: accounts[index].isEnabled ? .accountEnabled : .accountDisabled,
+                    account: accounts[index]
+                )
+            }
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    private func recordAppLog(
+        kind: AppLogEventKind,
+        account: CodixxAccount? = nil,
+        detail: String? = nil
+    ) {
+        recordAppLog(
+            kind: kind,
+            accountID: account?.id,
+            accountAlias: account?.alias,
+            detail: detail
+        )
+    }
+
+    private func recordAppLog(
+        kind: AppLogEventKind,
+        accountID: UUID? = nil,
+        accountAlias: String? = nil,
+        secondaryAlias: String? = nil,
+        detail: String? = nil
+    ) {
+        let event = AppLogEvent(
+            timestamp: now(),
+            kind: kind,
+            accountId: accountID,
+            accountAlias: accountAlias,
+            secondaryAlias: secondaryAlias,
+            detail: detail
+        )
+        do {
+            try appActivityLog.append(event)
+            appLogEvents = try appActivityLog.loadEvents().sorted { $0.timestamp > $1.timestamp }
         } catch {
             errorMessage = error.localizedDescription
         }
@@ -965,7 +1119,12 @@ final class AppState: ObservableObject, LifecycleStateManaging {
             }
             return
         }
-        guard let observation = try rateLimitReader.readNewObservations().last else {
+        let minimumObservedAt = current.lastUsedAt
+        let observations = try rateLimitReader.readNewObservations().filter { observation in
+            guard let minimumObservedAt else { return true }
+            return observation.observedAt >= minimumObservedAt
+        }
+        guard let observation = Self.preferredRateLimitObservation(in: observations) else {
             if didRefreshCachedQuota {
                 try metadataStore.save(AccountMetadataList(accounts: accounts))
             }
@@ -985,6 +1144,10 @@ final class AppState: ObservableObject, LifecycleStateManaging {
         }
         accounts[currentIndex].updatedAt = timestamp
         try metadataStore.save(AccountMetadataList(accounts: accounts))
+    }
+
+    static func preferredRateLimitObservation(in observations: [RateLimitObservation]) -> RateLimitObservation? {
+        observations.last { $0.limitID == "codex" } ?? observations.last { $0.limitID == nil }
     }
 
     @discardableResult

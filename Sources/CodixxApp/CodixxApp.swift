@@ -34,7 +34,7 @@ struct CodixxApp: App {
 }
 
 @MainActor
-private final class StatusItemController: NSObject {
+private final class StatusItemController: NSObject, NSPopoverDelegate {
     private static let statusItemLength: CGFloat = 19
     private static let iconPointSize: CGFloat = 15
 
@@ -42,6 +42,7 @@ private final class StatusItemController: NSObject {
     private let statusItem: NSStatusItem
     private let popover: NSPopover
     private var cancellables: Set<AnyCancellable> = []
+    private var outsideClickMonitors: [Any] = []
 
     init(state: AppState) {
         self.state = state
@@ -50,8 +51,9 @@ private final class StatusItemController: NSObject {
         super.init()
 
         popover.behavior = .transient
-        popover.contentSize = NSSize(width: 360, height: 520)
+        popover.contentSize = DashboardLayout.popoverContentSize
         popover.contentViewController = NSHostingController(rootView: DashboardView(state: state))
+        popover.delegate = self
 
         if let button = statusItem.button {
             button.imagePosition = .imageOnly
@@ -73,13 +75,64 @@ private final class StatusItemController: NSObject {
     @objc
     private func togglePopover(_ sender: NSStatusBarButton) {
         if popover.isShown {
-            popover.performClose(sender)
+            closePopover(sender)
             return
         }
 
         state.refreshFromMenuOpen()
         popover.show(relativeTo: sender.bounds, of: sender, preferredEdge: .minY)
         popover.contentViewController?.view.window?.makeKey()
+        startOutsideClickMonitors(statusButton: sender)
+    }
+
+    func popoverDidClose(_ notification: Notification) {
+        stopOutsideClickMonitors()
+    }
+
+    private func startOutsideClickMonitors(statusButton: NSStatusBarButton) {
+        stopOutsideClickMonitors()
+        let mask: NSEvent.EventTypeMask = [
+            .leftMouseDown,
+            .rightMouseDown,
+            .otherMouseDown
+        ]
+        if let localMonitor = NSEvent.addLocalMonitorForEvents(matching: mask, handler: { [weak self, weak statusButton] event in
+            self?.closePopoverIfNeeded(for: event, statusButton: statusButton)
+            return event
+        }) {
+            outsideClickMonitors.append(localMonitor)
+        }
+        if let globalMonitor = NSEvent.addGlobalMonitorForEvents(matching: mask, handler: { [weak self, weak statusButton] event in
+            self?.closePopoverIfNeeded(for: event, statusButton: statusButton)
+        }) {
+            outsideClickMonitors.append(globalMonitor)
+        }
+    }
+
+    private func stopOutsideClickMonitors() {
+        outsideClickMonitors.forEach(NSEvent.removeMonitor)
+        outsideClickMonitors.removeAll()
+    }
+
+    private func closePopoverIfNeeded(for event: NSEvent, statusButton: NSStatusBarButton?) {
+        guard popover.isShown else {
+            stopOutsideClickMonitors()
+            return
+        }
+        let popoverWindow = popover.contentViewController?.view.window
+        guard PopoverDismissalPolicy.shouldClosePopover(
+            eventWindow: event.window,
+            popoverWindow: popoverWindow,
+            statusButtonWindow: statusButton?.window
+        ) else {
+            return
+        }
+        closePopover(event)
+    }
+
+    private func closePopover(_ sender: Any?) {
+        popover.performClose(sender)
+        stopOutsideClickMonitors()
     }
 
     private static let menuBarIconImage: NSImage? = {

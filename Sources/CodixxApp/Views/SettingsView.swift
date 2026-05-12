@@ -4,7 +4,8 @@ import CodixxCore
 
 struct SettingsView: View {
     @ObservedObject var state: AppState
-    @State private var isShowingAllSwitchLogs = false
+    @State private var isShowingAllLogs = false
+    @State private var selectedLogCategory: AppLogCategory = .all
     @State private var isShowingQuitConfirmation = false
 
     var body: some View {
@@ -96,18 +97,6 @@ struct SettingsView: View {
 
                     Divider()
 
-                    Picker(state.strings.postSwitchAction, selection: Binding(
-                        get: { state.config.postSwitchAction },
-                        set: { state.setPostSwitchAction($0) }
-                    )) {
-                        ForEach(PostSwitchAction.allCases) { action in
-                            Text(state.strings.postSwitchActionLabel(action)).tag(action)
-                        }
-                    }
-                    .pickerStyle(.menu)
-
-                    Divider()
-
                     Picker(state.strings.apiSwitchThreadSyncScope, selection: Binding(
                         get: { state.config.apiSwitchThreadSyncScope },
                         set: { state.setAPISwitchThreadSyncScope($0) }
@@ -188,20 +177,25 @@ struct SettingsView: View {
                     }
                 }
 
-                settingsSection(title: state.strings.switchLog) {
-                    SwitchLogView(events: visibleSwitchEvents, strings: state.strings, showsTitle: false)
+                settingsSection(title: state.strings.logs) {
+                    AppLogView(
+                        entries: visibleLogEntries,
+                        strings: state.strings,
+                        selectedCategory: $selectedLogCategory,
+                        showsTitle: false
+                    )
 
-                    if state.switchEvents.count > 3 {
+                    if filteredLogEntries.count > 3 {
                         Divider()
 
                         Button {
                             withAnimation(.easeInOut(duration: 0.16)) {
-                                isShowingAllSwitchLogs.toggle()
+                                isShowingAllLogs.toggle()
                             }
                         } label: {
                             Label(
-                                isShowingAllSwitchLogs ? state.strings.showLess : state.strings.showMore,
-                                systemImage: isShowingAllSwitchLogs ? "chevron.up" : "chevron.down"
+                                isShowingAllLogs ? state.strings.showLess : state.strings.showMore,
+                                systemImage: isShowingAllLogs ? "chevron.up" : "chevron.down"
                             )
                         }
                         .font(.caption)
@@ -213,9 +207,21 @@ struct SettingsView: View {
         }
     }
 
-    private var visibleSwitchEvents: [SwitchAuditEvent] {
-        let limit = isShowingAllSwitchLogs ? 20 : 3
-        return Array(state.switchEvents.prefix(limit))
+    private var allLogEntries: [AppLogEntry] {
+        AppLogEntry.entries(
+            switchEvents: state.switchEvents,
+            appEvents: state.appLogEvents,
+            strings: state.strings
+        )
+    }
+
+    private var filteredLogEntries: [AppLogEntry] {
+        AppLogEntry.filtered(allLogEntries, by: selectedLogCategory)
+    }
+
+    private var visibleLogEntries: [AppLogEntry] {
+        let limit = isShowingAllLogs ? 20 : 3
+        return Array(filteredLogEntries.prefix(limit))
     }
 
     private func settingsSection<Content: View>(title: String, @ViewBuilder content: () -> Content) -> some View {

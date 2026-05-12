@@ -1,6 +1,86 @@
 import AppKit
 import SwiftUI
 import CodixxCore
+import UniformTypeIdentifiers
+
+struct AccountSummaryMetrics: Equatable {
+    var total: Int
+    var available: Int
+    var full: Int
+    var unknown: Int
+    var disabled: Int
+
+    init(accounts: [CodixxAccount]) {
+        total = accounts.count
+        available = 0
+        full = 0
+        unknown = 0
+        disabled = 0
+
+        for account in accounts {
+            guard account.isEnabled else {
+                disabled += 1
+                continue
+            }
+
+            if account.isAPIProvider {
+                switch Self.apiProviderStatus(for: account) {
+                case .available:
+                    available += 1
+                case .full:
+                    full += 1
+                case .unknown:
+                    unknown += 1
+                }
+                continue
+            }
+
+            guard let primary = account.quota.primaryUsedPercent,
+                  let secondary = account.quota.secondaryUsedPercent
+            else {
+                unknown += 1
+                continue
+            }
+
+            if primary >= 100 || secondary >= 100 {
+                full += 1
+            } else {
+                available += 1
+            }
+        }
+    }
+
+    private enum APIProviderSummaryStatus {
+        case available
+        case full
+        case unknown
+    }
+
+    private static func apiProviderStatus(for account: CodixxAccount) -> APIProviderSummaryStatus {
+        guard let balanceQuery = account.apiProvider?.balanceQuery,
+              balanceQuery.isEnabled
+        else {
+            return .unknown
+        }
+        if balanceQuery.hasSufficientBalance {
+            return .available
+        }
+        if balanceQuery.isBalanceDepleted || isInsufficientBalanceText(balanceQuery.lastBalanceText) {
+            return .full
+        }
+        return .unknown
+    }
+
+    private static func isInsufficientBalanceText(_ text: String?) -> Bool {
+        guard let text else { return false }
+        let normalized = text.lowercased()
+        return normalized.contains("insufficient balance")
+            || normalized.contains("insufficient funds")
+            || normalized.contains("insufficient quota")
+            || normalized.contains("余额不足")
+            || normalized.contains("额度不足")
+    }
+}
 
 struct AccountListView: View {
     @ObservedObject var state: AppState
@@ -34,6 +114,13 @@ struct AccountListView: View {
                     }
                     .buttonStyle(.borderless)
                     .help(state.strings.addAccount)
+                }
+
+                if !state.accounts.isEmpty {
+                    AccountSummaryView(
+                        metrics: AccountSummaryMetrics(accounts: state.accounts),
+                        strings: state.strings
+                    )
                 }
 
                 if !state.canEnableAutoSwitch {
@@ -107,11 +194,47 @@ struct AccountListView: View {
     }
 }
 
+private struct AccountSummaryView: View {
+    var metrics: AccountSummaryMetrics
+    var strings: CodixxStrings
+
+    var body: some View {
+        HStack(spacing: 6) {
+            summaryPill(label: strings.accountSummaryTotal, value: metrics.total, tint: .secondary)
+            summaryPill(label: strings.accountSummaryAvailable, value: metrics.available, tint: .green)
+            summaryPill(label: strings.accountSummaryFull, value: metrics.full, tint: .red)
+            summaryPill(label: strings.accountSummaryUnknown, value: metrics.unknown, tint: .orange)
+            if metrics.disabled > 0 {
+                summaryPill(label: strings.accountSummaryDisabled, value: metrics.disabled, tint: .secondary)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private func summaryPill(label: String, value: Int, tint: Color) -> some View {
+        Text("\(label) \(value)")
+            .font(.caption.weight(.medium))
+            .monospacedDigit()
+            .foregroundStyle(tint)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 4)
+            .background(tint.opacity(0.10), in: Capsule())
+            .help("\(label) \(value)")
+    }
+}
+
+private enum AddAccountCredentialKind: Hashable {
+    case currentCodexAuth
+    case importedCodexAuth
+    case apiProvider
+}
+
 private struct AddAccountDialog: View {
     @ObservedObject var state: AppState
     let onClose: () -> Void
     @State private var newAlias = ""
-    @State private var credentialKind: CredentialKind = .chatgpt
+    @State private var credentialKind: AddAccountCredentialKind = .currentCodexAuth
+    @State private var selectedAuthJSONURL: URL?
     @State private var baseURLText = ""
     @State private var apiKey = ""
     @State private var defaultModel = ""
@@ -124,13 +247,17 @@ private struct AddAccountDialog: View {
                 .font(.headline)
 
             Picker("", selection: $credentialKind) {
-                Text(state.strings.codexLoginAccount).tag(CredentialKind.chatgpt)
-                Text(state.strings.apiKeyAccount).tag(CredentialKind.apiProvider)
+                Text(state.strings.codexLoginAccount).tag(AddAccountCredentialKind.currentCodexAuth)
+                Text(state.strings.importAuthJSONAccount).tag(AddAccountCredentialKind.importedCodexAuth)
+                Text(state.strings.apiKeyAccount).tag(AddAccountCredentialKind.apiProvider)
             }
             .pickerStyle(.segmented)
 
-            if credentialKind == .chatgpt {
+            if credentialKind == .currentCodexAuth {
                 apiProviderTextField(state.strings.alias, required: true, text: $newAlias)
+            } else if credentialKind == .importedCodexAuth {
+                apiProviderTextField(state.strings.alias, required: true, text: $newAlias)
+                authJSONPicker
             } else {
                 apiProviderTextField(state.strings.alias, required: true, text: $newAlias)
                 apiProviderTextField(state.strings.baseURL, required: true, text: $baseURLText)
@@ -186,8 +313,11 @@ private struct AddAccountDialog: View {
 
     private var canSave: Bool {
         switch credentialKind {
-        case .chatgpt:
+        case .currentCodexAuth:
             return !newAlias.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        case .importedCodexAuth:
+            return !newAlias.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty &&
+                selectedAuthJSONURL != nil
         case .apiProvider:
             return !newAlias.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty &&
                 !baseURLText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty &&
@@ -219,8 +349,11 @@ private struct AddAccountDialog: View {
 
     private func save() {
         switch credentialKind {
-        case .chatgpt:
+        case .currentCodexAuth:
             state.saveCurrentAccount(alias: newAlias)
+        case .importedCodexAuth:
+            guard let selectedAuthJSONURL else { return }
+            state.importAuthSnapshot(alias: newAlias, fileURL: selectedAuthJSONURL)
         case .apiProvider:
             state.saveAPIProviderAccount(
                 alias: newAlias,
@@ -239,10 +372,57 @@ private struct AddAccountDialog: View {
 
     fileprivate func reset() {
         newAlias = ""
-        credentialKind = .chatgpt
+        credentialKind = .currentCodexAuth
+        selectedAuthJSONURL = nil
         baseURLText = ""
         apiKey = ""
         defaultModel = ""
+    }
+
+    private var authJSONPicker: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(state.strings.chooseAuthJSON)
+                .font(.caption2.weight(.medium))
+                .foregroundStyle(.secondary)
+            HStack(spacing: 8) {
+                Button {
+                    chooseAuthJSON()
+                } label: {
+                    Label(state.strings.chooseAuthJSON, systemImage: "doc.badge.plus")
+                }
+                Text(selectedAuthJSONURL?.lastPathComponent ?? state.strings.noAuthJSONSelected)
+                    .font(.caption)
+                    .foregroundStyle(selectedAuthJSONURL == nil ? .secondary : .primary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+            }
+        }
+    }
+
+    private func chooseAuthJSON() {
+        let panel = NSOpenPanel()
+        panel.allowsMultipleSelection = false
+        panel.canChooseFiles = true
+        panel.canChooseDirectories = false
+        panel.canCreateDirectories = false
+        panel.allowedContentTypes = [.json]
+        panel.directoryURL = authJSONPickerDirectory
+        panel.nameFieldStringValue = "auth.json"
+        panel.message = state.strings.importAuthJSONPickerMessage
+        panel.prompt = state.strings.chooseAuthJSON
+        if panel.runModal() == .OK {
+            selectedAuthJSONURL = panel.url
+        }
+    }
+
+    private var authJSONPickerDirectory: URL {
+        if let selectedAuthJSONURL {
+            return selectedAuthJSONURL.deletingLastPathComponent()
+        }
+        if FileManager.default.fileExists(atPath: state.paths.codexHome.path) {
+            return state.paths.codexHome
+        }
+        return state.paths.home
     }
 
     private func apiProviderTextField(_ label: String, required: Bool, text: Binding<String>) -> some View {
@@ -506,6 +686,7 @@ private struct BalanceMonitorDialog: View {
     @State private var urlText: String
     @State private var jsonPath: String
     @State private var refreshIntervalMinutes: Double
+    @State private var minimumBalanceText: String
     @State private var status: ConnectionTestStatus?
     @State private var isTesting = false
 
@@ -517,6 +698,7 @@ private struct BalanceMonitorDialog: View {
         _urlText = State(initialValue: account.apiProvider?.balanceQuery?.urlText ?? "")
         _jsonPath = State(initialValue: account.apiProvider?.balanceQuery?.jsonPath ?? "")
         _refreshIntervalMinutes = State(initialValue: max(1, (account.apiProvider?.balanceQuery?.refreshIntervalSeconds ?? 900) / 60))
+        _minimumBalanceText = State(initialValue: Self.balanceFormatter.string(from: NSNumber(value: account.apiProvider?.balanceQuery?.minimumBalance ?? 0)) ?? "0")
     }
 
     var body: some View {
@@ -535,6 +717,9 @@ private struct BalanceMonitorDialog: View {
                 .fixedSize(horizontal: false, vertical: true)
 
             accountTextField(state.strings.balanceQueryURL, required: false, text: $urlText)
+                .disabled(!isEnabled)
+
+            accountTextField(state.strings.minimumAPIBalance, required: false, text: $minimumBalanceText)
                 .disabled(!isEnabled)
 
             VStack(alignment: .leading, spacing: 4) {
@@ -639,10 +824,23 @@ private struct BalanceMonitorDialog: View {
             urlText: urlText,
             jsonPath: jsonPath,
             refreshIntervalSeconds: max(60, refreshIntervalMinutes.rounded() * 60),
+            minimumBalance: minimumBalance,
             lastBalanceText: existing?.lastBalanceText,
             lastRefreshedAt: existing?.lastRefreshedAt
         )
     }
+
+    private var minimumBalance: Double {
+        APIBalanceQueryConfig.parseBalance(minimumBalanceText) ?? 0
+    }
+
+    private static let balanceFormatter: NumberFormatter = {
+        let formatter = NumberFormatter()
+        formatter.minimumFractionDigits = 0
+        formatter.maximumFractionDigits = 6
+        formatter.numberStyle = .decimal
+        return formatter
+    }()
 
     private func accountTextField(_ label: String, required: Bool, text: Binding<String>) -> some View {
         VStack(alignment: .leading, spacing: 4) {
@@ -811,11 +1009,63 @@ private struct AccountRowsView: View {
     let onEdit: (CodixxAccount) -> Void
     let onBalanceMonitor: (CodixxAccount) -> Void
     @State private var refreshingBalanceAccountIds: Set<UUID> = []
+    @State private var draggingAccount: CodixxAccount?
+    @State private var dropTargetAccountID: UUID?
 
     var body: some View {
-        ForEach(state.accounts) { account in
-            accountRow(account)
+        LazyVGrid(
+            columns: Array(
+                repeating: GridItem(
+                    .flexible(),
+                    spacing: DashboardLayout.accountColumnSpacing,
+                    alignment: .top
+                ),
+                count: DashboardLayout.accountColumnCount
+            ),
+            alignment: .leading,
+            spacing: DashboardLayout.accountColumnSpacing
+        ) {
+            ForEach(state.accounts) { account in
+                accountRow(account)
+                    .contentShape(Rectangle())
+                    .opacity(draggingAccount?.id == account.id ? DashboardLayout.draggingAccountOpacity : 1)
+                    .scaleEffect(draggingAccount?.id == account.id ? DashboardLayout.draggingAccountScale : 1)
+                    .shadow(
+                        color: Color.black.opacity(draggingAccount?.id == account.id ? 0.18 : 0),
+                        radius: draggingAccount?.id == account.id ? DashboardLayout.draggingAccountShadowRadius : 0,
+                        y: draggingAccount?.id == account.id ? 4 : 0
+                    )
+                    .overlay {
+                        RoundedRectangle(cornerRadius: 8)
+                            .stroke(
+                                dropTargetAccountID == account.id && draggingAccount?.id != account.id
+                                    ? Color.accentColor.opacity(0.65)
+                                    : Color.clear,
+                                lineWidth: DashboardLayout.dropTargetStrokeWidth
+                            )
+                    }
+                    .animation(.spring(response: 0.24, dampingFraction: 0.82), value: draggingAccount?.id)
+                    .animation(.spring(response: 0.24, dampingFraction: 0.82), value: dropTargetAccountID)
+                    .zIndex(draggingAccount?.id == account.id ? 1 : 0)
+                    .onDrag {
+                        withAnimation(.easeOut(duration: 0.12)) {
+                            draggingAccount = account
+                            dropTargetAccountID = nil
+                        }
+                        return NSItemProvider(object: account.id.uuidString as NSString)
+                    }
+                    .onDrop(
+                        of: [.text],
+                        delegate: AccountDropDelegate(
+                            targetAccount: account,
+                            draggingAccount: $draggingAccount,
+                            dropTargetAccountID: $dropTargetAccountID,
+                            state: state
+                        )
+                    )
+            }
         }
+        .animation(.interactiveSpring(response: 0.34, dampingFraction: 0.9, blendDuration: 0.12), value: state.accounts.map(\.id))
     }
 
     private func accountRow(_ account: CodixxAccount) -> some View {
@@ -837,6 +1087,8 @@ private struct AccountRowsView: View {
                 quotaProgressRows(for: account)
             }
 
+            Spacer(minLength: DashboardLayout.accountCardFooterSpacerMinLength)
+
             HStack(alignment: .center, spacing: 12) {
                 Toggle(state.strings.enabled, isOn: Binding(
                     get: { account.isEnabled },
@@ -857,6 +1109,7 @@ private struct AccountRowsView: View {
             .font(.caption)
         }
         .padding(12)
+        .frame(height: DashboardLayout.accountCardMinHeight, alignment: .top)
         .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 8))
     }
 
@@ -970,14 +1223,6 @@ private struct AccountRowsView: View {
 
     private func apiProviderDetails(for account: CodixxAccount) -> some View {
         VStack(alignment: .leading, spacing: 4) {
-            Text(account.apiProvider?.baseURL.absoluteString ?? "")
-                .lineLimit(1)
-                .truncationMode(.middle)
-            if let maskedAPIKey = state.maskedAPIKey(for: account) {
-                Text(maskedAPIKey)
-                    .lineLimit(1)
-                    .truncationMode(.middle)
-            }
             if let model = account.apiProvider?.defaultModel, !model.isEmpty {
                 Text(model)
             }
@@ -1045,15 +1290,54 @@ private struct AccountRowsView: View {
     }
 
     private func confirmDelete(_ account: CodixxAccount) {
-        let alert = NSAlert()
-        alert.messageText = state.strings.confirmDeleteTitle
-        alert.informativeText = state.strings.confirmDeleteMessage(alias: account.alias)
-        alert.alertStyle = .warning
-        alert.addButton(withTitle: state.strings.delete)
-        alert.addButton(withTitle: state.strings.cancel)
-
-        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        let confirmed = IconlessConfirmationDialog.run(
+            title: state.strings.confirmDeleteTitle,
+            message: state.strings.confirmDeleteMessage(alias: account.alias),
+            confirmTitle: state.strings.delete,
+            cancelTitle: state.strings.cancel
+        )
+        guard confirmed else { return }
         state.deleteAccount(account)
+    }
+}
+
+private struct AccountDropDelegate: DropDelegate {
+    let targetAccount: CodixxAccount
+    @Binding var draggingAccount: CodixxAccount?
+    @Binding var dropTargetAccountID: UUID?
+    let state: AppState
+
+    func dropEntered(info: DropInfo) {
+        guard let draggingAccount, draggingAccount.id != targetAccount.id else { return }
+        dropTargetAccountID = targetAccount.id
+        withAnimation(.interactiveSpring(response: 0.34, dampingFraction: 0.9, blendDuration: 0.12)) {
+            state.moveAccount(draggingAccount, before: targetAccount)
+        }
+        self.draggingAccount = state.accounts.first { $0.id == draggingAccount.id } ?? draggingAccount
+    }
+
+    func dropExited(info: DropInfo) {
+        if dropTargetAccountID == targetAccount.id {
+            dropTargetAccountID = nil
+        }
+    }
+
+    func performDrop(info: DropInfo) -> Bool {
+        let droppedAccountID = draggingAccount?.id
+        withAnimation(.easeOut(duration: 0.1)) {
+            dropTargetAccountID = nil
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + DashboardLayout.dragReleaseSettlingDelay) {
+            guard draggingAccount?.id == droppedAccountID else { return }
+            withAnimation(.easeOut(duration: DashboardLayout.dragReleaseFadeDuration)) {
+                draggingAccount = nil
+            }
+        }
+        return true
+    }
+
+    func dropUpdated(info: DropInfo) -> DropProposal? {
+        DropProposal(operation: .move)
     }
 }
 

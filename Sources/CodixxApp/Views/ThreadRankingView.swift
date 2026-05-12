@@ -22,10 +22,25 @@ struct ThreadRankingView: View {
                     ForEach(threads, id: \.id) { thread in
                         HStack(spacing: 10) {
                             VStack(alignment: .leading, spacing: 3) {
-                                Text(threadTitle(thread))
-                                    .font(.subheadline)
-                                    .lineLimit(1)
-                                    .truncationMode(.middle)
+                                HStack(spacing: 6) {
+                                    Text(threadTitle(thread))
+                                        .font(.subheadline)
+                                        .lineLimit(1)
+                                        .truncationMode(.middle)
+                                    if thread.isArchived {
+                                        Text(strings.archivedThread)
+                                            .font(.caption2.weight(.medium))
+                                            .foregroundStyle(.secondary)
+                                            .lineLimit(1)
+                                            .fixedSize(horizontal: true, vertical: false)
+                                            .padding(.horizontal, 6)
+                                            .padding(.vertical, 2)
+                                            .background(
+                                                Color(nsColor: .separatorColor).opacity(0.35),
+                                                in: Capsule()
+                                            )
+                                    }
+                                }
                                 Text("\(thread.model) / \(thread.reasoningEffort)")
                                     .font(.caption)
                                     .foregroundStyle(.secondary)

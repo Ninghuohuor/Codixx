@@ -109,6 +109,7 @@ final class AccountStoreTests: XCTestCase {
 
         XCTAssertTrue(config.isEnabled)
         XCTAssertEqual(config.refreshIntervalSeconds, 900)
+        XCTAssertEqual(config.minimumBalance, 0)
         XCTAssertNil(config.lastBalanceText)
         XCTAssertNil(config.lastRefreshedAt)
     }
@@ -157,6 +158,36 @@ final class AccountStoreTests: XCTestCase {
         XCTAssertEqual(metadata.accounts, [account])
         XCTAssertEqual(vault.snapshotDataByFingerprint[account.fingerprint], authData)
         XCTAssertFalse(String(decoding: metadataData, as: UTF8.self).contains("secret"))
+    }
+
+    func testImportAuthSnapshotStoresSelectedFileWithoutRequiringCurrentCodexAuth() throws {
+        let home = try makeTempHome()
+        defer { try? FileManager.default.removeItem(at: home) }
+        let paths = CodixxPaths(home: home)
+        let importDirectory = home.appendingPathComponent("imports", isDirectory: true)
+        try FileManager.default.createDirectory(at: importDirectory, withIntermediateDirectories: true)
+        let importedAuthURL = importDirectory.appendingPathComponent("auth.json")
+        let authData = Data(#"{"account_id":"acct_imported","access_token":"imported-secret"}"#.utf8)
+        try authData.write(to: importedAuthURL)
+        let vault = InMemoryAuthSnapshotVault()
+        let store = AccountStore(
+            paths: paths,
+            metadataStore: AccountMetadataStore(paths: paths),
+            vault: vault,
+            now: { Date(timeIntervalSince1970: 150) },
+            idGenerator: { UUID(uuidString: "22222222-2222-2222-2222-222222222222")! }
+        )
+
+        let account = try store.importAuthSnapshot(from: importedAuthURL, alias: "Imported")
+        let metadata = try AccountMetadataStore(paths: paths).load()
+
+        XCTAssertFalse(FileManager.default.fileExists(atPath: paths.authJSON.path))
+        XCTAssertEqual(account.alias, "Imported")
+        XCTAssertEqual(account.fingerprint, "account:acct_imported")
+        XCTAssertEqual(account.quota.accountId, account.id.uuidString)
+        XCTAssertEqual(metadata.accounts, [account])
+        XCTAssertEqual(vault.snapshotDataByFingerprint[account.fingerprint], authData)
+        XCTAssertFalse(String(decoding: try Data(contentsOf: paths.accountsJSON), as: UTF8.self).contains("imported-secret"))
     }
 
     func testSaveCurrentAuthStoresLocalJWTMembershipProfile() throws {

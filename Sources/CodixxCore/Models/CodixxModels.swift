@@ -120,6 +120,7 @@ public struct APIBalanceQueryConfig: Codable, Equatable, Sendable {
         case urlText
         case jsonPath
         case refreshIntervalSeconds
+        case minimumBalance
         case lastBalanceText
         case lastRefreshedAt
     }
@@ -128,6 +129,7 @@ public struct APIBalanceQueryConfig: Codable, Equatable, Sendable {
     public var urlText: String
     public var jsonPath: String
     public var refreshIntervalSeconds: TimeInterval
+    public var minimumBalance: Double
     public var lastBalanceText: String?
     public var lastRefreshedAt: Date?
 
@@ -136,6 +138,7 @@ public struct APIBalanceQueryConfig: Codable, Equatable, Sendable {
         urlText: String = "",
         jsonPath: String = "",
         refreshIntervalSeconds: TimeInterval = 900,
+        minimumBalance: Double = 0,
         lastBalanceText: String? = nil,
         lastRefreshedAt: Date? = nil
     ) {
@@ -143,6 +146,7 @@ public struct APIBalanceQueryConfig: Codable, Equatable, Sendable {
         self.urlText = urlText
         self.jsonPath = jsonPath
         self.refreshIntervalSeconds = refreshIntervalSeconds
+        self.minimumBalance = minimumBalance
         self.lastBalanceText = lastBalanceText
         self.lastRefreshedAt = lastRefreshedAt
     }
@@ -153,8 +157,39 @@ public struct APIBalanceQueryConfig: Codable, Equatable, Sendable {
         self.urlText = try container.decode(String.self, forKey: .urlText)
         self.jsonPath = try container.decode(String.self, forKey: .jsonPath)
         self.refreshIntervalSeconds = try container.decodeIfPresent(TimeInterval.self, forKey: .refreshIntervalSeconds) ?? 900
+        self.minimumBalance = try container.decodeIfPresent(Double.self, forKey: .minimumBalance) ?? 0
         self.lastBalanceText = try container.decodeIfPresent(String.self, forKey: .lastBalanceText)
         self.lastRefreshedAt = try container.decodeIfPresent(Date.self, forKey: .lastRefreshedAt)
+    }
+
+    public var parsedLastBalance: Double? {
+        guard let lastBalanceText else { return nil }
+        return Self.parseBalance(lastBalanceText)
+    }
+
+    public var hasSufficientBalance: Bool {
+        guard isEnabled, let balance = parsedLastBalance else { return false }
+        return balance > minimumBalance
+    }
+
+    public var isBalanceDepleted: Bool {
+        guard isEnabled, let balance = parsedLastBalance else { return false }
+        return balance <= minimumBalance
+    }
+
+    public static func parseBalance(_ text: String) -> Double? {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let value = Double(trimmed) {
+            return value
+        }
+        let pattern = #"[-+]?(?:\d+(?:\.\d*)?|\.\d+)"#
+        guard let regex = try? NSRegularExpression(pattern: pattern),
+              let match = regex.firstMatch(in: trimmed, range: NSRange(trimmed.startIndex..., in: trimmed)),
+              let range = Range(match.range, in: trimmed)
+        else {
+            return nil
+        }
+        return Double(trimmed[range])
     }
 }
 
@@ -255,13 +290,34 @@ public struct CodixxAccount: Codable, Identifiable, Equatable, Sendable {
 
     public var isChatGPT: Bool { credentialKind == .chatgpt }
     public var isAPIProvider: Bool { credentialKind == .apiProvider }
+    public var hasSufficientAPIBalance: Bool {
+        guard isAPIProvider else { return false }
+        return apiProvider?.balanceQuery?.hasSufficientBalance == true
+    }
+
+    public var hasMeasuredAPIBalance: Bool {
+        guard isAPIProvider,
+              let balanceQuery = apiProvider?.balanceQuery,
+              balanceQuery.isEnabled
+        else { return false }
+        return balanceQuery.parsedLastBalance != nil
+    }
+
+    public var isAPIBalanceDepleted: Bool {
+        guard isAPIProvider else { return false }
+        return apiProvider?.balanceQuery?.isBalanceDepleted == true
+    }
 
     public func isEligibleForSwitch(
         hasSnapshot: Bool,
         primaryThresholdPercent: Double = 93.0,
         secondaryThresholdPercent: Double = 90.0
     ) -> Bool {
-        guard isChatGPT, isEnabled, hasSnapshot else { return false }
+        guard isEnabled else { return false }
+        if isAPIProvider {
+            return hasSufficientAPIBalance
+        }
+        guard isChatGPT, hasSnapshot else { return false }
         guard quota.confidence == .fresh || quota.confidence == .recent,
               let primaryUsedPercent = quota.primaryUsedPercent,
               let secondaryUsedPercent = quota.secondaryUsedPercent

@@ -68,6 +68,19 @@ public struct AccountStore {
         }
 
         let snapshot = try AuthSnapshot(jsonData: Data(contentsOf: paths.authJSON))
+        return try save(snapshot: snapshot, alias: alias)
+    }
+
+    public func importAuthSnapshot(from url: URL, alias: String) throws -> CodixxAccount {
+        guard FileManager.default.fileExists(atPath: url.path) else {
+            throw AccountStoreError.authFileNotFound(url.path)
+        }
+
+        let snapshot = try AuthSnapshot(jsonData: Data(contentsOf: url))
+        return try save(snapshot: snapshot, alias: alias)
+    }
+
+    private func save(snapshot: AuthSnapshot, alias: String) throws -> CodixxAccount {
         let fingerprint = try AccountFingerprint.generate(from: snapshot)
         var metadata = try metadataStore.load()
         let timestamp = now()

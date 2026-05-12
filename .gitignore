@@ -2,6 +2,7 @@
 .swiftpm/
 DerivedData/
 build/
+dist/
 .DS_Store
 .claude/
 Codixx_PRD.md
