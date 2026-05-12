@@ -22,7 +22,16 @@ public struct CodixxStrings: Sendable {
     public var notRefreshedYet: String { text(en: "Not refreshed yet", zh: "尚未刷新") }
     public var saveCurrentAuth: String { text(en: "Save Current Auth", zh: "保存当前登录") }
     public var addAccount: String { text(en: "Add Account", zh: "添加账号") }
-    public var codexLoginAccount: String { text(en: "Account login", zh: "账号登录") }
+    public var codexLoginAccount: String { text(en: "Current login", zh: "当前登录") }
+    public var importAuthJSONAccount: String { text(en: "Import auth.json", zh: "导入 auth.json") }
+    public var chooseAuthJSON: String { text(en: "Choose auth.json", zh: "选择 auth.json") }
+    public var noAuthJSONSelected: String { text(en: "No auth.json selected", zh: "尚未选择 auth.json") }
+    public var importAuthJSONPickerMessage: String {
+        text(
+            en: "Choose an existing Codex auth.json file to save as an account snapshot.",
+            zh: "选择已有的 Codex auth.json 文件，并保存为账号快照。"
+        )
+    }
     public var apiKeyAccount: String { text(en: "API key", zh: "API Key") }
     public var providerName: String { text(en: "Provider", zh: "服务商") }
     public var baseURL: String { text(en: "Base URL", zh: "Base URL") }
@@ -35,6 +44,7 @@ public struct CodixxStrings: Sendable {
     public var balanceQueryURL: String { text(en: "Balance query URL", zh: "余额查询 URL") }
     public var balanceJSONPath: String { text(en: "Balance JSON field path", zh: "余额 JSON 字段路径") }
     public var balanceRefreshInterval: String { text(en: "Auto refresh interval", zh: "自动刷新间隔") }
+    public var minimumAPIBalance: String { text(en: "Minimum usable balance", zh: "最低可用余额") }
     public var testBalanceQuery: String { text(en: "Test balance query", zh: "测试余额查询") }
     public var testingBalanceQuery: String { text(en: "Testing balance...", zh: "正在测试余额...") }
     public var noAPIAccountForBalance: String { text(en: "No API account available for balance query", zh: "暂无可用于余额查询的 API 账号") }
@@ -60,6 +70,11 @@ public struct CodixxStrings: Sendable {
     public var save: String { text(en: "Save", zh: "保存") }
     public var saveCurrentCodexAuth: String { text(en: "Save current Codex auth", zh: "保存当前 Codex 登录") }
     public var noSavedAccounts: String { text(en: "No saved accounts", zh: "尚未保存账号") }
+    public var accountSummaryTotal: String { text(en: "Total", zh: "总计") }
+    public var accountSummaryAvailable: String { text(en: "Available", zh: "可用") }
+    public var accountSummaryFull: String { text(en: "Full", zh: "额度已满") }
+    public var accountSummaryUnknown: String { text(en: "Unknown", zh: "未知") }
+    public var accountSummaryDisabled: String { text(en: "Disabled", zh: "停用") }
     public var current: String { text(en: "Current", zh: "当前") }
     public var switchAccount: String { text(en: "Switch to account", zh: "切换到此账号") }
     public var switchToThisAccount: String { text(en: "Switch to this account", zh: "切换到这个账号") }
@@ -143,8 +158,17 @@ public struct CodixxStrings: Sendable {
     public var topThreads: String { text(en: "Top Threads", zh: "高用量会话") }
     public var activeThread: String { text(en: "Active thread", zh: "活跃会话") }
     public var noActiveThread: String { text(en: "No active thread", zh: "暂无活跃会话") }
+    public var archivedThread: String { text(en: "Archived", zh: "已归档") }
     public var noThreadUsageYet: String { text(en: "No thread usage yet", zh: "暂无会话用量") }
     public var switchLog: String { text(en: "Switch Log", zh: "切换日志") }
+    public var logFilter: String { text(en: "Log filter", zh: "日志筛选") }
+    public var noLogEvents: String { text(en: "No log events", zh: "暂无日志") }
+    public var allLogs: String { text(en: "All", zh: "全部") }
+    public var switchLogs: String { text(en: "Switch", zh: "切换") }
+    public var accountLogs: String { text(en: "Account", zh: "账号") }
+    public var quotaLogs: String { text(en: "Quota", zh: "额度") }
+    public var errorLogs: String { text(en: "Errors", zh: "错误") }
+    public var systemLogs: String { text(en: "System", zh: "系统") }
     public var noSwitchEvents: String { text(en: "No switch events", zh: "暂无切换事件") }
     public var showMore: String { text(en: "Show more", zh: "展开更多") }
     public var showLess: String { text(en: "Show less", zh: "收起") }
@@ -308,6 +332,40 @@ public struct CodixxStrings: Sendable {
             return rolledBack
         case .rollbackFailed:
             return rollbackFailed
+        }
+    }
+
+    public func appLogEventTitle(_ kind: AppLogEventKind, accountAlias: String?) -> String {
+        let alias = accountAlias ?? unknown
+        switch kind {
+        case .accountSaved:
+            return text(en: "Saved account \(alias)", zh: "已保存账号 \(alias)")
+        case .authImported:
+            return text(en: "Imported auth.json for \(alias)", zh: "已导入 auth.json 到 \(alias)")
+        case .apiProviderSaved:
+            return text(en: "Saved API account \(alias)", zh: "已保存 API 账号 \(alias)")
+        case .apiProviderUpdated:
+            return text(en: "Updated API account \(alias)", zh: "已更新 API 账号 \(alias)")
+        case .accountRenamed:
+            return text(en: "Renamed account", zh: "已重命名账号")
+        case .accountDeleted:
+            return text(en: "Deleted account \(alias)", zh: "已删除账号 \(alias)")
+        case .accountEnabled:
+            return text(en: "Enabled account \(alias)", zh: "已启用账号 \(alias)")
+        case .accountDisabled:
+            return text(en: "Disabled account \(alias)", zh: "已停用账号 \(alias)")
+        case .accountReordered:
+            return text(en: "Reordered account \(alias)", zh: "已调整账号顺序 \(alias)")
+        case .codexRestarted:
+            return text(en: "Restarted Codex", zh: "已重启 Codex")
+        case .codexRestartFailed:
+            return text(en: "Could not restart Codex", zh: "无法重启 Codex")
+        case .refreshFailed:
+            return text(en: "Refresh failed", zh: "刷新失败")
+        case .apiBalanceRefreshed:
+            return text(en: "Refreshed balance for \(alias)", zh: "已刷新余额 \(alias)")
+        case .apiBalanceRefreshFailed:
+            return text(en: "Could not refresh balance for \(alias)", zh: "无法刷新余额 \(alias)")
         }
     }
 

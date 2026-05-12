@@ -285,38 +285,72 @@ final class SwitchPolicyTests: XCTestCase {
         XCTAssertEqual(ordered.map(\.alias), ["Under Weekly Threshold"])
     }
 
-    func testAutoSwitchSkipsAPIProviderAccountsAsTargetsButCanReturnFromAPIProvider() {
+    func testAutoSwitchCanUseAPIProviderWithSufficientBalanceAsFallbackTarget() {
         let now = Date(timeIntervalSince1970: 1_000)
         let policy = SwitchPolicy(primaryThresholdPercent: 90, secondaryThresholdPercent: 90)
-        let api = account(
+        let depleted = account(alias: "Depleted", primary: 100, secondary: 100, confidence: .fresh, now: now)
+        let api = apiAccount(
             alias: "Relay",
-            primary: nil,
-            secondary: nil,
-            confidence: .unknown,
-            credentialKind: .apiProvider,
+            lastBalanceText: "12.50",
+            minimumBalance: 0,
             now: now
         )
-        let chatgpt = account(alias: "ChatGPT", primary: 20, secondary: 20, confidence: .fresh, now: now)
 
-        let ordered = policy.orderedCandidates(from: [api, chatgpt]) { _ in true }
+        let ordered = policy.orderedCandidates(from: [api]) { _ in true }
 
-        XCTAssertEqual(ordered.map(\.alias), ["ChatGPT"])
+        XCTAssertEqual(ordered.map(\.alias), ["Relay"])
         XCTAssertTrue(policy.shouldAutoSwitch(
-            currentAccount: api,
-            allAccounts: [api, chatgpt],
+            currentAccount: depleted,
+            allAccounts: [depleted, api],
             context: .idle(now: now)
         ))
     }
 
-    func testAutoSwitchFromAPIProviderRespectsSafetyContext() {
+    func testAPIProviderCandidateRequiresEnabledFreshBalanceAboveThreshold() {
+        let now = Date(timeIntervalSince1970: 1_000)
+        let policy = SwitchPolicy(primaryThresholdPercent: 90, secondaryThresholdPercent: 90)
+
+        let ordered = policy.orderedCandidates(
+            from: [
+                apiAccount(alias: "Above", lastBalanceText: "1.01", minimumBalance: 1, now: now),
+                apiAccount(alias: "At Threshold", lastBalanceText: "1.00", minimumBalance: 1, now: now),
+                apiAccount(alias: "Below", lastBalanceText: "0.99", minimumBalance: 1, now: now),
+                apiAccount(alias: "Missing", lastBalanceText: nil, minimumBalance: 1, now: now),
+                apiAccount(alias: "Bad", lastBalanceText: "unknown", minimumBalance: 1, now: now),
+                apiAccount(alias: "Disabled", lastBalanceText: "10", minimumBalance: 1, isBalanceMonitoringEnabled: false, now: now)
+            ]
+        ) { _ in true }
+
+        XCTAssertEqual(ordered.map(\.alias), ["Above"])
+    }
+
+    func testChatGPTCandidatesArePreferredBeforeAPIProviders() {
+        let now = Date(timeIntervalSince1970: 1_000)
+        let policy = SwitchPolicy(primaryThresholdPercent: 90, secondaryThresholdPercent: 90)
+        let chatgpt = account(alias: "ChatGPT", primary: 20, secondary: 20, confidence: .fresh, priority: 0, now: now)
+        let api = apiAccount(alias: "Relay", lastBalanceText: "100", minimumBalance: 0, priority: 100, now: now)
+
+        let ordered = policy.orderedCandidates(from: [api, chatgpt]) { _ in true }
+
+        XCTAssertEqual(ordered.map(\.alias), ["ChatGPT", "Relay"])
+    }
+
+    func testAPIProviderOnlyAutoSwitchesOutWhenBalanceIsDepletedAndSafe() {
         let now = Date(timeIntervalSince1970: 1_000)
         let policy = SwitchPolicy(autoSwitchCooldownSeconds: 300, activeThreadIdleSeconds: 120)
-        let api = account(alias: "Relay", primary: nil, secondary: nil, confidence: .unknown, credentialKind: .apiProvider, now: now)
+        let healthyAPI = apiAccount(alias: "Relay", lastBalanceText: "2", minimumBalance: 1, now: now)
+        let depletedAPI = apiAccount(alias: "Relay", lastBalanceText: "1", minimumBalance: 1, now: now)
         let chatgpt = account(alias: "ChatGPT", primary: 20, secondary: 20, confidence: .fresh, now: now)
 
         XCTAssertFalse(policy.shouldAutoSwitch(
-            currentAccount: api,
-            allAccounts: [api, chatgpt],
+            currentAccount: healthyAPI,
+            allAccounts: [healthyAPI, chatgpt],
+            context: .idle(now: now)
+        ))
+
+        XCTAssertFalse(policy.shouldAutoSwitch(
+            currentAccount: depletedAPI,
+            allAccounts: [depletedAPI, chatgpt],
             context: SwitchSafetyContext(
                 now: now,
                 activeThreadUpdatedAt: now.addingTimeInterval(-119),
@@ -324,13 +358,18 @@ final class SwitchPolicyTests: XCTestCase {
             )
         ))
         XCTAssertFalse(policy.shouldAutoSwitch(
-            currentAccount: api,
-            allAccounts: [api, chatgpt],
+            currentAccount: depletedAPI,
+            allAccounts: [depletedAPI, chatgpt],
             context: SwitchSafetyContext(
                 now: now,
                 activeThreadUpdatedAt: nil,
                 lastSwitchAt: now.addingTimeInterval(-299)
             )
+        ))
+        XCTAssertTrue(policy.shouldAutoSwitch(
+            currentAccount: depletedAPI,
+            allAccounts: [depletedAPI, chatgpt],
+            context: .idle(now: now)
         ))
     }
 
@@ -365,6 +404,44 @@ final class SwitchPolicyTests: XCTestCase {
                 lastObservedAt: confidence == .unknown ? nil : now,
                 confidence: confidence
             ),
+            isEnabled: true,
+            priority: priority
+        )
+    }
+
+    private func apiAccount(
+        alias: String,
+        lastBalanceText: String?,
+        minimumBalance: Double,
+        priority: Int = 0,
+        isBalanceMonitoringEnabled: Bool = true,
+        now: Date
+    ) -> CodixxAccount {
+        let id = UUID()
+        let fingerprint = "api-key-\(alias)"
+        return CodixxAccount(
+            id: id,
+            alias: alias,
+            fingerprint: fingerprint,
+            credentialKind: .apiProvider,
+            apiProvider: APIProviderAccount(
+                providerName: alias,
+                baseURL: URL(string: "https://relay.example.com/v1")!,
+                defaultModel: nil,
+                keyFingerprint: fingerprint,
+                balanceQuery: APIBalanceQueryConfig(
+                    isEnabled: isBalanceMonitoringEnabled,
+                    urlText: "https://relay.example.com/balance",
+                    jsonPath: "data.balance",
+                    minimumBalance: minimumBalance,
+                    lastBalanceText: lastBalanceText,
+                    lastRefreshedAt: now
+                )
+            ),
+            createdAt: now,
+            updatedAt: now,
+            lastUsedAt: nil,
+            quota: .unknown(accountId: id.uuidString, alias: alias),
             isEnabled: true,
             priority: priority
         )

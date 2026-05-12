@@ -21,12 +21,13 @@ public struct ThreadUsageReader: Sendable {
 
     public func readSnapshot(now: Date, accountWindows: [AccountUsageWindow] = []) -> ThreadUsageSnapshot {
         do {
-            let threads = try readThreadsWithRetries()
+            let rawThreads = try readThreadsWithRetries()
             let dailyIntervals = dailyIntervals(now: now)
             let hourlyIntervals = hourlyIntervals(now: now)
             let monthlyIntervals = monthlyIntervals(now: now)
             let intervalGroups = [dailyIntervals, hourlyIntervals, monthlyIntervals]
             var trendCache = loadTrendCache()
+            let threads = threadsWithEffectiveTokenCounts(rawThreads, trendCache: &trendCache)
             let tokenEventsByThreadId = tokenEventsByThreadId(
                 for: threads,
                 dailyIntervals: dailyIntervals,
@@ -59,10 +60,28 @@ public struct ThreadUsageReader: Sendable {
         }
     }
 
+    private func threadsWithEffectiveTokenCounts(
+        _ threads: [ThreadUsage],
+        trendCache: inout TrendCacheState
+    ) -> [ThreadUsage] {
+        threads.map { thread in
+            let events = readTokenEvents(from: URL(fileURLWithPath: thread.rolloutPath), trendCache: &trendCache)
+            guard let effectiveTokens = events.map(\.totalTokens).max() else {
+                return thread
+            }
+            var updatedThread = thread
+            updatedThread.tokensUsed = effectiveTokens
+            return updatedThread
+        }
+    }
+
     public func readActivitySnapshot(now: Date) -> ThreadUsageSnapshot {
         do {
+            var trendCache = loadTrendCache()
+            let threads = threadsWithEffectiveTokenCounts(try readThreadsWithRetries(), trendCache: &trendCache)
+            saveTrendCache(trendCache)
             return UsageAggregator.snapshot(
-                threads: try readThreadsWithRetries(),
+                threads: threads,
                 now: now
             )
         } catch {

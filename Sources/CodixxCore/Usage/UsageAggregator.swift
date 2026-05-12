@@ -10,6 +10,9 @@ public struct ThreadUsage: Equatable, Sendable {
     public var createdAt: Date
     public var updatedAt: Date
     public var rolloutPath: String
+    public var isArchived: Bool {
+        rolloutPath.split(separator: "/").contains("archived_sessions")
+    }
 
     public init(
         id: String,

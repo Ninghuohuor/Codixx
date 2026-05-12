@@ -178,6 +178,92 @@ final class ThreadUsageReaderTests: XCTestCase {
         XCTAssertEqual(snapshot.hourlyTokenUsage.first { $0.start == calendar.dateInterval(of: .hour, for: today.addingTimeInterval(3_600))?.start }?.tokens, 300)
     }
 
+    func testThreadTotalsUseEffectiveTokensWhenRolloutContainsCachedInput() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let databaseURL = directory.appendingPathComponent("state_5.sqlite")
+        let rolloutURL = directory.appendingPathComponent("rollout.jsonl")
+        let now = try XCTUnwrap(ISO8601DateFormatter().date(from: "2026-05-07T12:00:00Z"))
+
+        try writeDetailedTokenUsageEvents(
+            [
+                (now.addingTimeInterval(-600), 346_537_771, 315_228_160, 492_495)
+            ],
+            to: rolloutURL
+        )
+        try createDatabase(
+            at: databaseURL,
+            timestampColumnType: "INTEGER",
+            inserts: [
+                """
+                INSERT INTO threads VALUES(
+                    'cached-heavy',
+                    'Cached Heavy',
+                    'codex',
+                    'openai',
+                    'gpt-5',
+                    'medium',
+                    347030266,
+                    '\(directory.path)',
+                    \(Int(now.addingTimeInterval(-3_600).timeIntervalSince1970)),
+                    \(Int(now.addingTimeInterval(-600).timeIntervalSince1970)),
+                    '\(rolloutURL.path)'
+                );
+                """
+            ]
+        )
+        let reader = ThreadUsageReader(databaseURL: databaseURL)
+
+        let snapshot = reader.readSnapshot(now: now)
+
+        XCTAssertEqual(snapshot.threads.first?.tokensUsed, 31_802_106)
+        XCTAssertEqual(snapshot.totalTokens, 31_802_106)
+    }
+
+    func testActivitySnapshotUsesEffectiveTokensWhenRolloutContainsCachedInput() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let databaseURL = directory.appendingPathComponent("state_5.sqlite")
+        let rolloutURL = directory.appendingPathComponent("rollout.jsonl")
+        let now = try XCTUnwrap(ISO8601DateFormatter().date(from: "2026-05-07T12:00:00Z"))
+
+        try writeDetailedTokenUsageEvents(
+            [
+                (now.addingTimeInterval(-600), 10_000, 8_000, 750)
+            ],
+            to: rolloutURL
+        )
+        try createDatabase(
+            at: databaseURL,
+            timestampColumnType: "INTEGER",
+            inserts: [
+                """
+                INSERT INTO threads VALUES(
+                    'active-cached',
+                    'Active Cached',
+                    'codex',
+                    'openai',
+                    'gpt-5',
+                    'medium',
+                    10750,
+                    '\(directory.path)',
+                    \(Int(now.addingTimeInterval(-3_600).timeIntervalSince1970)),
+                    \(Int(now.addingTimeInterval(-600).timeIntervalSince1970)),
+                    '\(rolloutURL.path)'
+                );
+                """
+            ]
+        )
+        let reader = ThreadUsageReader(databaseURL: databaseURL)
+
+        let snapshot = reader.readActivitySnapshot(now: now)
+
+        XCTAssertEqual(snapshot.threads.first?.tokensUsed, 2_750)
+        XCTAssertEqual(snapshot.totalTokens, 2_750)
+    }
+
     func testReadsCurrentAndPreviousMonthTokenUsageFromRolloutEvents() throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
         defer { try? FileManager.default.removeItem(at: directory) }

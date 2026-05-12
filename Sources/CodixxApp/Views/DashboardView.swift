@@ -2,6 +2,21 @@ import AppKit
 import SwiftUI
 import CodixxCore
 
+enum DashboardLayout {
+    static let width: CGFloat = 560
+    static let popoverContentSize = NSSize(width: width, height: 520)
+    static let accountColumnCount = 2
+    static let accountColumnSpacing: CGFloat = 14
+    static let accountCardMinHeight: CGFloat = 200
+    static let accountCardFooterSpacerMinLength: CGFloat = 0
+    static let draggingAccountOpacity: Double = 0.94
+    static let draggingAccountScale: CGFloat = 1.006
+    static let draggingAccountShadowRadius: CGFloat = 6
+    static let dragReleaseSettlingDelay: TimeInterval = 0.12
+    static let dragReleaseFadeDuration: TimeInterval = 0.16
+    static let dropTargetStrokeWidth: CGFloat = 2
+}
+
 struct DashboardView: View {
     @ObservedObject var state: AppState
     @State private var selectedTab = 0
@@ -20,7 +35,7 @@ struct DashboardView: View {
                 .tabItem { Label(state.strings.settings, systemImage: "gearshape") }
                 .tag(2)
         }
-        .frame(width: 360)
+        .frame(width: DashboardLayout.width)
         .frame(minHeight: 400, idealHeight: 520, maxHeight: 620)
         .onChange(of: selectedTab) { tab in
             guard tab == 1 else { return }

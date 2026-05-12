@@ -2,6 +2,57 @@ import Charts
 import SwiftUI
 import CodixxCore
 
+struct UsageOverviewMetrics {
+    var totalTokens: Int
+    var threadCount: Int
+    var dailyTokenUsage: [TokenUsageBucket]
+    var monthlyTokenUsage: [TokenUsageBucket]
+    var todayTokens: Int
+    var yesterdayTokens: Int
+    var currentMonthTokens: Int
+    var previousMonthTokens: Int
+
+    init(snapshot: ThreadUsageSnapshot, selectedAccountId: UUID?, now: Date = Date()) {
+        if let selectedAccountId {
+            if let summary = snapshot.accountUsageSummaries.first(where: { $0.accountId == selectedAccountId }) {
+                self.totalTokens = summary.totalTokens
+                self.threadCount = summary.threadCount
+                self.dailyTokenUsage = summary.dailyTokenUsage
+                self.monthlyTokenUsage = summary.monthlyTokenUsage
+            } else {
+                self.totalTokens = 0
+                self.threadCount = 0
+                self.dailyTokenUsage = []
+                self.monthlyTokenUsage = []
+            }
+        } else {
+            self.totalTokens = snapshot.totalTokens
+            self.threadCount = snapshot.threads.count
+            self.dailyTokenUsage = snapshot.dailyTokenUsage
+            self.monthlyTokenUsage = snapshot.monthlyTokenUsage
+        }
+
+        self.todayTokens = Self.tokens(inDayOffset: 0, buckets: dailyTokenUsage, now: now)
+        self.yesterdayTokens = Self.tokens(inDayOffset: -1, buckets: dailyTokenUsage, now: now)
+        self.currentMonthTokens = Self.tokens(inMonthOffset: 0, buckets: monthlyTokenUsage, now: now)
+        self.previousMonthTokens = Self.tokens(inMonthOffset: -1, buckets: monthlyTokenUsage, now: now)
+    }
+
+    private static func tokens(inDayOffset offset: Int, buckets: [TokenUsageBucket], now: Date) -> Int {
+        let calendar = Calendar.current
+        let today = calendar.startOfDay(for: now)
+        let day = calendar.date(byAdding: .day, value: offset, to: today) ?? today
+        return buckets.first { calendar.isDate($0.start, inSameDayAs: day) }?.tokens ?? 0
+    }
+
+    private static func tokens(inMonthOffset offset: Int, buckets: [TokenUsageBucket], now: Date) -> Int {
+        let calendar = Calendar.current
+        let currentMonth = calendar.dateInterval(of: .month, for: now)?.start ?? calendar.startOfDay(for: now)
+        let month = calendar.date(byAdding: .month, value: offset, to: currentMonth) ?? currentMonth
+        return buckets.first { $0.start == month }?.tokens ?? 0
+    }
+}
+
 struct UsageTrendView: View {
     var snapshot: ThreadUsageSnapshot
     var accounts: [CodixxAccount]
@@ -201,12 +252,12 @@ struct UsageTrendView: View {
             }
 
             LazyVGrid(columns: metricColumns, alignment: .leading, spacing: 10) {
-                MetricTile(title: strings.total, value: overviewTotalTokens.formatted(), systemImage: "sum")
-                MetricTile(title: strings.threads, value: overviewThreadCount.formatted(), systemImage: "text.bubble")
-                MetricTile(title: strings.todayTokens, value: todayTokens.formatted(), systemImage: "calendar")
-                MetricTile(title: strings.currentMonthTokens, value: currentMonthTokens.formatted(), systemImage: "calendar.circle")
-                MetricTile(title: strings.yesterdayTokens, value: yesterdayTokens.formatted(), systemImage: "calendar.badge.clock")
-                MetricTile(title: strings.previousMonthTokens, value: previousMonthTokens.formatted(), systemImage: "calendar.badge.minus")
+                MetricTile(title: strings.total, value: overviewMetrics.totalTokens.formatted(), systemImage: "sum")
+                MetricTile(title: strings.threads, value: overviewMetrics.threadCount.formatted(), systemImage: "text.bubble")
+                MetricTile(title: strings.todayTokens, value: overviewMetrics.todayTokens.formatted(), systemImage: "calendar")
+                MetricTile(title: strings.currentMonthTokens, value: overviewMetrics.currentMonthTokens.formatted(), systemImage: "calendar.circle")
+                MetricTile(title: strings.yesterdayTokens, value: overviewMetrics.yesterdayTokens.formatted(), systemImage: "calendar.badge.clock")
+                MetricTile(title: strings.previousMonthTokens, value: overviewMetrics.previousMonthTokens.formatted(), systemImage: "calendar.badge.minus")
             }
         }
         .padding(12)
@@ -237,55 +288,8 @@ struct UsageTrendView: View {
         }
     }
 
-    private var todayTokens: Int {
-        tokens(inDayOffset: 0, buckets: overviewDailyTokenUsage)
-    }
-
-    private var yesterdayTokens: Int {
-        tokens(inDayOffset: -1, buckets: overviewDailyTokenUsage)
-    }
-
-    private var currentMonthTokens: Int {
-        tokens(inMonthOffset: 0, buckets: overviewMonthlyTokenUsage)
-    }
-
-    private var previousMonthTokens: Int {
-        tokens(inMonthOffset: -1, buckets: overviewMonthlyTokenUsage)
-    }
-
-    private var overviewTotalTokens: Int {
-        selectedAccountSummary?.totalTokens ?? snapshot.totalTokens
-    }
-
-    private var overviewThreadCount: Int {
-        selectedAccountSummary?.threadCount ?? snapshot.threads.count
-    }
-
-    private var overviewDailyTokenUsage: [TokenUsageBucket] {
-        selectedAccountSummary?.dailyTokenUsage ?? snapshot.dailyTokenUsage
-    }
-
-    private var overviewMonthlyTokenUsage: [TokenUsageBucket] {
-        selectedAccountSummary?.monthlyTokenUsage ?? snapshot.monthlyTokenUsage
-    }
-
-    private var selectedAccountSummary: AccountUsageSummary? {
-        guard let selectedAccountId else { return nil }
-        return snapshot.accountUsageSummaries.first { $0.accountId == selectedAccountId }
-    }
-
-    private func tokens(inDayOffset offset: Int, buckets: [TokenUsageBucket]) -> Int {
-        let calendar = Calendar.current
-        let today = calendar.startOfDay(for: Date())
-        let day = calendar.date(byAdding: .day, value: offset, to: today) ?? today
-        return buckets.first { calendar.isDate($0.start, inSameDayAs: day) }?.tokens ?? 0
-    }
-
-    private func tokens(inMonthOffset offset: Int, buckets: [TokenUsageBucket]) -> Int {
-        let calendar = Calendar.current
-        let currentMonth = calendar.dateInterval(of: .month, for: Date())?.start ?? calendar.startOfDay(for: Date())
-        let month = calendar.date(byAdding: .month, value: offset, to: currentMonth) ?? currentMonth
-        return buckets.first { $0.start == month }?.tokens ?? 0
+    private var overviewMetrics: UsageOverviewMetrics {
+        UsageOverviewMetrics(snapshot: snapshot, selectedAccountId: selectedAccountId)
     }
 
     private var hourlyBuckets: [TokenBucket] {

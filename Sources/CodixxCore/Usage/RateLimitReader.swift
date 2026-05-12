@@ -1,6 +1,7 @@
 import Foundation
 
 public struct RateLimitObservation: Codable, Equatable, Sendable {
+    public var limitID: String?
     public var planType: String?
     public var membershipExpiresAt: Date?
     public var primaryUsedPercent: Double
@@ -13,6 +14,7 @@ public struct RateLimitObservation: Codable, Equatable, Sendable {
     public var sourceFile: String
 
     public init(
+        limitID: String? = nil,
         planType: String? = nil,
         membershipExpiresAt: Date? = nil,
         primaryUsedPercent: Double,
@@ -24,6 +26,7 @@ public struct RateLimitObservation: Codable, Equatable, Sendable {
         observedAt: Date,
         sourceFile: String
     ) {
+        self.limitID = limitID
         self.planType = planType
         self.membershipExpiresAt = membershipExpiresAt
         self.primaryUsedPercent = primaryUsedPercent
@@ -149,6 +152,7 @@ public struct RateLimitReader {
         }
 
         return RateLimitObservation(
+            limitID: rateLimits.limitID,
             planType: rateLimits.planType,
             membershipExpiresAt: rateLimits.membershipExpiresAt,
             primaryUsedPercent: rateLimits.primary.usedPercent,
@@ -297,12 +301,14 @@ private struct RateLimitPayloadInfo: Decodable {
 }
 
 private struct RateLimits: Decodable {
+    var limitID: String?
     var planType: String?
     var membershipExpiresAt: Date?
     var primary: RateLimitWindow
     var secondary: RateLimitWindow
 
     enum CodingKeys: String, CodingKey {
+        case limitID = "limit_id"
         case planType = "plan_type"
         case membershipExpiresAt = "membership_expires_at"
         case subscriptionExpiresAt = "subscription_expires_at"
@@ -315,6 +321,7 @@ private struct RateLimits: Decodable {
 
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.limitID = try container.decodeIfPresent(String.self, forKey: .limitID)
         self.planType = try container.decodeIfPresent(String.self, forKey: .planType)
         self.membershipExpiresAt = try Self.decodeFirstDate(
             from: container,

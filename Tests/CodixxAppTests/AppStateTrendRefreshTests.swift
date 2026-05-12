@@ -4,6 +4,34 @@ import CodixxCore
 
 @MainActor
 final class AppStateTrendRefreshTests: XCTestCase {
+    func testReorderAccountsPersistsDisplayOrderWithoutChangingPriorities() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let paths = CodixxPaths(home: directory)
+        let now = Date(timeIntervalSince1970: 1_778_000_000)
+        let first = displayOrderAccount(alias: "First", priority: 10, now: now)
+        let second = displayOrderAccount(alias: "Second", priority: 20, now: now)
+        let third = displayOrderAccount(alias: "Third", priority: 30, now: now)
+        try AccountMetadataStore(paths: paths).save(AccountMetadataList(accounts: [first, second, third]))
+        let state = AppState(
+            paths: paths,
+            vault: InMemoryVault(),
+            apiKeyVault: InMemoryAPIKeyVault(),
+            codexDesktopState: NoopCodexDesktopStateCleaner(),
+            codexDesktopManager: CodexDesktopManagerSpy(),
+            now: { now }
+        )
+        state.refreshNow()
+
+        state.moveAccount(first, before: third)
+
+        XCTAssertEqual(state.accounts.map(\.alias), ["Second", "First", "Third"])
+        XCTAssertEqual(state.accounts.map(\.priority), [20, 10, 30])
+        let persisted = try AccountMetadataStore(paths: paths).load().accounts
+        XCTAssertEqual(persisted.map(\.alias), ["Second", "First", "Third"])
+        XCTAssertEqual(persisted.map(\.priority), [20, 10, 30])
+    }
+
     func testManualSwitchSuppressesImmediateAutoSwitchBounceFromDepletedTarget() throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
         defer { try? FileManager.default.removeItem(at: directory) }
@@ -84,6 +112,106 @@ final class AppStateTrendRefreshTests: XCTestCase {
         XCTAssertEqual(state.currentAccount?.id, depleted.id)
         let events = try SwitchAuditLog(paths: paths).loadEvents()
         XCTAssertEqual(events.filter { $0.result == .success }.map(\.targetAlias), ["Depleted"])
+    }
+
+    func testAPIProviderAutoSwitchRefreshesActivityBeforeReturningToChatGPT() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let paths = CodixxPaths(home: directory)
+        try FileManager.default.createDirectory(at: paths.codexHome, withIntermediateDirectories: true)
+
+        var now = Date(timeIntervalSince1970: 1_778_000_000)
+        let chatGPTAuth = try AuthSnapshot(jsonData: Data(#"{"account_id":"chatgpt","access_token":"chatgpt-secret"}"#.utf8))
+        let chatGPTFingerprint = try AccountFingerprint.generate(from: chatGPTAuth)
+        let vault = InMemoryVault()
+        try vault.save(snapshot: chatGPTAuth, fingerprint: chatGPTFingerprint)
+        let apiKeyVault = InMemoryAPIKeyVault()
+        let apiKeyFingerprint = "api-key:cd0d9f0295a12e50"
+        try apiKeyVault.save(apiKey: "sk-relay", fingerprint: apiKeyFingerprint)
+
+        let api = CodixxAccount(
+            id: UUID(),
+            alias: "Relay",
+            fingerprint: apiKeyFingerprint,
+            credentialKind: .apiProvider,
+            apiProvider: APIProviderAccount(
+                providerName: "Relay",
+                baseURL: URL(string: "https://relay.example.com/v1")!,
+                defaultModel: nil,
+                keyFingerprint: apiKeyFingerprint
+            ),
+            createdAt: now,
+            updatedAt: now,
+            lastUsedAt: now.addingTimeInterval(-600),
+            quota: .unknown(accountId: apiKeyFingerprint, alias: "Relay"),
+            isEnabled: true,
+            priority: 0
+        )
+        let chatGPT = CodixxAccount(
+            id: UUID(),
+            alias: "ChatGPT",
+            fingerprint: chatGPTFingerprint,
+            createdAt: now,
+            updatedAt: now,
+            lastUsedAt: nil,
+            quota: AccountQuotaState(
+                accountId: "chatgpt",
+                alias: "ChatGPT",
+                primaryUsedPercent: 10,
+                primaryWindowMinutes: 300,
+                primaryResetsAt: nil,
+                secondaryUsedPercent: 10,
+                secondaryWindowMinutes: 10_080,
+                secondaryResetsAt: nil,
+                lastObservedAt: now,
+                confidence: .fresh
+            ),
+            isEnabled: true,
+            priority: 0
+        )
+        try AccountMetadataStore(paths: paths).save(AccountMetadataList(accounts: [api, chatGPT]))
+        try CodexProviderConfigStore(paths: paths).writeAPIProvider(
+            providerID: "codixx-\(api.id.uuidString.lowercased())",
+            providerName: "Relay",
+            baseURL: URL(string: "https://relay.example.com/v1")!,
+            defaultModel: nil
+        )
+        try FileManager.default.createDirectory(at: paths.codexHome, withIntermediateDirectories: true)
+        try AuthSnapshot.apiKey("sk-relay").jsonData.write(to: paths.authJSON)
+        try writeThreadsDatabase(
+            at: paths.latestStateDatabaseURL(),
+            now: now,
+            threadUpdatedAt: now.addingTimeInterval(-30)
+        )
+
+        let codexDesktopManager = CodexDesktopManagerSpy()
+        let state = AppState(
+            paths: paths,
+            vault: vault,
+            apiKeyVault: apiKeyVault,
+            codexDesktopState: NoopCodexDesktopStateCleaner(),
+            codexDesktopManager: codexDesktopManager,
+            now: { now }
+        )
+
+        state.refreshQuotaNow()
+
+        XCTAssertEqual(state.currentAccount?.id, api.id)
+        XCTAssertEqual(state.usageSnapshot.activeThread?.id, "active")
+        XCTAssertEqual(codexDesktopManager.restartCallCount, 0)
+
+        now = now.addingTimeInterval(180)
+        try writeThreadsDatabase(
+            at: paths.latestStateDatabaseURL(),
+            now: now,
+            threadUpdatedAt: now.addingTimeInterval(-180)
+        )
+
+        state.refreshQuotaNow()
+
+        XCTAssertEqual(state.currentAccount?.id, chatGPT.id)
+        XCTAssertEqual(codexDesktopManager.quitForCleanSwitchCallCount, 1)
+        XCTAssertEqual(codexDesktopManager.restartCallCount, 1)
     }
 
     func testAppStateCanSaveAPIProviderAccount() throws {
@@ -320,6 +448,92 @@ final class AppStateTrendRefreshTests: XCTestCase {
         XCTAssertEqual(state.accounts.first?.apiProvider?.balanceQuery?.lastBalanceText, "99")
     }
 
+    func testAPIBalanceRefreshAutoSwitchesFromDepletedAPIWhenIdle() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let paths = CodixxPaths(home: directory)
+        try FileManager.default.createDirectory(at: paths.codexHome, withIntermediateDirectories: true)
+
+        let now = Date(timeIntervalSince1970: 1_778_300_000)
+        let chatGPTAuth = try AuthSnapshot(jsonData: Data(#"{"account_id":"chatgpt","access_token":"chatgpt-secret"}"#.utf8))
+        let chatGPTFingerprint = try AccountFingerprint.generate(from: chatGPTAuth)
+        let vault = InMemoryVault()
+        try vault.save(snapshot: chatGPTAuth, fingerprint: chatGPTFingerprint)
+        let apiKeyVault = InMemoryAPIKeyVault()
+        let apiAuth = try AuthSnapshot.apiKey("sk-relay")
+        let apiKeyFingerprint = try AccountFingerprint.generate(from: apiAuth)
+        try apiKeyVault.save(apiKey: "sk-relay", fingerprint: apiKeyFingerprint)
+        try apiAuth.jsonData.write(to: paths.authJSON)
+
+        let api = CodixxAccount(
+            id: UUID(),
+            alias: "Relay",
+            fingerprint: apiKeyFingerprint,
+            credentialKind: .apiProvider,
+            apiProvider: APIProviderAccount(
+                providerName: "Relay",
+                baseURL: URL(string: "https://relay.example.com/v1")!,
+                defaultModel: nil,
+                keyFingerprint: apiKeyFingerprint,
+                balanceQuery: APIBalanceQueryConfig(
+                    isEnabled: true,
+                    urlText: "https://relay.example.com/balance",
+                    jsonPath: "data.balance",
+                    minimumBalance: 0,
+                    lastBalanceText: "10",
+                    lastRefreshedAt: now.addingTimeInterval(-1_000)
+                )
+            ),
+            createdAt: now,
+            updatedAt: now,
+            lastUsedAt: nil,
+            quota: .unknown(accountId: apiKeyFingerprint, alias: "Relay"),
+            isEnabled: true,
+            priority: 0
+        )
+        let chatGPT = CodixxAccount(
+            id: UUID(),
+            alias: "ChatGPT",
+            fingerprint: chatGPTFingerprint,
+            createdAt: now,
+            updatedAt: now,
+            lastUsedAt: nil,
+            quota: AccountQuotaState(
+                accountId: "chatgpt",
+                alias: "ChatGPT",
+                primaryUsedPercent: 10,
+                primaryWindowMinutes: 300,
+                primaryResetsAt: nil,
+                secondaryUsedPercent: 10,
+                secondaryWindowMinutes: 10_080,
+                secondaryResetsAt: nil,
+                lastObservedAt: now,
+                confidence: .fresh
+            ),
+            isEnabled: true,
+            priority: 0
+        )
+        try AccountMetadataStore(paths: paths).save(AccountMetadataList(accounts: [api, chatGPT]))
+        let codexDesktopManager = CodexDesktopManagerSpy()
+        let state = AppState(
+            paths: paths,
+            vault: vault,
+            apiKeyVault: apiKeyVault,
+            codexDesktopState: NoopCodexDesktopStateCleaner(),
+            codexDesktopManager: codexDesktopManager,
+            balanceQueryTester: APIBalanceQueryTesterSpy(result: APIBalanceQueryResult(isSuccess: true, message: "Balance: 0", balanceText: "0")),
+            now: { now }
+        )
+        state.refreshQuotaNow()
+        XCTAssertEqual(state.currentAccount?.id, api.id)
+
+        await state.refreshDueAPIBalances(force: true)
+
+        XCTAssertEqual(state.currentAccount?.id, chatGPT.id)
+        XCTAssertEqual(codexDesktopManager.quitForCleanSwitchCallCount, 1)
+        XCTAssertEqual(codexDesktopManager.restartCallCount, 1)
+    }
+
     func testSwitchClearsStaleSaveStatus() throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
         defer { try? FileManager.default.removeItem(at: directory) }
@@ -361,6 +575,35 @@ final class AppStateTrendRefreshTests: XCTestCase {
         state.switchToAccount(second)
 
         XCTAssertNil(state.accountSaveStatus)
+    }
+
+    func testAccountOperationsWriteActivityLogEvents() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let paths = CodixxPaths(home: directory)
+        try FileManager.default.createDirectory(at: paths.codexHome, withIntermediateDirectories: true)
+
+        var now = Date(timeIntervalSince1970: 1_778_000_000)
+        let auth = try AuthSnapshot(jsonData: Data(#"{"account_id":"pro","access_token":"pro-secret"}"#.utf8))
+        try auth.jsonData.write(to: paths.authJSON)
+        let state = AppState(
+            paths: paths,
+            vault: InMemoryVault(),
+            codexDesktopState: NoopCodexDesktopStateCleaner(),
+            codexDesktopManager: CodexDesktopManagerSpy(),
+            now: { now }
+        )
+
+        state.saveCurrentAccount(alias: "Pro")
+        now = now.addingTimeInterval(10)
+        let saved = try XCTUnwrap(state.accounts.first)
+        state.renameAccount(saved, alias: "Pro Renamed")
+
+        let events = try AppActivityLog(paths: paths).loadEvents()
+        XCTAssertEqual(events.map(\.kind), [.accountSaved, .accountRenamed])
+        XCTAssertEqual(events.first?.accountAlias, "Pro")
+        XCTAssertEqual(events.last?.accountAlias, "Pro")
+        XCTAssertEqual(events.last?.secondaryAlias, "Pro Renamed")
     }
 
     func testMenuOpenRefreshAppliesLatestQuotaObservationWithoutFullUsageRefresh() async throws {
@@ -420,6 +663,206 @@ final class AppStateTrendRefreshTests: XCTestCase {
         XCTAssertEqual(state.currentAccount?.quota.primaryResetsAt, observedReset)
         XCTAssertFalse(state.isLoadingFullUsageSnapshot)
         XCTAssertFalse(state.hasLoadedFullUsageSnapshot)
+    }
+
+    func testQuotaRefreshDoesNotApplyObservationOlderThanCurrentAccountUse() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let paths = CodixxPaths(home: directory)
+        try FileManager.default.createDirectory(at: paths.codexHome, withIntermediateDirectories: true)
+
+        let authData = Data(#"{"account_id":"acct_main","access_token":"secret"}"#.utf8)
+        try authData.write(to: paths.authJSON)
+        let fingerprint = try AccountFingerprint.generate(from: AuthSnapshot(jsonData: authData))
+        let accountId = UUID()
+        let currentUseTime = Date(timeIntervalSince1970: 1_778_300_000)
+        let account = CodixxAccount(
+            id: accountId,
+            alias: "main",
+            fingerprint: fingerprint,
+            createdAt: currentUseTime,
+            updatedAt: currentUseTime,
+            lastUsedAt: currentUseTime,
+            quota: .unknown(accountId: accountId.uuidString, alias: "main"),
+            isEnabled: true,
+            priority: 0
+        )
+        try AccountMetadataStore(paths: paths).save(AccountMetadataList(accounts: [account]))
+
+        let sessionDirectory = paths.codexHome.appendingPathComponent("sessions/2026/05/08", isDirectory: true)
+        try FileManager.default.createDirectory(at: sessionDirectory, withIntermediateDirectories: true)
+        let sessionFile = sessionDirectory.appendingPathComponent("rollout.jsonl")
+        let observationLine = """
+        {"timestamp":"2026-05-08T01:00:00Z","type":"event_msg","payload":{"type":"token_count"},"rate_limits":{"primary":{"used_percent":62.0,"window_minutes":300,"resets_at":1778206586},"secondary":{"used_percent":72.0,"window_minutes":10080,"resets_at":1778700000},"plan_type":"plus"}}
+        """
+        try (observationLine + "\n").write(to: sessionFile, atomically: true, encoding: .utf8)
+
+        let state = AppState(
+            paths: paths,
+            vault: InMemoryVault(),
+            codexDesktopState: NoopCodexDesktopStateCleaner(),
+            codexDesktopManager: CodexDesktopManagerSpy(),
+            now: { currentUseTime }
+        )
+
+        state.refreshFromMenuOpen()
+
+        XCTAssertNil(state.currentAccount?.quota.primaryUsedPercent)
+        XCTAssertNil(state.currentAccount?.quota.secondaryUsedPercent)
+    }
+
+    func testQuotaRefreshPrefersGlobalCodexLimitOverModelSpecificLimit() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let paths = CodixxPaths(home: directory)
+        try FileManager.default.createDirectory(at: paths.codexHome, withIntermediateDirectories: true)
+
+        let authData = Data(#"{"account_id":"acct_main","access_token":"secret"}"#.utf8)
+        try authData.write(to: paths.authJSON)
+        let fingerprint = try AccountFingerprint.generate(from: AuthSnapshot(jsonData: authData))
+        let accountId = UUID()
+        let currentUseTime = Date(timeIntervalSince1970: 1_778_300_000)
+        let account = CodixxAccount(
+            id: accountId,
+            alias: "main",
+            fingerprint: fingerprint,
+            createdAt: currentUseTime,
+            updatedAt: currentUseTime,
+            lastUsedAt: currentUseTime,
+            quota: .unknown(accountId: accountId.uuidString, alias: "main"),
+            isEnabled: true,
+            priority: 0
+        )
+        try AccountMetadataStore(paths: paths).save(AccountMetadataList(accounts: [account]))
+
+        let sessionDirectory = paths.codexHome.appendingPathComponent("sessions/2026/05/12", isDirectory: true)
+        try FileManager.default.createDirectory(at: sessionDirectory, withIntermediateDirectories: true)
+        let sessionFile = sessionDirectory.appendingPathComponent("rollout.jsonl")
+        let globalObservation = """
+        {"timestamp":"2026-05-12T09:40:00Z","type":"event_msg","payload":{"type":"token_count"},"rate_limits":{"limit_id":"codex","primary":{"used_percent":17.0,"window_minutes":300,"resets_at":1778310000},"secondary":{"used_percent":23.0,"window_minutes":10080,"resets_at":1778910000},"plan_type":"pro"}}
+        """
+        let modelObservation = """
+        {"timestamp":"2026-05-12T09:40:01Z","type":"event_msg","payload":{"type":"token_count"},"rate_limits":{"limit_id":"codex_bengalfox","primary":{"used_percent":0.0,"window_minutes":300,"resets_at":1778313600},"secondary":{"used_percent":0.0,"window_minutes":10080,"resets_at":1778913600},"plan_type":"pro"}}
+        """
+        try (globalObservation + "\n" + modelObservation + "\n").write(to: sessionFile, atomically: true, encoding: .utf8)
+
+        let state = AppState(
+            paths: paths,
+            vault: InMemoryVault(),
+            codexDesktopState: NoopCodexDesktopStateCleaner(),
+            codexDesktopManager: CodexDesktopManagerSpy(),
+            now: { currentUseTime }
+        )
+
+        state.refreshFromMenuOpen()
+
+        XCTAssertEqual(state.currentAccount?.quota.primaryUsedPercent, 17)
+        XCTAssertEqual(state.currentAccount?.quota.secondaryUsedPercent, 23)
+    }
+
+    func testQuotaRefreshIgnoresModelSpecificLimitWhenNoGlobalLimitIsPresent() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let paths = CodixxPaths(home: directory)
+        try FileManager.default.createDirectory(at: paths.codexHome, withIntermediateDirectories: true)
+
+        let authData = Data(#"{"account_id":"acct_main","access_token":"secret"}"#.utf8)
+        try authData.write(to: paths.authJSON)
+        let fingerprint = try AccountFingerprint.generate(from: AuthSnapshot(jsonData: authData))
+        let accountId = UUID()
+        let currentUseTime = Date(timeIntervalSince1970: 1_778_300_000)
+        let observedAt = currentUseTime.addingTimeInterval(-120)
+        let account = CodixxAccount(
+            id: accountId,
+            alias: "main",
+            fingerprint: fingerprint,
+            createdAt: currentUseTime,
+            updatedAt: currentUseTime,
+            lastUsedAt: currentUseTime,
+            quota: AccountQuotaState(
+                accountId: accountId.uuidString,
+                alias: "main",
+                planType: "pro",
+                primaryUsedPercent: 12,
+                primaryWindowMinutes: 300,
+                primaryResetsAt: currentUseTime.addingTimeInterval(1_800),
+                secondaryUsedPercent: 34,
+                secondaryWindowMinutes: 10_080,
+                secondaryResetsAt: currentUseTime.addingTimeInterval(86_400),
+                lastObservedAt: observedAt,
+                confidence: .fresh
+            ),
+            isEnabled: true,
+            priority: 0
+        )
+        try AccountMetadataStore(paths: paths).save(AccountMetadataList(accounts: [account]))
+
+        let sessionDirectory = paths.codexHome.appendingPathComponent("sessions/2026/05/12", isDirectory: true)
+        try FileManager.default.createDirectory(at: sessionDirectory, withIntermediateDirectories: true)
+        let sessionFile = sessionDirectory.appendingPathComponent("rollout.jsonl")
+        let modelObservation = """
+        {"timestamp":"2026-05-12T09:40:01Z","type":"event_msg","payload":{"type":"token_count"},"rate_limits":{"limit_id":"codex_bengalfox","primary":{"used_percent":0.0,"window_minutes":300,"resets_at":1778313600},"secondary":{"used_percent":0.0,"window_minutes":10080,"resets_at":1778913600},"plan_type":"pro"}}
+        """
+        try (modelObservation + "\n").write(to: sessionFile, atomically: true, encoding: .utf8)
+
+        let state = AppState(
+            paths: paths,
+            vault: InMemoryVault(),
+            codexDesktopState: NoopCodexDesktopStateCleaner(),
+            codexDesktopManager: CodexDesktopManagerSpy(),
+            now: { currentUseTime }
+        )
+
+        state.refreshFromMenuOpen()
+
+        XCTAssertEqual(state.currentAccount?.quota.primaryUsedPercent, 12)
+        XCTAssertEqual(state.currentAccount?.quota.secondaryUsedPercent, 34)
+    }
+
+    func testQuotaRefreshStillAcceptsLegacyLimitWithoutLimitID() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let paths = CodixxPaths(home: directory)
+        try FileManager.default.createDirectory(at: paths.codexHome, withIntermediateDirectories: true)
+
+        let authData = Data(#"{"account_id":"acct_main","access_token":"secret"}"#.utf8)
+        try authData.write(to: paths.authJSON)
+        let fingerprint = try AccountFingerprint.generate(from: AuthSnapshot(jsonData: authData))
+        let accountId = UUID()
+        let currentUseTime = Date(timeIntervalSince1970: 1_778_300_000)
+        let account = CodixxAccount(
+            id: accountId,
+            alias: "main",
+            fingerprint: fingerprint,
+            createdAt: currentUseTime,
+            updatedAt: currentUseTime,
+            lastUsedAt: currentUseTime,
+            quota: .unknown(accountId: accountId.uuidString, alias: "main"),
+            isEnabled: true,
+            priority: 0
+        )
+        try AccountMetadataStore(paths: paths).save(AccountMetadataList(accounts: [account]))
+
+        let sessionDirectory = paths.codexHome.appendingPathComponent("sessions/2026/05/12", isDirectory: true)
+        try FileManager.default.createDirectory(at: sessionDirectory, withIntermediateDirectories: true)
+        let sessionFile = sessionDirectory.appendingPathComponent("rollout.jsonl")
+        let legacyObservation = """
+        {"timestamp":"2026-05-12T09:40:01Z","type":"event_msg","payload":{"type":"token_count"},"rate_limits":{"primary":{"used_percent":45.0,"window_minutes":300,"resets_at":1778313600},"secondary":{"used_percent":67.0,"window_minutes":10080,"resets_at":1778913600},"plan_type":"pro"}}
+        """
+        try (legacyObservation + "\n").write(to: sessionFile, atomically: true, encoding: .utf8)
+
+        let state = AppState(
+            paths: paths,
+            vault: InMemoryVault(),
+            codexDesktopState: NoopCodexDesktopStateCleaner(),
+            codexDesktopManager: CodexDesktopManagerSpy(),
+            now: { currentUseTime }
+        )
+
+        state.refreshFromMenuOpen()
+
+        XCTAssertEqual(state.currentAccount?.quota.primaryUsedPercent, 45)
+        XCTAssertEqual(state.currentAccount?.quota.secondaryUsedPercent, 67)
     }
 
     func testTrendRefreshMarksFullUsageSnapshotLoaded() async throws {
@@ -497,6 +940,74 @@ final class AppStateTrendRefreshTests: XCTestCase {
         })
     }
 
+    func testAccountUsageWindowsAttributeRecentUsageToCurrentAccountAfterExternalLogin() throws {
+        let accountA = UUID()
+        let accountB = UUID()
+        let currentAccountId = UUID()
+        let accountCreatedAt = Date(timeIntervalSince1970: 1_777_000_000)
+        let firstSwitchAt = Date(timeIntervalSince1970: 1_778_000_000)
+        let currentBecameActiveAt = firstSwitchAt.addingTimeInterval(120)
+        let account = CodixxAccount(
+            id: accountA,
+            alias: "A",
+            fingerprint: "fingerprint-a",
+            createdAt: accountCreatedAt,
+            updatedAt: accountCreatedAt,
+            lastUsedAt: nil,
+            quota: .unknown(accountId: accountA.uuidString, alias: "A"),
+            isEnabled: true,
+            priority: 0
+        )
+        let target = CodixxAccount(
+            id: accountB,
+            alias: "B",
+            fingerprint: "fingerprint-b",
+            createdAt: accountCreatedAt,
+            updatedAt: accountCreatedAt,
+            lastUsedAt: nil,
+            quota: .unknown(accountId: accountB.uuidString, alias: "B"),
+            isEnabled: true,
+            priority: 1
+        )
+        let current = CodixxAccount(
+            id: currentAccountId,
+            alias: "Current",
+            fingerprint: "fingerprint-current",
+            createdAt: accountCreatedAt,
+            updatedAt: currentBecameActiveAt,
+            lastUsedAt: currentBecameActiveAt,
+            quota: .unknown(accountId: currentAccountId.uuidString, alias: "Current"),
+            isEnabled: true,
+            priority: 2
+        )
+        let switchEvent = SwitchAuditEvent(
+            timestamp: firstSwitchAt,
+            trigger: .manual,
+            sourceAccountId: accountA,
+            sourceAlias: "A",
+            targetAccountId: accountB,
+            targetAlias: "B",
+            sourcePrimaryUsedPercent: nil,
+            sourceSecondaryUsedPercent: nil,
+            threshold: nil,
+            result: .success,
+            errorSummary: nil,
+            backupPath: nil
+        )
+
+        let windows = AppState.accountUsageWindows(
+            accounts: [account, target, current],
+            switchEvents: [switchEvent],
+            currentAccount: current
+        )
+
+        XCTAssertEqual(windows, [
+            AccountUsageWindow(accountId: accountA, start: .distantPast, end: firstSwitchAt),
+            AccountUsageWindow(accountId: accountB, start: firstSwitchAt, end: currentBecameActiveAt),
+            AccountUsageWindow(accountId: currentAccountId, start: currentBecameActiveAt, end: nil)
+        ])
+    }
+
     private func waitUntil(
         timeout: TimeInterval = 2,
         predicate: @escaping @MainActor @Sendable () -> Bool
@@ -507,6 +1018,46 @@ final class AppStateTrendRefreshTests: XCTestCase {
             try await Task.sleep(nanoseconds: 20_000_000)
         }
         XCTFail("Timed out waiting for predicate")
+    }
+
+    private func writeThreadsDatabase(at url: URL, now: Date, threadUpdatedAt: Date) throws {
+        try FileManager.default.createDirectory(
+            at: url.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        try? FileManager.default.removeItem(at: url)
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/sqlite3")
+        process.arguments = [
+            url.path,
+            """
+            CREATE TABLE threads(
+                id TEXT PRIMARY KEY,
+                title TEXT,
+                model TEXT,
+                reasoning_effort TEXT,
+                tokens_used INTEGER,
+                cwd TEXT,
+                created_at INTEGER,
+                updated_at INTEGER,
+                rollout_path TEXT
+            );
+            INSERT INTO threads VALUES(
+                'active',
+                'Active API task',
+                'gpt-5',
+                'medium',
+                100,
+                '',
+                \(Int(now.addingTimeInterval(-300).timeIntervalSince1970)),
+                \(Int(threadUpdatedAt.timeIntervalSince1970)),
+                '/tmp/active.jsonl'
+            );
+            """
+        ]
+        try process.run()
+        process.waitUntilExit()
+        XCTAssertEqual(process.terminationStatus, 0)
     }
 }
 
@@ -555,6 +1106,20 @@ private final class CodexDesktopManagerSpy: CodexDesktopManaging {
     func restart() throws {
         restartCallCount += 1
     }
+}
+
+private func displayOrderAccount(alias: String, priority: Int, now: Date) -> CodixxAccount {
+    CodixxAccount(
+        id: UUID(),
+        alias: alias,
+        fingerprint: "fingerprint-\(alias)",
+        createdAt: now,
+        updatedAt: now,
+        lastUsedAt: nil,
+        quota: .unknown(accountId: alias, alias: alias),
+        isEnabled: true,
+        priority: priority
+    )
 }
 
 private final class InMemoryAPIKeyVault: APIKeyVault {

@@ -6,6 +6,7 @@ cd "$ROOT_DIR"
 
 DEFAULT_SIGN_IDENTITY="Codixx Local Code Signing"
 SIGN_IDENTITY="${CODE_SIGN_IDENTITY:-$DEFAULT_SIGN_IDENTITY}"
+APP_VERSION="$(tr -d '[:space:]' < "$ROOT_DIR/VERSION")"
 
 swift build -c release
 
@@ -47,9 +48,9 @@ cat > "$CONTENTS_DIR/Info.plist" <<'PLIST'
   <key>CFBundlePackageType</key>
   <string>APPL</string>
   <key>CFBundleShortVersionString</key>
-  <string>0.1.0</string>
+  <string>__APP_VERSION__</string>
   <key>CFBundleVersion</key>
-  <string>1</string>
+  <string>101</string>
   <key>LSMinimumSystemVersion</key>
   <string>13.0</string>
   <key>LSUIElement</key>
@@ -59,6 +60,8 @@ cat > "$CONTENTS_DIR/Info.plist" <<'PLIST'
 </dict>
 </plist>
 PLIST
+
+/usr/bin/sed -i '' "s/__APP_VERSION__/$APP_VERSION/g" "$CONTENTS_DIR/Info.plist"
 
 if security find-identity -v -p codesigning | grep -Fq "\"$SIGN_IDENTITY\""; then
   codesign --force --deep --timestamp=none --sign "$SIGN_IDENTITY" "$APP_DIR"
