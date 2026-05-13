@@ -262,6 +262,11 @@ final class ThreadUsageReaderTests: XCTestCase {
 
         XCTAssertEqual(snapshot.threads.first?.tokensUsed, 2_750)
         XCTAssertEqual(snapshot.totalTokens, 2_750)
+
+        let lightweightSnapshot = reader.readActivitySnapshot(now: now, includeEffectiveTokenCounts: false)
+
+        XCTAssertEqual(lightweightSnapshot.threads.first?.tokensUsed, 10_750)
+        XCTAssertEqual(lightweightSnapshot.totalTokens, 10_750)
     }
 
     func testReadsCurrentAndPreviousMonthTokenUsageFromRolloutEvents() throws {

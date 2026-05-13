@@ -87,6 +87,7 @@ struct AccountListView: View {
     @State private var addAccountPanel: AddAccountPanelController?
     @State private var editAccountPanel: EditAccountPanelController?
     @State private var balanceMonitorPanel: BalanceMonitorPanelController?
+    @State private var parentWindow: NSWindow?
 
     var body: some View {
         ScrollView {
@@ -144,12 +145,16 @@ struct AccountListView: View {
                     AccountRowsView(
                         state: state,
                         onEdit: showEditAccountPanel,
-                        onBalanceMonitor: showBalanceMonitorPanel
+                        onBalanceMonitor: showBalanceMonitorPanel,
+                        parentWindow: presentationParentWindow
                     )
                 }
             }
             .padding(14)
         }
+        .background(WindowReader { window in
+            parentWindow = window
+        })
     }
 
     private var lastUpdatedText: String {
@@ -159,14 +164,14 @@ struct AccountListView: View {
 
     private func showAddAccountPanel() {
         if let addAccountPanel {
-            addAccountPanel.show(attachedTo: NSApplication.shared.keyWindow)
+            addAccountPanel.show(attachedTo: presentationParentWindow)
             return
         }
         let panel = AddAccountPanelController(state: state) {
             addAccountPanel = nil
         }
         addAccountPanel = panel
-        panel.show(attachedTo: NSApplication.shared.keyWindow)
+        panel.show(attachedTo: presentationParentWindow)
     }
 
     private func showEditAccountPanel(_ account: CodixxAccount) {
@@ -178,7 +183,7 @@ struct AccountListView: View {
             editAccountPanel = nil
         }
         editAccountPanel = panel
-        panel.show(attachedTo: NSApplication.shared.keyWindow)
+        panel.show(attachedTo: presentationParentWindow)
     }
 
     private func showBalanceMonitorPanel(_ account: CodixxAccount) {
@@ -190,7 +195,11 @@ struct AccountListView: View {
             balanceMonitorPanel = nil
         }
         balanceMonitorPanel = panel
-        panel.show(attachedTo: NSApplication.shared.keyWindow)
+        panel.show(attachedTo: presentationParentWindow)
+    }
+
+    private var presentationParentWindow: NSWindow? {
+        parentWindow ?? NSApplication.shared.keyWindow
     }
 }
 
@@ -240,6 +249,7 @@ private struct AddAccountDialog: View {
     @State private var defaultModel = ""
     @State private var connectionTestStatus: ConnectionTestStatus?
     @State private var isTestingConnection = false
+    @State private var dialogWindow: NSWindow?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -309,6 +319,9 @@ private struct AddAccountDialog: View {
         }
         .padding(18)
         .frame(width: 420)
+        .background(WindowReader { window in
+            dialogWindow = window
+        })
     }
 
     private var canSave: Bool {
@@ -410,7 +423,14 @@ private struct AddAccountDialog: View {
         panel.nameFieldStringValue = "auth.json"
         panel.message = state.strings.importAuthJSONPickerMessage
         panel.prompt = state.strings.chooseAuthJSON
-        if panel.runModal() == .OK {
+        guard let parentWindow = dialogWindow ?? NSApplication.shared.keyWindow else {
+            if PopoverPanelPresentation.runModal(panel, parent: nil) == .OK {
+                selectedAuthJSONURL = panel.url
+            }
+            return
+        }
+        panel.beginSheetModal(for: parentWindow) { response in
+            guard response == .OK else { return }
             selectedAuthJSONURL = panel.url
         }
     }
@@ -878,14 +898,7 @@ private final class AccountPanelController<Content: View> {
     }
 
     func show(attachedTo parent: NSWindow?) {
-        if let parent {
-            parent.addChildWindow(panel, ordered: .above)
-            position(above: parent)
-            panel.orderFront(nil)
-        } else {
-            panel.center()
-            panel.orderFrontRegardless()
-        }
+        PopoverPanelPresentation.show(panel, parent: parent)
     }
 
     func close() {
@@ -893,13 +906,6 @@ private final class AccountPanelController<Content: View> {
         panel.close()
     }
 
-    private func position(above parent: NSWindow) {
-        let parentFrame = parent.frame
-        let panelFrame = panel.frame
-        let x = parentFrame.midX - panelFrame.width / 2
-        let y = parentFrame.maxY - panelFrame.height - 20
-        panel.setFrameOrigin(NSPoint(x: x, y: y))
-    }
 }
 
 @MainActor
@@ -1004,68 +1010,300 @@ private final class PanelDelegateBox: NSObject, NSWindowDelegate {
     }
 }
 
+enum PopoverPanelPresentation {
+    static let minimumAttachedLevel = NSWindow.Level(rawValue: NSWindow.Level.statusBar.rawValue + 1)
+
+    static func prepare(
+        _ window: NSWindow,
+        parent: NSWindow?,
+        fallbackLevel: NSWindow.Level = minimumAttachedLevel
+    ) {
+        window.parent?.removeChildWindow(window)
+
+        guard let parent else {
+            window.level = fallbackLevel
+            window.center()
+            return
+        }
+
+        let level = presentationLevel(for: parent)
+        window.level = level
+        parent.addChildWindow(window, ordered: .above)
+        window.level = level
+        position(window, over: parent)
+    }
+
+    static func show(_ window: NSWindow, parent: NSWindow?) {
+        prepare(window, parent: parent)
+        window.orderFrontRegardless()
+        restorePresentationOnNextRunLoop(window, parent: parent)
+    }
+
+    static func runModal(_ window: NSPanel, parent: NSWindow?) -> NSApplication.ModalResponse {
+        show(window, parent: parent)
+        return NSApplication.shared.runModal(for: window)
+    }
+
+    static func presentationLevel(for parent: NSWindow) -> NSWindow.Level {
+        NSWindow.Level(
+            rawValue: max(parent.level.rawValue + 1, minimumAttachedLevel.rawValue)
+        )
+    }
+
+    private static func position(_ window: NSWindow, over parent: NSWindow) {
+        let parentFrame = parent.frame
+        let frame = window.frame
+        let x = parentFrame.midX - frame.width / 2
+        let y = parentFrame.maxY - frame.height - 20
+        window.setFrameOrigin(NSPoint(x: x, y: y))
+    }
+
+    private static func restorePresentationOnNextRunLoop(_ window: NSWindow, parent: NSWindow?) {
+        DispatchQueue.main.async {
+            guard window.isVisible else { return }
+            prepare(window, parent: parent)
+            window.orderFrontRegardless()
+        }
+    }
+}
+
+struct AccountDragGridLayout {
+    static func contentHeight(itemCount: Int) -> CGFloat {
+        guard itemCount > 0 else { return 0 }
+        let rows = (itemCount + DashboardLayout.accountColumnCount - 1) / DashboardLayout.accountColumnCount
+        return CGFloat(rows) * DashboardLayout.accountCardMinHeight
+            + CGFloat(max(0, rows - 1)) * DashboardLayout.accountColumnSpacing
+    }
+
+    static func frame(for index: Int, containerWidth: CGFloat) -> CGRect {
+        let safeWidth = max(0, containerWidth)
+        let columnCount = DashboardLayout.accountColumnCount
+        let spacing = DashboardLayout.accountColumnSpacing
+        let totalSpacing = CGFloat(columnCount - 1) * spacing
+        let cardWidth = max(0, (safeWidth - totalSpacing) / CGFloat(columnCount))
+        let row = max(0, index) / columnCount
+        let column = max(0, index) % columnCount
+        return CGRect(
+            x: CGFloat(column) * (cardWidth + spacing),
+            y: CGFloat(row) * (DashboardLayout.accountCardMinHeight + spacing),
+            width: cardWidth,
+            height: DashboardLayout.accountCardMinHeight
+        )
+    }
+
+    static func insertionIndex(for point: CGPoint, itemCount: Int, containerWidth: CGFloat) -> Int {
+        let upperBound = max(0, itemCount)
+        var bestIndex = 0
+        var bestDistance = CGFloat.greatestFiniteMagnitude
+
+        for index in 0...upperBound {
+            let frame = frame(for: index, containerWidth: containerWidth)
+            let center = CGPoint(x: frame.midX, y: frame.midY)
+            let dx = center.x - point.x
+            let dy = center.y - point.y
+            let distance = dx * dx + dy * dy
+            if distance < bestDistance {
+                bestDistance = distance
+                bestIndex = index
+            }
+        }
+
+        return bestIndex
+    }
+
+    static func displaySlotIndex(forVisibleIndex visibleIndex: Int, reservedInsertionIndex: Int?) -> Int {
+        guard let reservedInsertionIndex,
+              visibleIndex >= reservedInsertionIndex
+        else {
+            return visibleIndex
+        }
+
+        return visibleIndex + 1
+    }
+}
+
+struct WindowReader: NSViewRepresentable {
+    let onWindowChange: (NSWindow?) -> Void
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(onWindowChange: onWindowChange)
+    }
+
+    func makeNSView(context: Context) -> NSView {
+        let view = NSView(frame: .zero)
+        DispatchQueue.main.async {
+            context.coordinator.publishIfNeeded(view.window)
+        }
+        return view
+    }
+
+    func updateNSView(_ nsView: NSView, context: Context) {
+        DispatchQueue.main.async {
+            context.coordinator.publishIfNeeded(nsView.window)
+        }
+    }
+
+    final class Coordinator {
+        private weak var lastWindow: NSWindow?
+        private let onWindowChange: (NSWindow?) -> Void
+
+        init(onWindowChange: @escaping (NSWindow?) -> Void) {
+            self.onWindowChange = onWindowChange
+        }
+
+        func publishIfNeeded(_ window: NSWindow?) {
+            guard lastWindow !== window else { return }
+            lastWindow = window
+            onWindowChange(window)
+        }
+    }
+}
+
 private struct AccountRowsView: View {
     @ObservedObject var state: AppState
     let onEdit: (CodixxAccount) -> Void
     let onBalanceMonitor: (CodixxAccount) -> Void
+    let parentWindow: NSWindow?
     @State private var refreshingBalanceAccountIds: Set<UUID> = []
-    @State private var draggingAccount: CodixxAccount?
-    @State private var dropTargetAccountID: UUID?
+    @State private var draggingAccountID: UUID?
+    @State private var dragOrigin: CGRect = .zero
+    @State private var dragTranslation: CGSize = .zero
+    @State private var lastInsertionIndex: Int?
+    @State private var reservedInsertionIndex: Int?
 
     var body: some View {
-        LazyVGrid(
-            columns: Array(
-                repeating: GridItem(
-                    .flexible(),
-                    spacing: DashboardLayout.accountColumnSpacing,
-                    alignment: .top
-                ),
-                count: DashboardLayout.accountColumnCount
-            ),
-            alignment: .leading,
-            spacing: DashboardLayout.accountColumnSpacing
-        ) {
-            ForEach(state.accounts) { account in
-                accountRow(account)
-                    .contentShape(Rectangle())
-                    .opacity(draggingAccount?.id == account.id ? DashboardLayout.draggingAccountOpacity : 1)
-                    .scaleEffect(draggingAccount?.id == account.id ? DashboardLayout.draggingAccountScale : 1)
-                    .shadow(
-                        color: Color.black.opacity(draggingAccount?.id == account.id ? 0.18 : 0),
-                        radius: draggingAccount?.id == account.id ? DashboardLayout.draggingAccountShadowRadius : 0,
-                        y: draggingAccount?.id == account.id ? 4 : 0
-                    )
-                    .overlay {
-                        RoundedRectangle(cornerRadius: 8)
-                            .stroke(
-                                dropTargetAccountID == account.id && draggingAccount?.id != account.id
-                                    ? Color.accentColor.opacity(0.65)
-                                    : Color.clear,
-                                lineWidth: DashboardLayout.dropTargetStrokeWidth
-                            )
-                    }
-                    .animation(.spring(response: 0.24, dampingFraction: 0.82), value: draggingAccount?.id)
-                    .animation(.spring(response: 0.24, dampingFraction: 0.82), value: dropTargetAccountID)
-                    .zIndex(draggingAccount?.id == account.id ? 1 : 0)
-                    .onDrag {
-                        withAnimation(.easeOut(duration: 0.12)) {
-                            draggingAccount = account
-                            dropTargetAccountID = nil
-                        }
-                        return NSItemProvider(object: account.id.uuidString as NSString)
-                    }
-                    .onDrop(
-                        of: [.text],
-                        delegate: AccountDropDelegate(
-                            targetAccount: account,
-                            draggingAccount: $draggingAccount,
-                            dropTargetAccountID: $dropTargetAccountID,
-                            state: state
+        GeometryReader { proxy in
+            let width = proxy.size.width
+            ZStack(alignment: .topLeading) {
+                ForEach(state.accounts) { account in
+                    let frame = frame(for: account, containerWidth: width)
+                    accountRow(account)
+                        .contentShape(RoundedRectangle(cornerRadius: 8))
+                        .frame(width: frame.width, height: frame.height)
+                        .position(x: frame.midX, y: frame.midY)
+                        .offset(offset(for: account))
+                        .opacity(opacity(for: account))
+                        .scaleEffect(scale(for: account))
+                        .shadow(
+                            color: Color.black.opacity(shadowOpacity(for: account)),
+                            radius: shadowRadius(for: account),
+                            y: shadowYOffset(for: account)
                         )
-                    )
+                        .zIndex(draggingAccountID == account.id ? 10 : 0)
+                        .gesture(dragGesture(for: account, containerWidth: width))
+                }
+            }
+            .coordinateSpace(name: "accountRowsDragArea")
+            .frame(
+                height: AccountDragGridLayout.contentHeight(itemCount: layoutItemCount),
+                alignment: .topLeading
+            )
+            .animation(
+                .interactiveSpring(response: 0.34, dampingFraction: 0.86, blendDuration: 0.08),
+                value: state.accounts.map(\.id)
+            )
+        }
+        .frame(height: AccountDragGridLayout.contentHeight(itemCount: layoutItemCount))
+    }
+
+    private func frame(for account: CodixxAccount, containerWidth: CGFloat) -> CGRect {
+        if draggingAccountID == account.id {
+            return dragOrigin
+        }
+
+        let visibleAccounts = state.accounts.filter { $0.id != draggingAccountID }
+        let visibleIndex = visibleAccounts.firstIndex(where: { $0.id == account.id }) ?? 0
+        let slotIndex = AccountDragGridLayout.displaySlotIndex(
+            forVisibleIndex: visibleIndex,
+            reservedInsertionIndex: reservedInsertionIndex
+        )
+        return AccountDragGridLayout.frame(for: slotIndex, containerWidth: containerWidth)
+    }
+
+    private var layoutItemCount: Int {
+        reservedInsertionIndex == nil ? state.accounts.count : state.accounts.count + 1
+    }
+
+    private func offset(for account: CodixxAccount) -> CGSize {
+        draggingAccountID == account.id ? dragTranslation : .zero
+    }
+
+    private func opacity(for account: CodixxAccount) -> Double {
+        draggingAccountID == account.id ? DashboardLayout.draggingAccountOpacity : 1
+    }
+
+    private func scale(for account: CodixxAccount) -> CGFloat {
+        draggingAccountID == account.id ? DashboardLayout.draggingAccountScale : 1
+    }
+
+    private func shadowOpacity(for account: CodixxAccount) -> Double {
+        draggingAccountID == account.id ? 0.24 : 0
+    }
+
+    private func shadowRadius(for account: CodixxAccount) -> CGFloat {
+        draggingAccountID == account.id ? DashboardLayout.draggingAccountShadowRadius : 0
+    }
+
+    private func shadowYOffset(for account: CodixxAccount) -> CGFloat {
+        draggingAccountID == account.id ? 12 : 0
+    }
+
+    private func dragGesture(for account: CodixxAccount, containerWidth: CGFloat) -> some Gesture {
+        DragGesture(
+            minimumDistance: DashboardLayout.accountDragMinimumDistance,
+            coordinateSpace: .named("accountRowsDragArea")
+        )
+        .onChanged { value in
+            if draggingAccountID == nil {
+                beginDrag(account, containerWidth: containerWidth)
+            }
+            guard draggingAccountID == account.id else { return }
+
+            dragTranslation = value.translation
+            updateOrderIfNeeded(for: account, location: draggedCenter, containerWidth: containerWidth)
+        }
+        .onEnded { _ in
+            guard draggingAccountID == account.id else { return }
+            state.scheduleAccountOrderCommit(movedAccountID: account.id)
+            withAnimation(.interactiveSpring(response: 0.28, dampingFraction: 0.84, blendDuration: 0.08)) {
+                draggingAccountID = nil
+                dragTranslation = .zero
+                dragOrigin = .zero
+                lastInsertionIndex = nil
+                reservedInsertionIndex = nil
             }
         }
-        .animation(.interactiveSpring(response: 0.34, dampingFraction: 0.9, blendDuration: 0.12), value: state.accounts.map(\.id))
+    }
+
+    private var draggedCenter: CGPoint {
+        CGPoint(
+            x: dragOrigin.midX + dragTranslation.width,
+            y: dragOrigin.midY + dragTranslation.height
+        )
+    }
+
+    private func beginDrag(_ account: CodixxAccount, containerWidth: CGFloat) {
+        guard let index = state.accounts.firstIndex(where: { $0.id == account.id }) else { return }
+        dragOrigin = AccountDragGridLayout.frame(for: index, containerWidth: containerWidth)
+        dragTranslation = .zero
+        draggingAccountID = account.id
+        lastInsertionIndex = index
+        reservedInsertionIndex = nil
+    }
+
+    private func updateOrderIfNeeded(for account: CodixxAccount, location: CGPoint, containerWidth: CGFloat) {
+        let visibleCount = max(0, state.accounts.count - 1)
+        let insertionIndex = AccountDragGridLayout.insertionIndex(
+            for: location,
+            itemCount: visibleCount,
+            containerWidth: containerWidth
+        )
+        guard insertionIndex != lastInsertionIndex else { return }
+        lastInsertionIndex = insertionIndex
+        reservedInsertionIndex = insertionIndex
+        withAnimation(.interactiveSpring(response: 0.32, dampingFraction: 0.82, blendDuration: 0.06)) {
+            state.previewAccountMove(account, toVisibleIndex: insertionIndex)
+        }
     }
 
     private func accountRow(_ account: CodixxAccount) -> some View {
@@ -1098,11 +1336,24 @@ private struct AccountRowsView: View {
                 HStack(spacing: 8) {
                     Text(state.strings.priority(account.priority))
                         .font(.caption)
-                    Stepper("", value: Binding(
-                        get: { account.priority },
-                        set: { state.setAccount(account, priority: $0) }
-                    ), in: 0...100)
-                    .labelsHidden()
+                    HStack(spacing: 2) {
+                        Button {
+                            state.setAccount(account, priority: max(0, account.priority - 1))
+                        } label: {
+                            Image(systemName: "arrow.down")
+                        }
+                        .disabled(account.priority <= 0)
+                        .help(state.strings.decreasePriority)
+
+                        Button {
+                            state.setAccount(account, priority: min(100, account.priority + 1))
+                        } label: {
+                            Image(systemName: "arrow.up")
+                        }
+                        .disabled(account.priority >= 100)
+                        .help(state.strings.increasePriority)
+                    }
+                    .buttonStyle(.borderless)
                 }
                 .help(state.strings.priorityHint)
             }
@@ -1276,16 +1527,18 @@ private struct AccountRowsView: View {
     }
 
     private func confirmSwitchAndRestart(_ account: CodixxAccount) {
+        let windowToClose = parentWindow ?? NSApplication.shared.keyWindow
         let confirmed = IconlessConfirmationDialog.run(
             title: state.strings.confirmSwitchTitle(alias: account.alias),
             message: state.strings.confirmSwitchMessage,
             confirmTitle: state.strings.switchAndRestartCodex,
-            cancelTitle: state.strings.cancel
+            cancelTitle: state.strings.cancel,
+            parent: windowToClose
         )
         guard confirmed else { return }
         state.switchToAccountAndRestartCodex(account)
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-            NSApplication.shared.keyWindow?.close()
+            windowToClose?.close()
         }
     }
 
@@ -1294,59 +1547,21 @@ private struct AccountRowsView: View {
             title: state.strings.confirmDeleteTitle,
             message: state.strings.confirmDeleteMessage(alias: account.alias),
             confirmTitle: state.strings.delete,
-            cancelTitle: state.strings.cancel
+            cancelTitle: state.strings.cancel,
+            parent: parentWindow ?? NSApplication.shared.keyWindow
         )
         guard confirmed else { return }
         state.deleteAccount(account)
     }
 }
 
-private struct AccountDropDelegate: DropDelegate {
-    let targetAccount: CodixxAccount
-    @Binding var draggingAccount: CodixxAccount?
-    @Binding var dropTargetAccountID: UUID?
-    let state: AppState
-
-    func dropEntered(info: DropInfo) {
-        guard let draggingAccount, draggingAccount.id != targetAccount.id else { return }
-        dropTargetAccountID = targetAccount.id
-        withAnimation(.interactiveSpring(response: 0.34, dampingFraction: 0.9, blendDuration: 0.12)) {
-            state.moveAccount(draggingAccount, before: targetAccount)
-        }
-        self.draggingAccount = state.accounts.first { $0.id == draggingAccount.id } ?? draggingAccount
-    }
-
-    func dropExited(info: DropInfo) {
-        if dropTargetAccountID == targetAccount.id {
-            dropTargetAccountID = nil
-        }
-    }
-
-    func performDrop(info: DropInfo) -> Bool {
-        let droppedAccountID = draggingAccount?.id
-        withAnimation(.easeOut(duration: 0.1)) {
-            dropTargetAccountID = nil
-        }
-        DispatchQueue.main.asyncAfter(deadline: .now() + DashboardLayout.dragReleaseSettlingDelay) {
-            guard draggingAccount?.id == droppedAccountID else { return }
-            withAnimation(.easeOut(duration: DashboardLayout.dragReleaseFadeDuration)) {
-                draggingAccount = nil
-            }
-        }
-        return true
-    }
-
-    func dropUpdated(info: DropInfo) -> DropProposal? {
-        DropProposal(operation: .move)
-    }
-}
-
-private final class IconlessConfirmationDialog {
+final class IconlessConfirmationDialog {
     static func run(
         title: String,
         message: String,
         confirmTitle: String,
-        cancelTitle: String
+        cancelTitle: String,
+        parent: NSWindow? = NSApplication.shared.keyWindow
     ) -> Bool {
         let window = NSPanel(
             contentRect: NSRect(x: 0, y: 0, width: 420, height: 160),
@@ -1356,10 +1571,10 @@ private final class IconlessConfirmationDialog {
         )
         window.title = ""
         window.isReleasedWhenClosed = false
-        window.level = .floating
         window.hidesOnDeactivate = false
         window.becomesKeyOnlyIfNeeded = true
-        window.center()
+        window.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
+        prepareForPresentation(window, parent: parent)
 
         let contentView = NSView(frame: window.contentView?.bounds ?? .zero)
         contentView.translatesAutoresizingMaskIntoConstraints = false
@@ -1419,10 +1634,14 @@ private final class IconlessConfirmationDialog {
         cancelButton.target = handler
         objc_setAssociatedObject(window, &dialogActionHandlerKey, handler, .OBJC_ASSOCIATION_RETAIN_NONATOMIC)
 
-        window.orderFrontRegardless()
-        NSApplication.shared.runModal(for: window)
+        _ = PopoverPanelPresentation.runModal(window, parent: parent)
+        window.parent?.removeChildWindow(window)
         window.close()
         return didConfirm
+    }
+
+    static func prepareForPresentation(_ window: NSPanel, parent: NSWindow?) {
+        PopoverPanelPresentation.prepare(window, parent: parent)
     }
 }
 

@@ -32,6 +32,125 @@ final class AppStateTrendRefreshTests: XCTestCase {
         XCTAssertEqual(persisted.map(\.priority), [20, 10, 30])
     }
 
+    func testDragReorderPreviewsInMemoryAndPersistsOnceOnCommit() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let paths = CodixxPaths(home: directory)
+        let now = Date(timeIntervalSince1970: 1_778_000_000)
+        let first = displayOrderAccount(alias: "First", priority: 10, now: now)
+        let second = displayOrderAccount(alias: "Second", priority: 20, now: now)
+        let third = displayOrderAccount(alias: "Third", priority: 30, now: now)
+        try AccountMetadataStore(paths: paths).save(AccountMetadataList(accounts: [first, second, third]))
+        let state = AppState(
+            paths: paths,
+            vault: InMemoryVault(),
+            apiKeyVault: InMemoryAPIKeyVault(),
+            codexDesktopState: NoopCodexDesktopStateCleaner(),
+            codexDesktopManager: CodexDesktopManagerSpy(),
+            now: { now }
+        )
+        state.refreshNow()
+
+        state.previewAccountMove(first, before: third)
+
+        XCTAssertEqual(state.accounts.map(\.alias), ["Second", "First", "Third"])
+        let persistedBeforeCommit = try AccountMetadataStore(paths: paths).load().accounts
+        XCTAssertEqual(persistedBeforeCommit.map(\.alias), ["First", "Second", "Third"])
+        XCTAssertTrue(try AppActivityLog(paths: paths).loadEvents().isEmpty)
+
+        let task = try XCTUnwrap(state.scheduleAccountOrderCommit(movedAccountID: first.id))
+        await task.value
+
+        let persistedAfterCommit = try AccountMetadataStore(paths: paths).load().accounts
+        XCTAssertEqual(persistedAfterCommit.map(\.alias), ["Second", "First", "Third"])
+        XCTAssertEqual(try AppActivityLog(paths: paths).loadEvents().map(\.kind), [.accountReordered])
+
+        XCTAssertNil(state.scheduleAccountOrderCommit(movedAccountID: first.id))
+
+        XCTAssertEqual(try AppActivityLog(paths: paths).loadEvents().map(\.kind), [.accountReordered])
+    }
+
+    func testDragReorderCanPreviewMoveToEndByVisibleIndex() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let paths = CodixxPaths(home: directory)
+        let now = Date(timeIntervalSince1970: 1_778_000_000)
+        let first = displayOrderAccount(alias: "First", priority: 10, now: now)
+        let second = displayOrderAccount(alias: "Second", priority: 20, now: now)
+        let third = displayOrderAccount(alias: "Third", priority: 30, now: now)
+        try AccountMetadataStore(paths: paths).save(AccountMetadataList(accounts: [first, second, third]))
+        let state = AppState(
+            paths: paths,
+            vault: InMemoryVault(),
+            apiKeyVault: InMemoryAPIKeyVault(),
+            codexDesktopState: NoopCodexDesktopStateCleaner(),
+            codexDesktopManager: CodexDesktopManagerSpy(),
+            now: { now }
+        )
+        state.refreshNow()
+
+        state.previewAccountMove(first, toVisibleIndex: 2)
+
+        XCTAssertEqual(state.accounts.map(\.alias), ["Second", "Third", "First"])
+    }
+
+    func testAccountSettingUpdatesUIImmediatelyAndPersistsInBackground() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let paths = CodixxPaths(home: directory)
+        let now = Date(timeIntervalSince1970: 1_778_000_000)
+        let first = displayOrderAccount(alias: "First", priority: 10, now: now)
+        try AccountMetadataStore(paths: paths).save(AccountMetadataList(accounts: [first]))
+        let state = AppState(
+            paths: paths,
+            vault: InMemoryVault(),
+            apiKeyVault: InMemoryAPIKeyVault(),
+            codexDesktopState: NoopCodexDesktopStateCleaner(),
+            codexDesktopManager: CodexDesktopManagerSpy(),
+            now: { now }
+        )
+        state.refreshNow()
+
+        state.setAccount(first, priority: 11)
+
+        XCTAssertEqual(state.accounts.first?.priority, 11)
+        try await waitUntil {
+            (try? AccountMetadataStore(paths: paths).load().accounts.first?.priority) == 11
+        }
+
+        let updated = try XCTUnwrap(state.accounts.first)
+        state.setAccount(updated, isEnabled: false)
+
+        XCTAssertEqual(state.accounts.first?.isEnabled, false)
+        try await waitUntil {
+            (try? AccountMetadataStore(paths: paths).load().accounts.first?.isEnabled) == false
+        }
+        try await waitUntil {
+            (try? AppActivityLog(paths: paths).loadEvents().map(\.kind)) == [.accountDisabled]
+        }
+    }
+
+    func testConfigSettingUpdatesUIImmediatelyAndPersistsInBackground() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let paths = CodixxPaths(home: directory)
+        try FileManager.default.createDirectory(at: paths.codexHome, withIntermediateDirectories: true)
+        let state = AppState(
+            paths: paths,
+            vault: InMemoryVault(),
+            apiKeyVault: InMemoryAPIKeyVault(),
+            codexDesktopState: NoopCodexDesktopStateCleaner(),
+            codexDesktopManager: CodexDesktopManagerSpy()
+        )
+
+        state.setPrimaryThresholdPercent(88)
+
+        XCTAssertEqual(state.config.primaryThresholdPercent, 88)
+        try await waitUntil {
+            (try? CodixxConfigStore(paths: paths).load().primaryThresholdPercent) == 88
+        }
+    }
+
     func testManualSwitchSuppressesImmediateAutoSwitchBounceFromDepletedTarget() throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
         defer { try? FileManager.default.removeItem(at: directory) }
@@ -534,7 +653,7 @@ final class AppStateTrendRefreshTests: XCTestCase {
         XCTAssertEqual(codexDesktopManager.restartCallCount, 1)
     }
 
-    func testSwitchClearsStaleSaveStatus() throws {
+    func testSwitchClearsStaleSaveStatusAndMarksTrendSnapshotStale() async throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
         defer { try? FileManager.default.removeItem(at: directory) }
         let paths = CodixxPaths(home: directory)
@@ -572,9 +691,15 @@ final class AppStateTrendRefreshTests: XCTestCase {
         metadata.accounts.append(second)
         try AccountMetadataStore(paths: paths).save(metadata)
 
+        state.refreshTrendsIfNeeded()
+        try await waitUntil { state.hasLoadedFullUsageSnapshot }
+        XCTAssertTrue(state.hasLoadedFullUsageSnapshot)
+
         state.switchToAccount(second)
 
         XCTAssertNil(state.accountSaveStatus)
+        XCTAssertFalse(state.hasLoadedFullUsageSnapshot)
+        XCTAssertFalse(state.isLoadingFullUsageSnapshot)
     }
 
     func testAccountOperationsWriteActivityLogEvents() throws {
@@ -663,6 +788,91 @@ final class AppStateTrendRefreshTests: XCTestCase {
         XCTAssertEqual(state.currentAccount?.quota.primaryResetsAt, observedReset)
         XCTAssertFalse(state.isLoadingFullUsageSnapshot)
         XCTAssertFalse(state.hasLoadedFullUsageSnapshot)
+    }
+
+    func testMenuOpenRefreshAutoSwitchesWhenLatestObservationShowsCurrentQuotaDepleted() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let paths = CodixxPaths(home: directory)
+        try FileManager.default.createDirectory(at: paths.codexHome, withIntermediateDirectories: true)
+
+        let currentAuth = try AuthSnapshot(jsonData: Data(#"{"account_id":"current","access_token":"current-secret"}"#.utf8))
+        let targetAuth = try AuthSnapshot(jsonData: Data(#"{"account_id":"target","access_token":"target-secret"}"#.utf8))
+        try currentAuth.jsonData.write(to: paths.authJSON)
+        let currentFingerprint = try AccountFingerprint.generate(from: currentAuth)
+        let targetFingerprint = try AccountFingerprint.generate(from: targetAuth)
+        let vault = InMemoryVault()
+        try vault.save(snapshot: currentAuth, fingerprint: currentFingerprint)
+        try vault.save(snapshot: targetAuth, fingerprint: targetFingerprint)
+        let now = Date(timeIntervalSince1970: 1_778_300_000)
+        let current = CodixxAccount(
+            id: UUID(),
+            alias: "Current",
+            fingerprint: currentFingerprint,
+            createdAt: now,
+            updatedAt: now,
+            lastUsedAt: now,
+            quota: AccountQuotaState(
+                accountId: "current",
+                alias: "Current",
+                primaryUsedPercent: 80,
+                primaryWindowMinutes: 300,
+                primaryResetsAt: now.addingTimeInterval(1_800),
+                secondaryUsedPercent: 20,
+                secondaryWindowMinutes: 10_080,
+                secondaryResetsAt: now.addingTimeInterval(86_400),
+                lastObservedAt: now,
+                confidence: .fresh
+            ),
+            isEnabled: true,
+            priority: 0
+        )
+        let target = CodixxAccount(
+            id: UUID(),
+            alias: "Target",
+            fingerprint: targetFingerprint,
+            createdAt: now,
+            updatedAt: now,
+            lastUsedAt: nil,
+            quota: AccountQuotaState(
+                accountId: "target",
+                alias: "Target",
+                primaryUsedPercent: 10,
+                primaryWindowMinutes: 300,
+                primaryResetsAt: now.addingTimeInterval(1_800),
+                secondaryUsedPercent: 10,
+                secondaryWindowMinutes: 10_080,
+                secondaryResetsAt: now.addingTimeInterval(86_400),
+                lastObservedAt: now,
+                confidence: .fresh
+            ),
+            isEnabled: true,
+            priority: 1
+        )
+        try AccountMetadataStore(paths: paths).save(AccountMetadataList(accounts: [current, target]))
+
+        let sessionDirectory = paths.codexHome.appendingPathComponent("sessions/2026/05/12", isDirectory: true)
+        try FileManager.default.createDirectory(at: sessionDirectory, withIntermediateDirectories: true)
+        let sessionFile = sessionDirectory.appendingPathComponent("rollout.jsonl")
+        let depletedObservation = """
+        {"timestamp":"2026-05-12T09:40:01Z","type":"event_msg","payload":{"type":"token_count"},"rate_limits":{"limit_id":"codex","primary":{"used_percent":100.0,"window_minutes":300,"resets_at":1778313600},"secondary":{"used_percent":20.0,"window_minutes":10080,"resets_at":1778913600},"plan_type":"pro"}}
+        """
+        try (depletedObservation + "\n").write(to: sessionFile, atomically: true, encoding: .utf8)
+
+        let codexDesktopManager = CodexDesktopManagerSpy()
+        let state = AppState(
+            paths: paths,
+            vault: vault,
+            codexDesktopState: NoopCodexDesktopStateCleaner(),
+            codexDesktopManager: codexDesktopManager,
+            now: { now }
+        )
+
+        state.refreshFromMenuOpen()
+
+        XCTAssertEqual(state.currentAccount?.id, target.id)
+        XCTAssertEqual(codexDesktopManager.quitForCleanSwitchCallCount, 1)
+        XCTAssertEqual(codexDesktopManager.restartCallCount, 1)
     }
 
     func testQuotaRefreshDoesNotApplyObservationOlderThanCurrentAccountUse() throws {

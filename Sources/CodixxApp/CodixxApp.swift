@@ -43,6 +43,7 @@ private final class StatusItemController: NSObject, NSPopoverDelegate {
     private let popover: NSPopover
     private var cancellables: Set<AnyCancellable> = []
     private var outsideClickMonitors: [Any] = []
+    private var menuOpenRefreshTask: Task<Void, Never>?
 
     init(state: AppState) {
         self.state = state
@@ -79,14 +80,25 @@ private final class StatusItemController: NSObject, NSPopoverDelegate {
             return
         }
 
-        state.refreshFromMenuOpen()
         popover.show(relativeTo: sender.bounds, of: sender, preferredEdge: .minY)
         popover.contentViewController?.view.window?.makeKey()
         startOutsideClickMonitors(statusButton: sender)
+        scheduleMenuOpenRefresh()
     }
 
     func popoverDidClose(_ notification: Notification) {
+        menuOpenRefreshTask?.cancel()
+        menuOpenRefreshTask = nil
         stopOutsideClickMonitors()
+    }
+
+    private func scheduleMenuOpenRefresh() {
+        menuOpenRefreshTask?.cancel()
+        menuOpenRefreshTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: 50_000_000)
+            guard let self, !Task.isCancelled, self.popover.isShown else { return }
+            self.state.refreshFromMenuOpen()
+        }
     }
 
     private func startOutsideClickMonitors(statusButton: NSStatusBarButton) {

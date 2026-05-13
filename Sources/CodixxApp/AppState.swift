@@ -62,8 +62,11 @@ final class AppState: ObservableObject, LifecycleStateManaging {
     private var isRefreshInProgress = false
     private var isSwitchInProgress = false
     private var usageRefreshTask: Task<Void, Never>?
+    private var accountOrderPersistenceTask: Task<Void, Never>?
+    private var configPersistenceTask: Task<Void, Never>?
     private var errorDismissWork: DispatchWorkItem?
     private var lastRefreshStartedAt: Date?
+    private var hasPendingAccountOrderCommit = false
     private let menuRefreshThrottleSeconds: TimeInterval = 30
     private let manualSwitchAutoSuppressionSeconds: TimeInterval = 300
     private var autoSwitchSuppressedUntil: Date?
@@ -222,7 +225,7 @@ final class AppState: ObservableObject, LifecycleStateManaging {
     func refreshFromMenuOpen() {
         refresh(
             applyRateLimitObservations: true,
-            allowAutoSwitch: false,
+            allowAutoSwitch: true,
             preservingError: nil,
             throttled: true,
             refreshUsage: false,
@@ -336,7 +339,10 @@ final class AppState: ObservableObject, LifecycleStateManaging {
             }
             return
         } else if shouldRefreshUsage {
-            let latestUsageSnapshot = threadUsageReader.readActivitySnapshot(now: refreshStartedAt)
+            let latestUsageSnapshot = threadUsageReader.readActivitySnapshot(
+                now: refreshStartedAt,
+                includeEffectiveTokenCounts: !refreshUsageActivityOnly
+            )
             if latestUsageSnapshot.isDegraded, !usageSnapshot.threads.isEmpty {
                 refreshErrors.append(latestUsageSnapshot.errorSummary ?? strings.usageReadFailed)
             } else {
@@ -406,6 +412,13 @@ final class AppState: ObservableObject, LifecycleStateManaging {
         topThreads = Array(snapshot.threads.sorted { $0.tokensUsed > $1.tokensUsed }.prefix(10))
     }
 
+    private func markFullUsageSnapshotNeedsReload() {
+        usageRefreshTask?.cancel()
+        usageRefreshTask = nil
+        hasLoadedFullUsageSnapshot = false
+        isLoadingFullUsageSnapshot = false
+    }
+
     func attemptAutoSwitchIfNeeded() {
         guard config.autoSwitchEnabled, !isSwitchInProgress else { return }
         let timestamp = now()
@@ -418,7 +431,10 @@ final class AppState: ObservableObject, LifecycleStateManaging {
             secondaryThresholdPercent: config.secondaryThresholdPercent
         )
         if currentAccount?.isAPIProvider == true {
-            let latestUsageSnapshot = threadUsageReader.readActivitySnapshot(now: timestamp)
+            let latestUsageSnapshot = threadUsageReader.readActivitySnapshot(
+                now: timestamp,
+                includeEffectiveTokenCounts: false
+            )
             if latestUsageSnapshot.isDegraded, !usageSnapshot.threads.isEmpty {
                 errorMessage = latestUsageSnapshot.errorSummary ?? strings.usageReadFailed
                 return
@@ -445,6 +461,7 @@ final class AppState: ObservableObject, LifecycleStateManaging {
                 codexDesktopManager.quitForCleanSwitch()
             }
             _ = try switcher.switchToAccount(target.id, trigger: .autoPrimaryThreshold)
+            markFullUsageSnapshotNeedsReload()
             refresh(
                 applyRateLimitObservations: false,
                 allowAutoSwitch: false,
@@ -757,6 +774,7 @@ final class AppState: ObservableObject, LifecycleStateManaging {
 
         do {
             _ = try switcher.switchToAccount(account.id, trigger: .manual)
+            markFullUsageSnapshotNeedsReload()
             suppressAutoSwitchAfterManualSwitch()
             refresh(
                 applyRateLimitObservations: false,
@@ -799,6 +817,7 @@ final class AppState: ObservableObject, LifecycleStateManaging {
         do {
             codexDesktopManager.quitForCleanSwitch()
             _ = try switcher.switchToAccount(account.id, trigger: .manual)
+            markFullUsageSnapshotNeedsReload()
             suppressAutoSwitchAfterManualSwitch()
             refresh(
                 applyRateLimitObservations: false,
@@ -836,23 +855,118 @@ final class AppState: ObservableObject, LifecycleStateManaging {
     }
 
     func moveAccount(_ account: CodixxAccount, before target: CodixxAccount) {
+        guard reorderAccount(account, before: target) else { return }
+        commitAccountOrder(movedAccountID: account.id)
+    }
+
+    func previewAccountMove(_ account: CodixxAccount, before target: CodixxAccount) {
+        _ = reorderAccount(account, before: target)
+    }
+
+    func previewAccountMove(_ account: CodixxAccount, toVisibleIndex insertionIndex: Int) {
+        _ = reorderAccount(account, toVisibleIndex: insertionIndex)
+    }
+
+    func commitAccountOrder(movedAccountID: UUID?) {
+        guard hasPendingAccountOrderCommit else { return }
+        accountOrderPersistenceTask?.cancel()
+        accountOrderPersistenceTask = nil
+        do {
+            try metadataStore.save(AccountMetadataList(accounts: accounts))
+            hasPendingAccountOrderCommit = false
+            if let movedAccountID,
+               let movedAccount = accounts.first(where: { $0.id == movedAccountID }) {
+                recordAppLog(kind: .accountReordered, account: movedAccount)
+            }
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    @discardableResult
+    func scheduleAccountOrderCommit(movedAccountID: UUID?) -> Task<Void, Never>? {
+        guard hasPendingAccountOrderCommit else { return nil }
+        let accountSnapshot = accounts
+        let event = movedAccountID
+            .flatMap { movedAccountID in accountSnapshot.first { $0.id == movedAccountID } }
+            .map { movedAccount in
+                AppLogEvent(
+                    timestamp: now(),
+                    kind: .accountReordered,
+                    accountId: movedAccount.id,
+                    accountAlias: movedAccount.alias
+                )
+            }
+        let paths = paths
+        let previousTask = accountOrderPersistenceTask
+        hasPendingAccountOrderCommit = false
+
+        let task = Task.detached(priority: .utility) { [accountSnapshot, event, paths, previousTask] in
+            if let previousTask {
+                await previousTask.value
+            }
+            guard !Task.isCancelled else { return }
+
+            do {
+                try AccountMetadataStore(paths: paths).save(AccountMetadataList(accounts: accountSnapshot))
+                let loadedEvents: [AppLogEvent]?
+                if let event {
+                    let appActivityLog = AppActivityLog(paths: paths)
+                    try appActivityLog.append(event)
+                    loadedEvents = try appActivityLog.loadEvents().sorted { $0.timestamp > $1.timestamp }
+                } else {
+                    loadedEvents = nil
+                }
+
+                if let loadedEvents {
+                    let eventsToPublish = loadedEvents
+                    await MainActor.run { [weak self] in
+                        self?.appLogEvents = eventsToPublish
+                    }
+                }
+            } catch {
+                let message = error.localizedDescription
+                await MainActor.run { [weak self] in
+                    self?.hasPendingAccountOrderCommit = true
+                    self?.errorMessage = message
+                }
+            }
+        }
+        accountOrderPersistenceTask = task
+        return task
+    }
+
+    @discardableResult
+    private func reorderAccount(_ account: CodixxAccount, before target: CodixxAccount) -> Bool {
         guard account.id != target.id,
               let sourceIndex = accounts.firstIndex(where: { $0.id == account.id }),
               let targetIndex = accounts.firstIndex(where: { $0.id == target.id })
-        else { return }
+        else { return false }
 
         var reorderedAccounts = accounts
         let movedAccount = reorderedAccounts.remove(at: sourceIndex)
         let insertionIndex = reorderedAccounts.firstIndex(where: { $0.id == target.id }) ?? targetIndex
         reorderedAccounts.insert(movedAccount, at: insertionIndex)
 
-        do {
-            try metadataStore.save(AccountMetadataList(accounts: reorderedAccounts))
-            accounts = reorderedAccounts
-            recordAppLog(kind: .accountReordered, account: movedAccount)
-        } catch {
-            errorMessage = error.localizedDescription
-        }
+        guard reorderedAccounts.map(\.id) != accounts.map(\.id) else { return false }
+        accounts = reorderedAccounts
+        hasPendingAccountOrderCommit = true
+        return true
+    }
+
+    @discardableResult
+    private func reorderAccount(_ account: CodixxAccount, toVisibleIndex insertionIndex: Int) -> Bool {
+        guard let sourceIndex = accounts.firstIndex(where: { $0.id == account.id }) else { return false }
+
+        var reorderedAccounts = accounts
+        let movedAccount = reorderedAccounts.remove(at: sourceIndex)
+        let boundedInsertionIndex = min(max(0, insertionIndex), reorderedAccounts.count)
+        reorderedAccounts.insert(movedAccount, at: boundedInsertionIndex)
+
+        guard reorderedAccounts.map(\.id) != accounts.map(\.id) else { return false }
+        accounts = reorderedAccounts
+        hasPendingAccountOrderCommit = true
+        return true
     }
 
     func renameAccount(_ account: CodixxAccount, alias: String) {
@@ -949,12 +1063,26 @@ final class AppState: ObservableObject, LifecycleStateManaging {
     private func updateConfig(_ mutate: (inout CodixxConfig) -> Void) {
         var updated = config
         mutate(&updated)
-        do {
-            try configStore.save(updated)
-            config = updated
-        } catch {
-            errorMessage = error.localizedDescription
+        config = updated
+
+        let paths = paths
+        let previousTask = configPersistenceTask
+        let task = Task.detached(priority: .utility) { [updated, paths, previousTask] in
+            if let previousTask {
+                await previousTask.value
+            }
+            guard !Task.isCancelled else { return }
+
+            do {
+                try CodixxConfigStore(paths: paths).save(updated)
+            } catch {
+                let message = error.localizedDescription
+                await MainActor.run { [weak self] in
+                    self?.errorMessage = message
+                }
+            }
         }
+        configPersistenceTask = task
     }
 
     private func suppressAutoSwitchAfterManualSwitch() {
@@ -1056,19 +1184,50 @@ final class AppState: ObservableObject, LifecycleStateManaging {
         var updatedAccounts = accounts
         mutate(&updatedAccounts[index])
         updatedAccounts[index].updatedAt = now()
-        do {
-            try metadataStore.save(AccountMetadataList(accounts: updatedAccounts))
-            accounts = updatedAccounts
-            currentAccount = currentAccount(in: updatedAccounts)
-            if accounts[index].isEnabled != account.isEnabled {
-                recordAppLog(
-                    kind: accounts[index].isEnabled ? .accountEnabled : .accountDisabled,
-                    account: accounts[index]
-                )
-            }
-        } catch {
-            errorMessage = error.localizedDescription
+        let updatedAccount = updatedAccounts[index]
+        let event: AppLogEvent?
+        if updatedAccount.isEnabled != account.isEnabled {
+            event = AppLogEvent(
+                timestamp: now(),
+                kind: updatedAccount.isEnabled ? .accountEnabled : .accountDisabled,
+                accountId: updatedAccount.id,
+                accountAlias: updatedAccount.alias
+            )
+        } else {
+            event = nil
         }
+
+        accounts = updatedAccounts
+        currentAccount = currentAccount(in: updatedAccounts)
+        scheduleAccountMetadataPersistence(accounts: updatedAccounts, event: event)
+    }
+
+    private func scheduleAccountMetadataPersistence(accounts accountSnapshot: [CodixxAccount], event: AppLogEvent?) {
+        let paths = paths
+        let previousTask = accountOrderPersistenceTask
+        let task = Task.detached(priority: .utility) { [accountSnapshot, event, paths, previousTask] in
+            if let previousTask {
+                await previousTask.value
+            }
+            guard !Task.isCancelled else { return }
+
+            do {
+                try AccountMetadataStore(paths: paths).save(AccountMetadataList(accounts: accountSnapshot))
+                guard let event else { return }
+                let appActivityLog = AppActivityLog(paths: paths)
+                try appActivityLog.append(event)
+                let loadedEvents = try appActivityLog.loadEvents().sorted { $0.timestamp > $1.timestamp }
+                await MainActor.run { [weak self] in
+                    self?.appLogEvents = loadedEvents
+                }
+            } catch {
+                let message = error.localizedDescription
+                await MainActor.run { [weak self] in
+                    self?.errorMessage = message
+                }
+            }
+        }
+        accountOrderPersistenceTask = task
     }
 
     private func recordAppLog(

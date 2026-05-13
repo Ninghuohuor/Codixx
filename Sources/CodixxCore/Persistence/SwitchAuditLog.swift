@@ -103,8 +103,7 @@ public struct SwitchAuditLog {
     }
 
     public func loadEvents() throws -> [SwitchAuditEvent] {
-        try prune(existingEvents: loadEventsWithoutPruning())
-        return try loadEventsWithoutPruning()
+        try loadEventsWithoutPruning()
     }
 
     private func loadEventsWithoutPruning() throws -> [SwitchAuditEvent] {

@@ -75,11 +75,17 @@ public struct ThreadUsageReader: Sendable {
         }
     }
 
-    public func readActivitySnapshot(now: Date) -> ThreadUsageSnapshot {
+    public func readActivitySnapshot(now: Date, includeEffectiveTokenCounts: Bool = true) -> ThreadUsageSnapshot {
         do {
-            var trendCache = loadTrendCache()
-            let threads = threadsWithEffectiveTokenCounts(try readThreadsWithRetries(), trendCache: &trendCache)
-            saveTrendCache(trendCache)
+            let rawThreads = try readThreadsWithRetries()
+            let threads: [ThreadUsage]
+            if includeEffectiveTokenCounts {
+                var trendCache = loadTrendCache()
+                threads = threadsWithEffectiveTokenCounts(rawThreads, trendCache: &trendCache)
+                saveTrendCache(trendCache)
+            } else {
+                threads = rawThreads
+            }
             return UsageAggregator.snapshot(
                 threads: threads,
                 now: now

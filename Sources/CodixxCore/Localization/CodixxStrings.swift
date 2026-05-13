@@ -19,6 +19,9 @@ public struct CodixxStrings: Sendable {
     public var refreshIntervalSection: String { text(en: "Refresh Intervals", zh: "刷新频率") }
     public var apiBalanceSection: String { text(en: "API Balance Monitoring", zh: "API 余额监测") }
     public var quitCodixx: String { text(en: "Quit Codixx", zh: "退出 Codixx") }
+    public var quitCodixxMessage: String {
+        text(en: "Quit Codixx now?", zh: "确定要退出 Codixx 吗？")
+    }
     public var notRefreshedYet: String { text(en: "Not refreshed yet", zh: "尚未刷新") }
     public var saveCurrentAuth: String { text(en: "Save Current Auth", zh: "保存当前登录") }
     public var addAccount: String { text(en: "Add Account", zh: "添加账号") }
@@ -276,6 +279,8 @@ public struct CodixxStrings: Sendable {
     public var priorityHint: String {
         text(en: "Higher = preferred for auto switch", zh: "数值越高，自动切换时越优先")
     }
+    public var decreasePriority: String { text(en: "Decrease priority", zh: "降低优先级") }
+    public var increasePriority: String { text(en: "Increase priority", zh: "提高优先级") }
     public func priority(_ value: Int) -> String {
         text(en: "Priority \(value)", zh: "优先级 \(value)")
     }
