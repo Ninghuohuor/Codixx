@@ -73,6 +73,12 @@ public struct CodixxStrings: Sendable {
     public var save: String { text(en: "Save", zh: "保存") }
     public var saveCurrentCodexAuth: String { text(en: "Save current Codex auth", zh: "保存当前 Codex 登录") }
     public var noSavedAccounts: String { text(en: "No saved accounts", zh: "尚未保存账号") }
+    public var noSavedAccountsDescription: String {
+        text(
+            en: "Add a Codex login, import auth.json, or add an API key to start tracking quota, switching accounts, and viewing usage trends.",
+            zh: "添加 Codex 登录、导入 auth.json 或添加 API Key 后，即可查看额度、切换账号和用量趋势。"
+        )
+    }
     public var accountSummaryTotal: String { text(en: "Total", zh: "总计") }
     public var accountSummaryAvailable: String { text(en: "Available", zh: "可用") }
     public var accountSummaryFull: String { text(en: "Full", zh: "额度已满") }
@@ -107,6 +113,10 @@ public struct CodixxStrings: Sendable {
 
     public var membership: String { text(en: "Membership", zh: "会员") }
     public var membershipExpires: String { text(en: "Membership expires", zh: "会员到期") }
+    public var membershipExpired: String { text(en: "Expired", zh: "已过期") }
+    public var membershipExpirationNeedsUpdate: String {
+        text(en: "Expiration needs update", zh: "到期待更新")
+    }
     public var neverExpires: String { text(en: "Expiration unavailable locally", zh: "到期时间未知") }
     public var enabled: String { text(en: "Enabled", zh: "启用") }
     public var autoSwitch: String { text(en: "Auto switch", zh: "自动切换") }

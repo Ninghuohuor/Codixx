@@ -82,6 +82,13 @@ struct AccountSummaryMetrics: Equatable {
     }
 }
 
+private enum MembershipDisplayStatus {
+    case unknown
+    case active
+    case expired
+    case needsUpdate
+}
+
 struct AccountListView: View {
     @ObservedObject var state: AppState
     @State private var addAccountPanel: AddAccountPanelController?
@@ -135,12 +142,10 @@ struct AccountListView: View {
                 }
 
                 if state.accounts.isEmpty {
-                    Text(state.strings.noSavedAccounts)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .padding(12)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 8))
+                    EmptyAccountStateView(
+                        strings: state.strings,
+                        onAddAccount: showAddAccountPanel
+                    )
                 } else {
                     AccountRowsView(
                         state: state,
@@ -200,6 +205,32 @@ struct AccountListView: View {
 
     private var presentationParentWindow: NSWindow? {
         parentWindow ?? NSApplication.shared.keyWindow
+    }
+}
+
+private struct EmptyAccountStateView: View {
+    var strings: CodixxStrings
+    var onAddAccount: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Label(strings.noSavedAccounts, systemImage: "person.crop.circle.badge.plus")
+                .font(.subheadline.weight(.semibold))
+            Text(strings.noSavedAccountsDescription)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            Button {
+                onAddAccount()
+            } label: {
+                Label(strings.addAccount, systemImage: "plus")
+            }
+            .buttonStyle(.borderedProminent)
+            .controlSize(.small)
+        }
+        .padding(14)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 8))
     }
 }
 
@@ -1384,6 +1415,14 @@ private struct AccountRowsView: View {
                         .padding(.vertical, 2)
                         .background(Color.green.opacity(0.14), in: Capsule())
                 }
+                if let badge = membershipStatusBadge(for: account) {
+                    Text(badge.title)
+                        .font(.caption2.weight(.semibold))
+                        .foregroundStyle(badge.foreground)
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 2)
+                        .background(badge.background, in: Capsule())
+                }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
 
@@ -1522,8 +1561,47 @@ private struct AccountRowsView: View {
     }
 
     private func membershipExpirationText(for account: CodixxAccount) -> String {
-        let expiration = account.membershipExpiresAt.map(state.strings.expires) ?? state.strings.neverExpires
-        return "\(state.strings.membershipExpires): \(expiration)"
+        guard let expiration = account.membershipExpiresAt else {
+            return "\(state.strings.membershipExpires): \(state.strings.neverExpires)"
+        }
+        let prefix: String
+        switch membershipDisplayStatus(for: account) {
+        case .expired:
+            prefix = state.strings.membershipExpired
+        case .needsUpdate:
+            prefix = state.strings.membershipExpirationNeedsUpdate
+        case .active, .unknown:
+            prefix = state.strings.membershipExpires
+        }
+        return "\(prefix): \(state.strings.expires(expiration))"
+    }
+
+    private func membershipStatusBadge(for account: CodixxAccount) -> (title: String, foreground: Color, background: Color)? {
+        switch membershipDisplayStatus(for: account) {
+        case .expired:
+            return (state.strings.membershipExpired, .red, Color.red.opacity(0.12))
+        case .needsUpdate:
+            return (state.strings.membershipExpirationNeedsUpdate, .orange, Color.orange.opacity(0.14))
+        case .active, .unknown:
+            return nil
+        }
+    }
+
+    private func membershipDisplayStatus(for account: CodixxAccount) -> MembershipDisplayStatus {
+        guard !account.isAPIProvider,
+              let expiration = account.membershipExpiresAt
+        else {
+            return .unknown
+        }
+        guard expiration <= Date() else {
+            return .active
+        }
+        if let observedAt = account.quota.lastObservedAt,
+           observedAt > expiration,
+           account.quota.confidence == .fresh || account.quota.confidence == .recent {
+            return .needsUpdate
+        }
+        return .expired
     }
 
     private func confirmSwitchAndRestart(_ account: CodixxAccount) {
@@ -1536,9 +1614,9 @@ private struct AccountRowsView: View {
             parent: windowToClose
         )
         guard confirmed else { return }
-        state.switchToAccountAndRestartCodex(account)
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-            windowToClose?.close()
+        windowToClose?.close()
+        DispatchQueue.main.async {
+            state.switchToAccountAndRestartCodex(account)
         }
     }
 
