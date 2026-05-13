@@ -84,8 +84,7 @@ public struct AppActivityLog {
     }
 
     public func loadEvents() throws -> [AppLogEvent] {
-        try prune(existingEvents: loadEventsWithoutPruning())
-        return try loadEventsWithoutPruning()
+        try loadEventsWithoutPruning()
     }
 
     private func loadEventsWithoutPruning() throws -> [AppLogEvent] {

@@ -57,16 +57,12 @@ struct UsageTrendView: View {
     var snapshot: ThreadUsageSnapshot
     var accounts: [CodixxAccount]
     var strings: CodixxStrings
-    var isLoading: Bool = false
     @State private var selectedAccountId: UUID?
     @State private var hoveredHour: Date?
     @State private var hoveredDay: Date?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
-            if isLoading {
-                loadingBanner
-            }
             overviewSection
 
             chartSection(title: strings.tokenUsageTwentyFourHours) {
@@ -219,20 +215,6 @@ struct UsageTrendView: View {
                 }
             }
         }
-    }
-
-    private var loadingBanner: some View {
-        HStack(spacing: 8) {
-            ProgressView()
-                .controlSize(.small)
-            Text(strings.loadingTrendData)
-                .font(.caption)
-                .foregroundStyle(.secondary)
-            Spacer()
-        }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 10)
-        .background(Color.accentColor.opacity(0.10), in: RoundedRectangle(cornerRadius: 8))
     }
 
     private var overviewSection: some View {

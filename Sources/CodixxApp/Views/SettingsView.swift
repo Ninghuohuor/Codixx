@@ -6,7 +6,7 @@ struct SettingsView: View {
     @ObservedObject var state: AppState
     @State private var isShowingAllLogs = false
     @State private var selectedLogCategory: AppLogCategory = .all
-    @State private var isShowingQuitConfirmation = false
+    @State private var parentWindow: NSWindow?
 
     var body: some View {
         ScrollView {
@@ -164,17 +164,11 @@ struct SettingsView: View {
                     Divider()
 
                     Button(role: .destructive) {
-                        isShowingQuitConfirmation = true
+                        confirmQuit()
                     } label: {
                         Label(state.strings.quitCodixx, systemImage: "power")
                     }
                     .help(state.strings.quitCodixx)
-                    .alert(state.strings.quitCodixx, isPresented: $isShowingQuitConfirmation) {
-                        Button(state.strings.cancel, role: .cancel) {}
-                        Button(state.strings.quitCodixx, role: .destructive) {
-                            NSApplication.shared.terminate(nil)
-                        }
-                    }
                 }
 
                 settingsSection(title: state.strings.logs) {
@@ -205,6 +199,9 @@ struct SettingsView: View {
             }
             .padding(14)
         }
+        .background(WindowReader { window in
+            parentWindow = window
+        })
     }
 
     private var allLogEntries: [AppLogEntry] {
@@ -222,6 +219,18 @@ struct SettingsView: View {
     private var visibleLogEntries: [AppLogEntry] {
         let limit = isShowingAllLogs ? 20 : 3
         return Array(filteredLogEntries.prefix(limit))
+    }
+
+    private func confirmQuit() {
+        let confirmed = IconlessConfirmationDialog.run(
+            title: state.strings.quitCodixx,
+            message: state.strings.quitCodixxMessage,
+            confirmTitle: state.strings.quitCodixx,
+            cancelTitle: state.strings.cancel,
+            parent: parentWindow ?? NSApplication.shared.keyWindow
+        )
+        guard confirmed else { return }
+        NSApplication.shared.terminate(nil)
     }
 
     private func settingsSection<Content: View>(title: String, @ViewBuilder content: () -> Content) -> some View {

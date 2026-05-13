@@ -9,17 +9,19 @@ enum DashboardLayout {
     static let accountColumnSpacing: CGFloat = 14
     static let accountCardMinHeight: CGFloat = 200
     static let accountCardFooterSpacerMinLength: CGFloat = 0
-    static let draggingAccountOpacity: Double = 0.94
-    static let draggingAccountScale: CGFloat = 1.006
-    static let draggingAccountShadowRadius: CGFloat = 6
+    static let draggingAccountOpacity: Double = 1
+    static let draggingAccountScale: CGFloat = 1.026
+    static let draggingAccountShadowRadius: CGFloat = 22
     static let dragReleaseSettlingDelay: TimeInterval = 0.12
     static let dragReleaseFadeDuration: TimeInterval = 0.16
     static let dropTargetStrokeWidth: CGFloat = 2
+    static let accountDragMinimumDistance: CGFloat = 7
 }
 
 struct DashboardView: View {
     @ObservedObject var state: AppState
     @State private var selectedTab = 0
+    @State private var trendRefreshTask: Task<Void, Never>?
 
     var body: some View {
         TabView(selection: $selectedTab) {
@@ -38,39 +40,57 @@ struct DashboardView: View {
         .frame(width: DashboardLayout.width)
         .frame(minHeight: 400, idealHeight: 520, maxHeight: 620)
         .onChange(of: selectedTab) { tab in
-            guard tab == 1 else { return }
-            state.refreshTrendsIfNeeded()
+            guard tab == 1 else {
+                trendRefreshTask?.cancel()
+                trendRefreshTask = nil
+                return
+            }
+            scheduleTrendRefresh()
         }
         .onAppear {
-            state.refreshFromMenuOpen()
             if selectedTab == 1 {
-                state.refreshTrendsIfNeeded()
+                scheduleTrendRefresh()
             }
         }
     }
 
+    private func scheduleTrendRefresh() {
+        trendRefreshTask?.cancel()
+        trendRefreshTask = Task { @MainActor in
+            await Task.yield()
+            guard !Task.isCancelled, selectedTab == 1 else { return }
+            state.refreshTrendsIfNeeded()
+        }
+    }
+
     private var trends: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 16) {
-                if let error = state.errorMessage {
-                    Label(error, systemImage: "exclamationmark.triangle")
-                        .font(.caption)
-                        .foregroundStyle(.orange)
-                        .lineLimit(4)
-                        .padding(12)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .background(Color.orange.opacity(0.10), in: RoundedRectangle(cornerRadius: 8))
-                        .transition(.opacity)
+        Group {
+            if state.isLoadingFullUsageSnapshot || !state.hasLoadedFullUsageSnapshot {
+                TrendLoadingView(strings: state.strings)
+            } else {
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 16) {
+                        if let error = state.errorMessage {
+                            Label(error, systemImage: "exclamationmark.triangle")
+                                .font(.caption)
+                                .foregroundStyle(.orange)
+                                .lineLimit(4)
+                                .padding(12)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .background(Color.orange.opacity(0.10), in: RoundedRectangle(cornerRadius: 8))
+                                .transition(.opacity)
+                        }
+                        UsageTrendView(
+                            snapshot: state.usageSnapshot,
+                            accounts: state.accounts,
+                            strings: state.strings
+                        )
+                        ThreadRankingView(threads: state.topThreads, strings: state.strings)
+                    }
+                    .padding(14)
                 }
-                UsageTrendView(
-                    snapshot: state.usageSnapshot,
-                    accounts: state.accounts,
-                    strings: state.strings,
-                    isLoading: state.isLoadingFullUsageSnapshot
-                )
-                ThreadRankingView(threads: state.topThreads, strings: state.strings)
+                .transition(.opacity)
             }
-            .padding(14)
         }
     }
 
@@ -80,5 +100,20 @@ struct DashboardView: View {
 
     private var settings: some View {
         SettingsView(state: state)
+    }
+}
+
+private struct TrendLoadingView: View {
+    var strings: CodixxStrings
+
+    var body: some View {
+        VStack(spacing: 12) {
+            ProgressView()
+                .controlSize(.large)
+            Text(strings.loadingTrendData)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+        .frame(maxWidth: .infinity, minHeight: 360, maxHeight: .infinity)
     }
 }

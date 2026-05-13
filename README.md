@@ -1,6 +1,6 @@
 # Codixx
 
-Current version: **1.0.1**
+Current version: **1.0.3**
 
 Codixx is a native macOS menu bar app for people who use Codex heavily and want a local way to track usage, monitor quota state, and switch between saved Codex accounts.
 

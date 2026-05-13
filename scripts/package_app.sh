@@ -50,7 +50,7 @@ cat > "$CONTENTS_DIR/Info.plist" <<'PLIST'
   <key>CFBundleShortVersionString</key>
   <string>__APP_VERSION__</string>
   <key>CFBundleVersion</key>
-  <string>101</string>
+  <string>103</string>
   <key>LSMinimumSystemVersion</key>
   <string>13.0</string>
   <key>LSUIElement</key>
