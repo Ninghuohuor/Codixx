@@ -790,6 +790,91 @@ final class AppStateTrendRefreshTests: XCTestCase {
         XCTAssertFalse(state.hasLoadedFullUsageSnapshot)
     }
 
+    func testQuotaRefreshPreservesEffectiveTokenTotalsFromFullTrendSnapshot() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let paths = CodixxPaths(home: directory)
+        try FileManager.default.createDirectory(at: paths.codexHome, withIntermediateDirectories: true)
+        let now = Date(timeIntervalSince1970: 1_778_300_000)
+        let rolloutURL = paths.codexHome.appendingPathComponent("sessions/2026/05/13/rollout.jsonl")
+        try FileManager.default.createDirectory(
+            at: rolloutURL.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        try writeDetailedTokenUsageEvents(
+            [
+                (now.addingTimeInterval(-600), 10_000, 8_000, 750)
+            ],
+            to: rolloutURL
+        )
+        try writeCachedTokenUsageDatabase(
+            at: paths.latestStateDatabaseURL(),
+            now: now,
+            rolloutURL: rolloutURL,
+            rawTokens: 10_750
+        )
+        let state = AppState(
+            paths: paths,
+            vault: InMemoryVault(),
+            codexDesktopState: NoopCodexDesktopStateCleaner(),
+            codexDesktopManager: CodexDesktopManagerSpy(),
+            now: { now }
+        )
+
+        state.refreshNow()
+        try await waitUntil { state.hasLoadedFullUsageSnapshot }
+
+        XCTAssertEqual(state.usageSnapshot.totalTokens, 2_750)
+        XCTAssertEqual(state.topThreads.first?.tokensUsed, 2_750)
+
+        state.refreshQuotaNow()
+
+        XCTAssertEqual(state.usageSnapshot.totalTokens, 2_750)
+        XCTAssertEqual(state.usageSnapshot.threads.first?.tokensUsed, 2_750)
+        XCTAssertEqual(state.topThreads.first?.tokensUsed, 2_750)
+        XCTAssertEqual(state.usageSnapshot.activeThread?.tokensUsed, 2_750)
+    }
+
+    func testQuotaRefreshDoesNotShowRawTokenTotalsBeforeFullTrendSnapshotLoads() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let paths = CodixxPaths(home: directory)
+        try FileManager.default.createDirectory(at: paths.codexHome, withIntermediateDirectories: true)
+        let now = Date(timeIntervalSince1970: 1_778_300_000)
+        let rolloutURL = paths.codexHome.appendingPathComponent("sessions/2026/05/13/rollout.jsonl")
+        try FileManager.default.createDirectory(
+            at: rolloutURL.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        try writeDetailedTokenUsageEvents(
+            [
+                (now.addingTimeInterval(-600), 10_000, 8_000, 750)
+            ],
+            to: rolloutURL
+        )
+        try writeCachedTokenUsageDatabase(
+            at: paths.latestStateDatabaseURL(),
+            now: now,
+            rolloutURL: rolloutURL,
+            rawTokens: 10_750
+        )
+        let state = AppState(
+            paths: paths,
+            vault: InMemoryVault(),
+            codexDesktopState: NoopCodexDesktopStateCleaner(),
+            codexDesktopManager: CodexDesktopManagerSpy(),
+            now: { now }
+        )
+
+        state.refreshQuotaNow()
+
+        XCTAssertFalse(state.hasLoadedFullUsageSnapshot)
+        XCTAssertEqual(state.usageSnapshot.totalTokens, 0)
+        XCTAssertTrue(state.usageSnapshot.threads.isEmpty)
+        XCTAssertTrue(state.topThreads.isEmpty)
+        XCTAssertEqual(state.usageSnapshot.activeThread?.id, "cached-heavy")
+    }
+
     func testMenuOpenRefreshAutoSwitchesWhenLatestObservationShowsCurrentQuotaDepleted() throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
         defer { try? FileManager.default.removeItem(at: directory) }
@@ -1268,6 +1353,63 @@ final class AppStateTrendRefreshTests: XCTestCase {
         try process.run()
         process.waitUntilExit()
         XCTAssertEqual(process.terminationStatus, 0)
+    }
+
+    private func writeCachedTokenUsageDatabase(
+        at url: URL,
+        now: Date,
+        rolloutURL: URL,
+        rawTokens: Int
+    ) throws {
+        try FileManager.default.createDirectory(
+            at: url.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        try? FileManager.default.removeItem(at: url)
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/sqlite3")
+        process.arguments = [
+            url.path,
+            """
+            CREATE TABLE threads(
+                id TEXT PRIMARY KEY,
+                title TEXT,
+                model TEXT,
+                reasoning_effort TEXT,
+                tokens_used INTEGER,
+                cwd TEXT,
+                created_at INTEGER,
+                updated_at INTEGER,
+                rollout_path TEXT
+            );
+            INSERT INTO threads VALUES(
+                'cached-heavy',
+                'Cached Heavy',
+                'gpt-5',
+                'medium',
+                \(rawTokens),
+                '',
+                \(Int(now.addingTimeInterval(-3_600).timeIntervalSince1970)),
+                \(Int(now.addingTimeInterval(-600).timeIntervalSince1970)),
+                '\(rolloutURL.path)'
+            );
+            """
+        ]
+        try process.run()
+        process.waitUntilExit()
+        XCTAssertEqual(process.terminationStatus, 0)
+    }
+
+    private func writeDetailedTokenUsageEvents(_ events: [(Date, Int, Int, Int)], to url: URL) throws {
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        let lines = events.map { date, inputTokens, cachedInputTokens, outputTokens in
+            let totalTokens = inputTokens + outputTokens
+            return """
+            {"timestamp":"\(formatter.string(from: date))","type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":\(inputTokens),"cached_input_tokens":\(cachedInputTokens),"output_tokens":\(outputTokens),"total_tokens":\(totalTokens)}}}}
+            """
+        }
+        try lines.joined(separator: "\n").data(using: .utf8)?.write(to: url)
     }
 }
 

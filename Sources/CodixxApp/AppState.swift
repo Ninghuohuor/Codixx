@@ -60,6 +60,7 @@ final class AppState: ObservableObject, LifecycleStateManaging {
     private let balanceQueryTester: APIBalanceQueryTesting
     private let now: () -> Date
     private var isRefreshInProgress = false
+    private var isQuotaRefreshInProgress = false
     private var isSwitchInProgress = false
     private var usageRefreshTask: Task<Void, Never>?
     private var accountOrderPersistenceTask: Task<Void, Never>?
@@ -192,12 +193,9 @@ final class AppState: ObservableObject, LifecycleStateManaging {
     }
 
     func refreshQuotaNow() {
-        refresh(
-            applyRateLimitObservations: true,
+        refreshQuotaPipeline(
             allowAutoSwitch: true,
             preservingError: nil,
-            throttled: false,
-            refreshUsage: true,
             refreshUsageActivityOnly: true
         )
     }
@@ -223,13 +221,71 @@ final class AppState: ObservableObject, LifecycleStateManaging {
     }
 
     func refreshFromMenuOpen() {
-        refresh(
-            applyRateLimitObservations: true,
+        refreshQuotaPipeline(
             allowAutoSwitch: true,
-            preservingError: nil,
-            throttled: true,
-            refreshUsage: false,
-            refreshUsageIfEmpty: false
+            preservingError: nil
+        )
+    }
+
+    private func refreshQuotaPipeline(
+        allowAutoSwitch: Bool,
+        preservingError preservedError: String?,
+        refreshUsageActivityOnly: Bool = false
+    ) {
+        guard !isQuotaRefreshInProgress else { return }
+        isQuotaRefreshInProgress = true
+        isRefreshing = true
+
+        let refreshStartedAt = now()
+        var refreshErrors: [String] = []
+        do {
+            config = try configStore.load()
+        } catch {
+            refreshErrors.append(error.localizedDescription)
+        }
+
+        var loadedAccounts: [CodixxAccount] = []
+        do {
+            loadedAccounts = try metadataStore.load().accounts
+        } catch {
+            refreshErrors.append(error.localizedDescription)
+        }
+
+        do {
+            try applyLatestRateLimitObservation(to: &loadedAccounts)
+        } catch {
+            refreshErrors.append(error.localizedDescription)
+        }
+
+        accounts = loadedAccounts
+        currentAccount = currentAccount(in: loadedAccounts)
+        do {
+            switchEvents = try auditLog.loadEvents().sorted { $0.timestamp > $1.timestamp }
+        } catch {
+            refreshErrors.append(error.localizedDescription)
+        }
+        do {
+            appLogEvents = try appActivityLog.loadEvents().sorted { $0.timestamp > $1.timestamp }
+        } catch {
+            refreshErrors.append(error.localizedDescription)
+        }
+
+        if refreshUsageActivityOnly {
+            let latestUsageSnapshot = threadUsageReader.readActivitySnapshot(
+                now: refreshStartedAt,
+                includeEffectiveTokenCounts: false
+            )
+            if latestUsageSnapshot.isDegraded, !usageSnapshot.threads.isEmpty {
+                refreshErrors.append(latestUsageSnapshot.errorSummary ?? strings.usageReadFailed)
+            } else {
+                applyUsageSnapshot(latestUsageSnapshot, preservingTokenBuckets: true)
+            }
+        }
+
+        finishQuotaRefresh(
+            errors: refreshErrors,
+            preservedError: preservedError,
+            allowAutoSwitch: allowAutoSwitch
         )
     }
 
@@ -394,11 +450,53 @@ final class AppState: ObservableObject, LifecycleStateManaging {
         }
     }
 
+    private func finishQuotaRefresh(
+        errors refreshErrors: [String],
+        preservedError: String?,
+        allowAutoSwitch: Bool
+    ) {
+        var refreshErrors = refreshErrors
+        if let preservedError {
+            refreshErrors.insert(preservedError, at: 0)
+        }
+
+        let newError = refreshErrors.isEmpty ? nil : refreshErrors.joined(separator: "\n")
+        errorMessage = newError
+        if newError != nil {
+            errorDismissWork?.cancel()
+            let work = DispatchWorkItem { [weak self] in
+                self?.errorMessage = nil
+            }
+            errorDismissWork = work
+            DispatchQueue.main.asyncAfter(deadline: .now() + 5, execute: work)
+        }
+        lastUpdatedAt = now()
+        isQuotaRefreshInProgress = false
+        if !isRefreshInProgress {
+            isRefreshing = false
+        }
+
+        if allowAutoSwitch {
+            attemptAutoSwitchIfNeeded()
+        }
+    }
+
     private func applyUsageSnapshot(_ snapshot: ThreadUsageSnapshot, preservingTokenBuckets: Bool = false) {
-        if preservingTokenBuckets {
+        if preservingTokenBuckets, !usageSnapshot.threads.isEmpty {
             usageSnapshot = ThreadUsageSnapshot(
-                threads: snapshot.threads,
-                totalTokens: snapshot.totalTokens,
+                threads: usageSnapshot.threads,
+                totalTokens: usageSnapshot.totalTokens,
+                activeThread: activeThreadPreservingTokenCount(from: snapshot.activeThread),
+                dailyTokenUsage: usageSnapshot.dailyTokenUsage,
+                hourlyTokenUsage: usageSnapshot.hourlyTokenUsage,
+                monthlyTokenUsage: usageSnapshot.monthlyTokenUsage,
+                accountUsageSummaries: usageSnapshot.accountUsageSummaries,
+                errorSummary: snapshot.errorSummary
+            )
+        } else if preservingTokenBuckets {
+            usageSnapshot = ThreadUsageSnapshot(
+                threads: [],
+                totalTokens: 0,
                 activeThread: snapshot.activeThread,
                 dailyTokenUsage: usageSnapshot.dailyTokenUsage,
                 hourlyTokenUsage: usageSnapshot.hourlyTokenUsage,
@@ -409,7 +507,15 @@ final class AppState: ObservableObject, LifecycleStateManaging {
         } else {
             usageSnapshot = snapshot
         }
-        topThreads = Array(snapshot.threads.sorted { $0.tokensUsed > $1.tokensUsed }.prefix(10))
+        topThreads = Array(usageSnapshot.threads.sorted { $0.tokensUsed > $1.tokensUsed }.prefix(10))
+    }
+
+    private func activeThreadPreservingTokenCount(from latestActiveThread: ThreadUsage?) -> ThreadUsage? {
+        guard var latestActiveThread else { return nil }
+        if let existing = usageSnapshot.threads.first(where: { $0.id == latestActiveThread.id }) {
+            latestActiveThread.tokensUsed = existing.tokensUsed
+        }
+        return latestActiveThread
     }
 
     private func markFullUsageSnapshotNeedsReload() {

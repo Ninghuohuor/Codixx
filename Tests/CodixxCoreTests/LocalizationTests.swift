@@ -17,6 +17,10 @@ final class LocalizationTests: XCTestCase {
         XCTAssertEqual(strings.couldNotSaveCurrentAccount("Missing token"), "Could not save current account: Missing token")
         XCTAssertEqual(strings.switchSuccessTitle(target: "Main"), "Switched to Main")
         XCTAssertEqual(strings.addAccount, "Add Account")
+        XCTAssertEqual(
+            strings.noSavedAccountsDescription,
+            "Add a Codex login, import auth.json, or add an API key to start tracking quota, switching accounts, and viewing usage trends."
+        )
         XCTAssertEqual(strings.codexLoginAccount, "Current login")
         XCTAssertEqual(strings.importAuthJSONAccount, "Import auth.json")
         XCTAssertEqual(strings.chooseAuthJSON, "Choose auth.json")
@@ -61,6 +65,8 @@ final class LocalizationTests: XCTestCase {
         XCTAssertEqual(strings.cancelEdit, "Cancel edit")
         XCTAssertEqual(strings.deleteAccount, "Delete account")
         XCTAssertEqual(strings.neverExpires, "Expiration unavailable locally")
+        XCTAssertEqual(strings.membershipExpired, "Expired")
+        XCTAssertEqual(strings.membershipExpirationNeedsUpdate, "Expiration needs update")
         XCTAssertEqual(strings.autoSwitchNeedsTwoAccounts, "Save a second enabled account to use auto switch.")
         XCTAssertEqual(strings.quotaRefresh, "Quota refresh")
         XCTAssertEqual(strings.usageRefresh, "Usage refresh")
@@ -106,6 +112,10 @@ final class LocalizationTests: XCTestCase {
         XCTAssertEqual(strings.couldNotSaveCurrentAccount("缺少令牌"), "无法保存当前账号：缺少令牌")
         XCTAssertEqual(strings.switchSuccessTitle(target: "Main"), "已切换到 Main")
         XCTAssertEqual(strings.addAccount, "添加账号")
+        XCTAssertEqual(
+            strings.noSavedAccountsDescription,
+            "添加 Codex 登录、导入 auth.json 或添加 API Key 后，即可查看额度、切换账号和用量趋势。"
+        )
         XCTAssertEqual(strings.codexLoginAccount, "当前登录")
         XCTAssertEqual(strings.importAuthJSONAccount, "导入 auth.json")
         XCTAssertEqual(strings.chooseAuthJSON, "选择 auth.json")
@@ -150,6 +160,8 @@ final class LocalizationTests: XCTestCase {
         XCTAssertEqual(strings.cancelEdit, "取消编辑")
         XCTAssertEqual(strings.deleteAccount, "删除账号")
         XCTAssertEqual(strings.neverExpires, "到期时间未知")
+        XCTAssertEqual(strings.membershipExpired, "已过期")
+        XCTAssertEqual(strings.membershipExpirationNeedsUpdate, "到期待更新")
         XCTAssertEqual(strings.autoSwitchNeedsTwoAccounts, "请先保存第二个已启用账号，再使用自动切换。")
         XCTAssertEqual(strings.quotaRefresh, "额度刷新")
         XCTAssertEqual(strings.usageRefresh, "用量刷新")
