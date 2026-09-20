@@ -1526,6 +1526,13 @@ private struct AccountRowsView: View {
                         .padding(.vertical, 2)
                         .background(Color.green.opacity(0.14), in: Capsule())
                 }
+                if account.id == state.pendingAccountID {
+                    Text(state.strings.pendingAccountRestart)
+                        .font(.caption2.weight(.semibold))
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 2)
+                        .background(Color.orange.opacity(0.14), in: Capsule())
+                }
                 if let badge = membershipStatusBadge(for: account) {
                     Text(badge.title)
                         .font(.caption2.weight(.semibold))
@@ -1544,7 +1551,7 @@ private struct AccountRowsView: View {
             }
             .labelStyle(.iconOnly)
             .buttonStyle(.borderless)
-            .disabled(account.id == state.currentAccount?.id)
+            .disabled(account.id == state.currentAccount?.id && state.pendingAccountID == nil)
             .help(state.strings.switchToThisAccount)
 
             Menu {

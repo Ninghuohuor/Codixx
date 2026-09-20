@@ -335,6 +335,13 @@ final class SwitchPolicyTests: XCTestCase {
         XCTAssertEqual(ordered.map(\.alias), ["ChatGPT", "Relay"])
     }
 
+    func testUnknownAPIBalanceNeverTriggersAutomaticSwitch() {
+        let now = Date()
+        let current = apiAccount(alias: "Unknown", lastBalanceText: nil, minimumBalance: 0, now: now)
+        let other = apiAccount(alias: "Available", lastBalanceText: "10", minimumBalance: 0, now: now)
+        XCTAssertFalse(SwitchPolicy().shouldAutoSwitch(currentAccount: current, allAccounts: [current, other], context: .idle(now: now)))
+    }
+
     func testAPIProviderOnlyAutoSwitchesOutWhenBalanceIsDepletedAndSafe() {
         let now = Date(timeIntervalSince1970: 1_000)
         let policy = SwitchPolicy(autoSwitchCooldownSeconds: 300, activeThreadIdleSeconds: 120)

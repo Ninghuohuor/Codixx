@@ -4,11 +4,13 @@ public struct APIBalanceQueryResult: Equatable, Sendable {
     public let isSuccess: Bool
     public let message: String
     public let balanceText: String?
+    public let isUnlimitedToken: Bool
 
-    public init(isSuccess: Bool, message: String, balanceText: String? = nil) {
+    public init(isSuccess: Bool, message: String, balanceText: String? = nil, isUnlimitedToken: Bool = false) {
         self.isSuccess = isSuccess
         self.message = message
         self.balanceText = balanceText
+        self.isUnlimitedToken = isUnlimitedToken
     }
 }
 
@@ -64,8 +66,14 @@ public struct APIBalanceQueryTester: APIBalanceQueryTesting {
                 }
                 return APIBalanceQueryResult(isSuccess: false, message: "Balance query failed: HTTP \(httpResponse.statusCode)")
             }
-            guard let json = try? JSONSerialization.jsonObject(with: data),
-                  let value = Self.balanceValue(configText: trimmedPath, in: json)
+            guard let json = try? JSONSerialization.jsonObject(with: data) else {
+                return APIBalanceQueryResult(isSuccess: false, message: "Invalid balance response")
+            }
+            if ["data.total_available", "data.remain_quota", "total_available", "remain_quota"].contains(trimmedPath),
+               Self.value(at: trimmedPath.hasPrefix("data.") ? "data.unlimited_quota" : "unlimited_quota", in: json) as? Bool == true {
+                return APIBalanceQueryResult(isSuccess: false, message: "令牌无限额度，无法据此判断账户余额 / Unlimited token: account balance unavailable", isUnlimitedToken: true)
+            }
+            guard let value = Self.balanceValue(configText: trimmedPath, in: json)
             else {
                 return APIBalanceQueryResult(isSuccess: false, message: "Balance field not found: \(trimmedPath)")
             }

@@ -64,6 +64,7 @@ public struct CodixxStrings: Sendable {
     public var balanceTokenRequired: String { text(en: "Enter a system access token for this query mode.", zh: "此查询方式需要填写系统访问令牌。") }
     public var balanceUserID: String { text(en: "Account ID (New-Api-User)", zh: "账号 ID（New-Api-User）") }
     public var balanceUserIDHint: String { text(en: "Required by some providers alongside the access token. Enter your numeric account ID from the provider; this is not your username.", zh: "部分服务商要求同时提供此项。填写服务商分配的数字账号 ID，不是昵称。") }
+    public var pendingAccountRestart: String { text(en: "Pending restart", zh: "待重启生效") }
     public var balanceBack: String { text(en: "Back", zh: "返回") }
     public var balanceDiscardTitle: String { text(en: "Discard unsaved changes?", zh: "放弃未保存的修改？") }
     public var balanceDiscard: String { text(en: "Discard and go back", zh: "放弃修改并返回") }

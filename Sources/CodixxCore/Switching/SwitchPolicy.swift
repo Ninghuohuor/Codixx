@@ -41,9 +41,7 @@ public struct SwitchPolicy: Sendable {
     public func shouldAutoSwitch(currentAccount: CodixxAccount?, allAccounts: [CodixxAccount] = [], context: SwitchSafetyContext) -> Bool {
         guard let currentAccount else { return false }
         if currentAccount.isAPIProvider {
-            if currentAccount.hasMeasuredAPIBalance {
-                guard currentAccount.isAPIBalanceDepleted else { return false }
-            }
+            guard currentAccount.hasMeasuredAPIBalance, currentAccount.isAPIBalanceDepleted else { return false }
             guard isSafeToAutoSwitch(context: context) else { return false }
             let others = allAccounts.filter { $0.id != currentAccount.id }
             return !orderedCandidates(from: others) { _ in true }.isEmpty

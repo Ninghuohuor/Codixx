@@ -27,6 +27,9 @@ final class AppState: ObservableObject, LifecycleStateManaging {
     @Published private(set) var config: CodixxConfig
     @Published private(set) var accounts: [CodixxAccount] = []
     @Published private(set) var currentAccount: CodixxAccount?
+    @Published private(set) var pendingAccountID: UUID?
+    private var runtimeAccountState: RuntimeAccountState?
+    private var loadedRuntimeAccountState = false
     @Published private(set) var usageSnapshot = ThreadUsageSnapshot(
         threads: [],
         totalTokens: 0,
@@ -535,7 +538,7 @@ final class AppState: ObservableObject, LifecycleStateManaging {
     }
 
     func attemptAutoSwitchIfNeeded() {
-        guard config.autoSwitchEnabled, !isSwitchInProgress else { return }
+        guard config.autoSwitchEnabled, !isSwitchInProgress, pendingAccountID == nil else { return }
         let timestamp = now()
         if let autoSwitchSuppressedUntil {
             guard timestamp >= autoSwitchSuppressedUntil else { return }
@@ -852,6 +855,15 @@ final class AppState: ObservableObject, LifecycleStateManaging {
             return APIBalanceQueryResult(isSuccess: false, message: strings.balanceConfigChanged)
         }
         guard result.isSuccess else {
+            if result.isUnlimitedToken {
+                // Clear a previously cached numeric placeholder before any switch evaluation.
+                balanceQuery.lastBalanceText = nil
+                balanceQuery.lastRefreshedAt = nil
+                if let saved = try? accountStore.updateAPIBalanceQuery(account.id, balanceQuery: balanceQuery) {
+                    if let index = accounts.firstIndex(where: { $0.id == saved.id }) { accounts[index] = saved }
+                    if currentAccount?.id == saved.id { currentAccount = saved }
+                }
+            }
             recordAppLog(
                 kind: .apiBalanceRefreshFailed,
                 accountID: account.id,
@@ -1616,9 +1628,21 @@ final class AppState: ObservableObject, LifecycleStateManaging {
         else {
             return nil
         }
-        return accounts.first { account in
+        let configured = accounts.first { account in
             account.fingerprint == fingerprint || account.apiProvider?.keyFingerprint == fingerprint
         }
+        let store = JSONFileStore<RuntimeAccountState>(url: paths.applicationSupport.appendingPathComponent("runtime-account.json"))
+        if !loadedRuntimeAccountState {
+            runtimeAccountState = try? store.load()
+            loadedRuntimeAccountState = true
+        }
+        let resolved = RuntimeAccountState.resolve(previous: runtimeAccountState, processIdentity: codexDesktopManager.processIdentity, configuredAccountID: configured?.id)
+        if resolved != runtimeAccountState {
+            runtimeAccountState = resolved
+            try? store.save(resolved)
+        }
+        pendingAccountID = resolved.accountID != configured?.id ? configured?.id : nil
+        return accounts.first { $0.id == resolved.accountID }
     }
 
     private func currentAuthProfile() -> AuthProfile? {
