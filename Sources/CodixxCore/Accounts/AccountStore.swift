@@ -8,6 +8,7 @@ public enum AccountStoreError: Error, Equatable, LocalizedError {
     case snapshotNotFound(String)
     case keychainError(String)
     case accountNotFound(UUID)
+    case authIsAPIKeyLogin
 
     public var errorDescription: String? {
         switch self {
@@ -25,6 +26,8 @@ public enum AccountStoreError: Error, Equatable, LocalizedError {
             return "Keychain operation failed. \(message)"
         case .accountNotFound(let id):
             return "No account exists with id \(id.uuidString)"
+        case .authIsAPIKeyLogin:
+            return "The current Codex auth is an API key login and cannot be saved as a ChatGPT account snapshot"
         }
     }
 }
@@ -81,6 +84,16 @@ public struct AccountStore {
     }
 
     private func save(snapshot: AuthSnapshot, alias: String) throws -> CodixxAccount {
+        // `auth.json` 处于 API Key 登录态时不能当成「ChatGPT 账号」存。
+        //
+        // 原因是指纹口径不一致：这里的 `AccountFingerprint.generate` 对 apikey
+        // 快照会走 `OPENAI_API_KEY` 分支，得到 `api-key:<hash>`；而
+        // `saveAPIProvider` 写的是 `api-provider:api-key:<hash>`。两者不相等，
+        // 于是同一个中转站 key 会凭空多出一个"幽灵账号"。
+        guard !Self.isAPIKeyLogin(snapshot) else {
+            throw AccountStoreError.authIsAPIKeyLogin
+        }
+
         let fingerprint = try AccountFingerprint.generate(from: snapshot)
         var metadata = try metadataStore.load()
         let timestamp = now()
@@ -122,6 +135,19 @@ public struct AccountStore {
         metadata.accounts.append(account)
         try metadataStore.save(metadata)
         return account
+    }
+
+    /// 判断一份 `auth.json` 快照是不是 API Key 登录态。
+    ///
+    /// 以 `auth_mode` 为准；字段缺失时退化为「有 API Key 且没有 access_token」，
+    /// 这样老版本 Codex 写的 auth.json 也能识别。
+    public static func isAPIKeyLogin(_ snapshot: AuthSnapshot) -> Bool {
+        if let mode = snapshot.stringValue(for: "auth_mode")?.lowercased() {
+            return mode == "apikey"
+        }
+        let hasAccessToken = snapshot.stringValue(for: "access_token")?.isEmpty == false
+        let hasAPIKey = snapshot.stringValue(for: "OPENAI_API_KEY")?.isEmpty == false
+        return hasAPIKey && !hasAccessToken
     }
 
     public func saveAPIProvider(

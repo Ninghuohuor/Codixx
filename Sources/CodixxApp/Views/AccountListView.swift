@@ -141,7 +141,7 @@ struct AccountListView: View {
                         .background(Color.blue.opacity(0.08), in: RoundedRectangle(cornerRadius: 8))
                 }
 
-                if state.needsAPIProviderCleanup {
+                if state.needsAPIProviderCleanup || state.isSignedInWithAPIProvider {
                     APIProviderCleanupBanner(state: state, onCleanUp: confirmSignOutAPIProvider)
                 }
 
@@ -231,9 +231,14 @@ struct AccountListView: View {
 
     private func confirmSignOutAPIProvider() {
         let windowToClose = presentationParentWindow
+        // 危险态（ChatGPT 凭据正被发往中转站）和"我主动选了 API 登录"是两件事，
+        // 收尾结果也不同：后者没有 ChatGPT 快照可回退，会落到登录界面。
+        let message = state.needsAPIProviderCleanup
+            ? state.strings.signOutAPIProviderConfirmMessage
+            : state.strings.signOutAPIProviderConfirmMessageAPIKey
         let confirmed = IconlessConfirmationDialog.run(
             title: state.strings.signOutAPIProviderConfirmTitle,
-            message: state.strings.signOutAPIProviderConfirmMessage,
+            message: message,
             confirmTitle: state.strings.signOutAPIProvider,
             cancelTitle: state.strings.cancel,
             parent: windowToClose
@@ -1681,7 +1686,7 @@ private struct APIProviderCleanupBanner: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Label(state.strings.apiProviderStillRouted, systemImage: "exclamationmark.triangle.fill")
+            Label(text, systemImage: iconName)
                 .font(.caption)
                 .fixedSize(horizontal: false, vertical: true)
 
@@ -1690,7 +1695,31 @@ private struct APIProviderCleanupBanner: View {
         }
         .padding(12)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color.orange.opacity(0.12), in: RoundedRectangle(cornerRadius: 8))
+        .background(tint.opacity(tintOpacity), in: RoundedRectangle(cornerRadius: 8))
+    }
+
+    /// 凭据外发是危险态，用橙色警告；只是"当前是 API 登录"用蓝色入口即可。
+    /// 混用会让用户在自己特意配置的状态下看到一条假警报。
+    private var isCredentialLeakWarning: Bool {
+        state.needsAPIProviderCleanup
+    }
+
+    private var text: String {
+        isCredentialLeakWarning
+            ? state.strings.apiProviderStillRouted
+            : state.strings.apiProviderSignedIn
+    }
+
+    private var iconName: String {
+        isCredentialLeakWarning ? "exclamationmark.triangle.fill" : "key.fill"
+    }
+
+    private var tint: Color {
+        isCredentialLeakWarning ? .orange : .blue
+    }
+
+    private var tintOpacity: Double {
+        isCredentialLeakWarning ? 0.12 : 0.08
     }
 }
 

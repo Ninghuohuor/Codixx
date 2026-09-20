@@ -252,6 +252,15 @@ public struct CodixxStrings: Sendable {
         )
     }
     public var signOutAPIProvider: String { text(en: "Exit API login", zh: "退出 API 登录") }
+
+    /// 和 `apiProviderStillRouted` 是两回事：这里是"你主动选了 API 登录"，
+    /// 不是凭据外发。所以文案不能带警告，否则就是假警报。
+    public var apiProviderSignedIn: String {
+        text(
+            en: "Currently signed in with an API key, and Codex routes through a relay provider. To go back to your ChatGPT account, use the button below.",
+            zh: "当前是 API Key 登录，请求会发往 config.toml 里的自定义 provider。想退回 ChatGPT 账号登录，点下面的按钮。"
+        )
+    }
     public var signOutAPIProviderConfirmTitle: String {
         text(en: "Exit API login?", zh: "确定退出 API 登录吗？")
     }
@@ -259,6 +268,14 @@ public struct CodixxStrings: Sendable {
         text(
             en: "Codixx removes the relay provider from config.toml and restores Codex to your ChatGPT account. Codex Desktop will be restarted.",
             zh: "Codixx 会从 config.toml 移除中转站 provider，并把 Codex 还原成走你的 ChatGPT 账号。过程中会重启 Codex Desktop。"
+        )
+    }
+    /// API Key 登录态下的确认文案：此时没有 ChatGPT 快照可回退，
+    /// 收尾结果一定是"删掉 auth.json，回到登录界面"，得说清楚。
+    public var signOutAPIProviderConfirmMessageAPIKey: String {
+        text(
+            en: "Codixx removes the relay provider from config.toml and deletes the API key from auth.json. Codex returns to its login screen and you will need to sign in with your ChatGPT account again. Saved account snapshots are not affected. Codex Desktop will be restarted.",
+            zh: "Codixx 会从 config.toml 移除中转站 provider，并删除 auth.json 里的 API Key。Codex 会回到登录界面，需要你重新用 ChatGPT 账号登录。已保存的账号快照不受影响。过程中会重启 Codex Desktop。"
         )
     }
     public var signOutAPIProviderSwitchedToAccount: String {
@@ -269,8 +286,15 @@ public struct CodixxStrings: Sendable {
     }
     public var signOutAPIProviderNeedsLogin: String {
         text(
-            en: "API login removed. Sign in to Codex with your ChatGPT account to continue.",
-            zh: "已退出 API 登录。请在 Codex 里用 ChatGPT 账号重新登录以继续。"
+            en: "API login removed. Sign in to Codex with your ChatGPT account to continue.\n\nTo switch back with one click next time: after signing in, save a snapshot via Add account → Codex login account.",
+            zh: "已退出 API 登录。请在 Codex 里用 ChatGPT 账号重新登录以继续。\n\n想以后能一键切回：登录后回到 Codixx，用「添加账号 → Codex 登录账号」存一份快照。"
+        )
+    }
+    /// `AccountStore` 拒绝把 API Key 登录态当成 ChatGPT 账号存时给用户的解释。
+    public var cannotSaveAPIKeyAsCodexAccount: String {
+        text(
+            en: "The current Codex login is an API key, so it cannot be saved as a \"Codex login account\" snapshot. Use the \"API key account\" tab instead, or sign in to Codex with your ChatGPT account first.",
+            zh: "当前 Codex 是 API Key 登录，不能存成「Codex 登录账号」快照。请改用「API Key 账号」这一档，或先用 ChatGPT 账号登录 Codex。"
         )
     }
     public var signOutAPIProviderCleanedConfig: String {
