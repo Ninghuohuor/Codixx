@@ -1603,6 +1603,11 @@ private struct AccountRowsView: View {
                 .buttonStyle(.borderless)
                 .disabled(state.queryingQuotaAccounts.contains(account.id))
             }
+            if state.quotaQueryErrors[account.id] != nil && !account.quota.reportedWindows.isEmpty {
+                Text(state.strings.cachedQuotaAfterFailure)
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            }
             if account.quota.primaryUsedPercent == nil && account.quota.secondaryUsedPercent == nil {
                 Text(state.strings.quotaNotReported)
                     .font(.caption)

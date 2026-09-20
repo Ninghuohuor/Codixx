@@ -236,6 +236,43 @@ public struct CodixxStrings: Sendable {
     }
     public var weeklyUnknown: String { text(en: "Weekly quota --", zh: "每周额度 --") }
     public var resetUnknown: String { text(en: "Reset unknown", zh: "重置时间未知") }
+    public var cachedQuotaAfterFailure: String {
+        text(en: "Refresh failed; showing the last successful quota.", zh: "刷新失败，当前显示上次获取的额度。")
+    }
+
+    public func quotaQueryFailure(_ error: Error) -> String {
+        if let query = error as? ChatGPTQuotaClient.QueryError {
+            switch query {
+            case .missingLogin: return text(en: "Missing login credentials. Sign in and save the account again.", zh: "缺少登录凭据，请登录后重新保存账号。")
+            case .expiredLogin: return text(en: "Login expired. Sign in to Codex and save the account again.", zh: "登录凭据已失效，请在 Codex 登录后重新保存账号。")
+            case .http(let status): return text(en: "Quota query failed (HTTP \(status)). Try again later.", zh: "额度查询失败（HTTP \(status)），请稍后重试。")
+            case .invalidResponse: return text(en: "The quota service returned an unrecognized response.", zh: "额度接口返回了无法识别的数据。")
+            case .noQuota: return text(en: "The service has not returned quota data yet.", zh: "服务端暂未返回可用的额度数据。")
+            }
+        }
+        let nsError = error as NSError
+        if nsError.domain == NSURLErrorDomain {
+            switch URLError.Code(rawValue: nsError.code) {
+            case .secureConnectionFailed, .serverCertificateHasBadDate, .serverCertificateUntrusted,
+                 .serverCertificateHasUnknownRoot, .serverCertificateNotYetValid,
+                 .clientCertificateRejected, .clientCertificateRequired:
+                return text(en: "Secure connection failed. Check your network or proxy and retry.", zh: "安全连接失败，请检查网络或代理后重试。")
+            case .timedOut:
+                return text(en: "Quota query timed out. Try again later.", zh: "额度查询超时，请稍后重试。")
+            case .notConnectedToInternet, .networkConnectionLost:
+                return text(en: "Network disconnected. Check your connection and retry.", zh: "网络连接已断开，请检查网络后重试。")
+            case .cannotFindHost, .cannotConnectToHost, .dnsLookupFailed:
+                return text(en: "Cannot reach the quota service. Check your network or proxy.", zh: "无法连接额度服务，请检查网络或代理。")
+            default:
+                return text(en: "Quota query failed due to a network error. Please retry.", zh: "额度查询遇到网络错误，请重试。")
+            }
+        }
+        if error is AccountStoreError {
+            return text(en: "Cannot read the saved login. Check Keychain access or save the account again.", zh: "无法读取已保存的登录凭据，请检查钥匙串权限或重新保存账号。")
+        }
+        return text(en: "Could not refresh or save quota data. Please retry.", zh: "额度刷新或保存失败，请重试。")
+    }
+
     public var quotaNotReported: String { text(en: "Quota data not received", zh: "暂未获取到额度数据") }
 
     public func quotaWindowTitle(minutes: Int?) -> String {

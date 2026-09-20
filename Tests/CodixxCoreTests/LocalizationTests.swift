@@ -2,6 +2,16 @@ import XCTest
 @testable import CodixxCore
 
 final class LocalizationTests: XCTestCase {
+    func testQuotaNetworkErrorsDoNotLeakSystemEnglishOrRawDetails() {
+        let strings = CodixxStrings(language: .chinese)
+        let tls = NSError(domain: NSURLErrorDomain, code: URLError.secureConnectionFailed.rawValue,
+                          userInfo: [NSLocalizedDescriptionKey: "A TLS error caused the secure connection to fail."])
+        XCTAssertEqual(strings.quotaQueryFailure(tls), "安全连接失败，请检查网络或代理后重试。")
+        XCTAssertEqual(strings.quotaQueryFailure(URLError(.timedOut)), "额度查询超时，请稍后重试。")
+        XCTAssertEqual(strings.quotaQueryFailure(NSError(domain: "unknown", code: 1, userInfo: [NSLocalizedDescriptionKey: "private details"])), "额度刷新或保存失败，请重试。")
+        XCTAssertTrue(CodixxStrings(language: .english).quotaQueryFailure(tls).contains("Secure connection"))
+    }
+
     func testQuotaLabelsAndWarningsUseReportedDuration() {
         let strings = CodixxStrings(language: .chinese)
         XCTAssertEqual(strings.quotaWindowTitle(minutes: 10080), strings.weeklyQuota)
