@@ -222,7 +222,7 @@ final class AppState: ObservableObject, LifecycleStateManaging {
                 accounts = latest
                 if currentAccount?.id == account.id { currentAccount = latest[index] }
             } catch {
-                quotaQueryErrors[account.id] = error.localizedDescription
+                quotaQueryErrors[account.id] = strings.quotaQueryFailure(error)
             }
         }
     }
