@@ -386,6 +386,7 @@ final class PersistenceTests: XCTestCase {
         XCTAssertTrue(text.contains("[model_providers.codixx-relay]"))
         XCTAssertTrue(text.contains("base_url = \"https://relay.example.com/v1\""))
         XCTAssertTrue(text.contains("wire_api = \"responses\""))
+        XCTAssertTrue(text.contains("requires_openai_auth = true"))
         XCTAssertTrue(text.contains("[projects.\"/tmp/example\"]"))
     }
 

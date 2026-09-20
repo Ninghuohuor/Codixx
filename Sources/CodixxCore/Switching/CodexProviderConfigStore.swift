@@ -11,6 +11,10 @@ public struct CodexProviderConfigBackup: Equatable, Sendable {
 }
 
 public struct CodexProviderConfigStore {
+    /// Codixx 写入 `config.toml` 时统一使用的自定义 provider id。
+    /// Codex 保留了 `openai` 等内置 id，所以中转站一律用这个。
+    public static let managedProviderID = "openai-custom"
+
     public let paths: CodixxPaths
     private let fileManager: FileManager
 
@@ -62,6 +66,7 @@ public struct CodexProviderConfigStore {
         name = "\(escapeTOMLString(providerName))"
         base_url = "\(escapeTOMLString(baseURL.absoluteString))"
         wire_api = "responses"
+        requires_openai_auth = true
         # END CODIXX API PROVIDER
         """
 
@@ -85,6 +90,49 @@ public struct CodexProviderConfigStore {
             .trimmingCharacters(in: .newlines)
             .appending("\n")
             .write(to: paths.configTOML, atomically: true, encoding: .utf8)
+    }
+
+    /// `config.toml` 里是否还残留 Codixx 写入的托管 provider 块。
+    ///
+    /// 与 `isRoutingToManagedAPIProvider` 配合做健康检查：块还在、
+    /// 或者根级 `model_provider` 还指向托管 id，都说明状态没清干净。
+    public var hasManagedAPIProviderBlock: Bool {
+        guard let existing = try? String(contentsOf: paths.configTOML, encoding: .utf8) else {
+            return false
+        }
+        return managedProviderID(in: existing) != nil
+    }
+
+    /// 根级 `model_provider` 当前是否指向 Codixx 托管的自定义 provider。
+    ///
+    /// 健康检查用：当 `auth.json` 是 ChatGPT 凭据、而本属性为 `true` 时，
+    /// Codex 会把用户的 ChatGPT access token 当作 `Authorization: Bearer`
+    /// 发到托管 provider 的 `base_url` —— 这是个静默的凭据外发状态，必须提示修复。
+    public var isRoutingToManagedAPIProvider: Bool {
+        guard let existing = try? String(contentsOf: paths.configTOML, encoding: .utf8) else {
+            return false
+        }
+        return rootModelProviderID(in: existing) == Self.managedProviderID
+    }
+
+    private func rootModelProviderID(in text: String) -> String? {
+        let lines = text
+            .split(separator: "\n", omittingEmptySubsequences: false)
+            .map(String.init)
+        let firstTableIndex = lines.firstIndex { line in
+            line.trimmingCharacters(in: .whitespaces).hasPrefix("[")
+        } ?? lines.endIndex
+
+        for line in lines[..<firstTableIndex] {
+            let compact = line
+                .trimmingCharacters(in: .whitespaces)
+                .filter { !$0.isWhitespace }
+            guard compact.hasPrefix("model_provider=") else { continue }
+            return compact
+                .dropFirst("model_provider=".count)
+                .trimmingCharacters(in: CharacterSet(charactersIn: "\"'"))
+        }
+        return nil
     }
 
     private func removeManagedBlock(from text: String) -> String {
