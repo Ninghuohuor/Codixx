@@ -52,6 +52,8 @@ struct DashboardView: View {
                 scheduleTrendRefresh()
             }
         }
+        // Codixx 只做亮色，理由见 AppAppearancePolicy。
+        .preferredColorScheme(AppAppearancePolicy.pinnedColorScheme)
     }
 
     private func scheduleTrendRefresh() {

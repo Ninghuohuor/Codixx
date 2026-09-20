@@ -973,6 +973,7 @@ private final class AccountPanelController<Content: View> {
         panel.hidesOnDeactivate = false
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
         panel.delegate = delegateBox
+        AppAppearancePolicy.apply(to: panel)
     }
 
     func show(attachedTo parent: NSWindow?) {
@@ -1723,6 +1724,7 @@ private struct APIProviderCleanupBanner: View {
     }
 }
 
+@MainActor
 final class IconlessConfirmationDialog {
     static func run(
         title: String,
@@ -1742,6 +1744,9 @@ final class IconlessConfirmationDialog {
         window.hidesOnDeactivate = false
         window.becomesKeyOnlyIfNeeded = true
         window.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
+        // 这个弹窗是纯 AppKit（NSTextField / NSButton / .secondaryLabelColor），
+        // 全部靠窗口的 effectiveAppearance 解析，所以必须单独钉一次。
+        AppAppearancePolicy.apply(to: window)
         prepareForPresentation(window, parent: parent)
 
         let contentView = NSView(frame: window.contentView?.bounds ?? .zero)
