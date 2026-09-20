@@ -54,6 +54,34 @@ public struct AccountQuotaState: Codable, Equatable, Sendable {
         self.confidence = confidence
     }
 
+    public struct Window: Equatable, Sendable {
+        public var usedPercent: Double
+        public var minutes: Int?
+        public var resetsAt: Date?
+        public var isSecondary: Bool
+
+        public func threshold(short: Double, weekly: Double) -> Double {
+            // Older saved observations may lack the duration; retain their slot semantics.
+            if let minutes { return minutes >= 10_080 ? weekly : short }
+            return isSecondary ? weekly : short
+        }
+    }
+
+    public var reportedWindows: [Window] {
+        var windows: [Window] = []
+        if let used = primaryUsedPercent {
+            windows.append(Window(usedPercent: used, minutes: primaryWindowMinutes, resetsAt: primaryResetsAt, isSecondary: false))
+        }
+        if let used = secondaryUsedPercent {
+            windows.append(Window(usedPercent: used, minutes: secondaryWindowMinutes, resetsAt: secondaryResetsAt, isSecondary: true))
+        }
+        return windows
+    }
+
+    public func reachesThreshold(short: Double, weekly: Double) -> Bool {
+        reportedWindows.contains { $0.usedPercent >= $0.threshold(short: short, weekly: weekly) }
+    }
+
     public static func unknown(accountId: String, alias: String) -> AccountQuotaState {
         AccountQuotaState(
             accountId: accountId,
@@ -345,13 +373,7 @@ public struct CodixxAccount: Codable, Identifiable, Equatable, Sendable {
         }
         guard isChatGPT, hasSnapshot else { return false }
         guard quota.confidence == .fresh || quota.confidence == .recent,
-              let primaryUsedPercent = quota.primaryUsedPercent,
-              let secondaryUsedPercent = quota.secondaryUsedPercent
-        else {
-            return false
-        }
-        let primaryOK = primaryUsedPercent < primaryThresholdPercent
-        let secondaryOK = secondaryUsedPercent < secondaryThresholdPercent
-        return primaryOK && secondaryOK
+              !quota.reportedWindows.isEmpty else { return false }
+        return !quota.reachesThreshold(short: primaryThresholdPercent, weekly: secondaryThresholdPercent)
     }
 }

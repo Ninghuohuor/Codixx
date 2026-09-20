@@ -3,6 +3,19 @@ import XCTest
 import CodixxCore
 
 final class AccountSummaryMetricsTests: XCTestCase {
+    func testWeeklyOnlyAccountIsAvailableRatherThanUnknown() {
+        let now = Date()
+        var weekly = quota(alias: "Pro", primary: 25, secondary: 0, now: now)
+        weekly.primaryWindowMinutes = 10_080
+        weekly.secondaryUsedPercent = nil
+        weekly.secondaryWindowMinutes = nil
+        weekly.secondaryResetsAt = nil
+        let pro = account(alias: "Pro", quota: weekly, isEnabled: true, now: now)
+        let metrics = AccountSummaryMetrics(accounts: [pro])
+        XCTAssertEqual(metrics.available, 1)
+        XCTAssertEqual(metrics.unknown, 0)
+    }
+
     func testSummaryCountsFullOnlyWhenQuotaReachesOneHundredPercent() {
         let now = Date(timeIntervalSince1970: 1_778_000_000)
         let available = account(
