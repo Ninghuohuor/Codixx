@@ -53,7 +53,7 @@ struct DashboardView: View {
             }
         }
         // Codixx 只做亮色，理由见 AppAppearancePolicy。
-        .preferredColorScheme(AppAppearancePolicy.pinnedColorScheme)
+        .codixxAppearance()
     }
 
     private func scheduleTrendRefresh() {

@@ -47,8 +47,8 @@ final class AppAppearancePolicyTests: XCTestCase {
     ///
     /// 注意：不要在测试进程里创建 `NSWindow` 再读 `effectiveAppearance` ——
     /// 无窗口服务器时会 SIGSEGV。这里改用 `ImageRenderer` 直接渲染取样。
-    func testPreferredColorSchemeMakesSwiftUISemanticColorsResolveLight() throws {
-        // 深色环境下渲染，`preferredColorScheme` 必须把它掰回亮色
+    func testAppearanceOverridesInheritedDarkEnvironmentForSemanticColors() throws {
+        // 模拟宿主传入深色环境，实际内容必须仍按亮色解析。
         let dark = try XCTUnwrap(NSAppearance(named: .darkAqua))
         var sample: (r: Int, g: Int, b: Int)?
         dark.performAsCurrentDrawingAppearance {
@@ -58,7 +58,8 @@ final class AppAppearancePolicyTests: XCTestCase {
                     .foregroundStyle(.primary)
                     .frame(width: 60, height: 60)
                     .background(Color.white)
-                    .preferredColorScheme(AppAppearancePolicy.pinnedColorScheme)
+                    .codixxAppearance()
+                    .environment(\.colorScheme, .dark)
             )
             renderer.scale = 1
             guard let image = renderer.nsImage,

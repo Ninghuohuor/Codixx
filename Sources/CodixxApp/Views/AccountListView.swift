@@ -93,10 +93,26 @@ struct AccountListView: View {
     @ObservedObject var state: AppState
     @State private var addAccountPanel: AddAccountPanelController?
     @State private var editAccountPanel: EditAccountPanelController?
-    @State private var balanceMonitorPanel: BalanceMonitorPanelController?
+    @State private var balanceAccount: CodixxAccount?
     @State private var parentWindow: NSWindow?
 
     var body: some View {
+        ZStack {
+            accountList
+                .opacity(balanceAccount == nil ? 1 : 0)
+                .allowsHitTesting(balanceAccount == nil)
+                .accessibilityHidden(balanceAccount != nil)
+            if let account = balanceAccount {
+                BalanceMonitorPage(state: state, account: account) {
+                    balanceAccount = nil
+                }
+                .id(account.id)
+                .background(Color(nsColor: .windowBackgroundColor))
+            }
+        }
+    }
+
+    private var accountList: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 14) {
                 HStack {
@@ -176,7 +192,7 @@ struct AccountListView: View {
                     AccountRowsView(
                         state: state,
                         onEdit: showEditAccountPanel,
-                        onBalanceMonitor: showBalanceMonitorPanel,
+                        onBalanceMonitor: { balanceAccount = $0 },
                         parentWindow: presentationParentWindow
                     )
                 }
@@ -214,18 +230,6 @@ struct AccountListView: View {
             editAccountPanel = nil
         }
         editAccountPanel = panel
-        panel.show(attachedTo: presentationParentWindow)
-    }
-
-    private func showBalanceMonitorPanel(_ account: CodixxAccount) {
-        if let balanceMonitorPanel {
-            balanceMonitorPanel.close()
-            self.balanceMonitorPanel = nil
-        }
-        let panel = BalanceMonitorPanelController(state: state, account: account) {
-            balanceMonitorPanel = nil
-        }
-        balanceMonitorPanel = panel
         panel.show(attachedTo: presentationParentWindow)
     }
 
@@ -288,9 +292,9 @@ private struct AccountSummaryView: View {
     var body: some View {
         HStack(spacing: 6) {
             summaryPill(label: strings.accountSummaryTotal, value: metrics.total, tint: .secondary)
-            summaryPill(label: strings.accountSummaryAvailable, value: metrics.available, tint: .green)
-            summaryPill(label: strings.accountSummaryFull, value: metrics.full, tint: .red)
-            summaryPill(label: strings.accountSummaryUnknown, value: metrics.unknown, tint: .orange)
+            summaryPill(label: strings.accountSummaryAvailable, value: metrics.available, tint: Self.availableTint)
+            summaryPill(label: strings.accountSummaryFull, value: metrics.full, tint: Self.fullTint)
+            summaryPill(label: strings.accountSummaryUnknown, value: metrics.unknown, tint: Self.unknownTint)
             if metrics.disabled > 0 {
                 summaryPill(label: strings.accountSummaryDisabled, value: metrics.disabled, tint: .secondary)
             }
@@ -298,15 +302,25 @@ private struct AccountSummaryView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 
+    private static let availableTint = Color(red: 0.18, green: 0.48, blue: 0.32)
+    private static let fullTint = Color(red: 0.68, green: 0.28, blue: 0.30)
+    private static let unknownTint = Color(red: 0.64, green: 0.42, blue: 0.18)
+
     private func summaryPill(label: String, value: Int, tint: Color) -> some View {
-        Text("\(label) \(value)")
-            .font(.caption.weight(.medium))
-            .monospacedDigit()
-            .foregroundStyle(tint)
-            .padding(.horizontal, 8)
-            .padding(.vertical, 4)
-            .background(tint.opacity(0.10), in: Capsule())
-            .help("\(label) \(value)")
+        HStack(spacing: 4) {
+            Text(label)
+                .foregroundStyle(.secondary)
+            Text("\(value)")
+                .foregroundStyle(value > 0 ? tint : Color.secondary)
+        }
+        .font(.caption.weight(.medium))
+        .monospacedDigit()
+        .padding(.horizontal, 8)
+        .padding(.vertical, 4)
+        .background(tint.opacity(0.07), in: Capsule())
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("\(label) \(value)")
+        .help("\(label) \(value)")
     }
 }
 
@@ -776,7 +790,7 @@ private struct ConnectionTestStatus {
     }
 }
 
-private struct BalanceMonitorDialog: View {
+struct BalanceMonitorPage: View {
     @ObservedObject var state: AppState
     let account: CodixxAccount
     let onClose: () -> Void
@@ -787,11 +801,20 @@ private struct BalanceMonitorDialog: View {
     @State private var minimumBalanceText: String
     @State private var status: ConnectionTestStatus?
     @State private var isTesting = false
+    @State private var balanceToken = ""
+    @State private var initialConfig: APIBalanceQueryConfig?
+    @State private var confirmDiscard = false
+    @State private var divisorText: String
+    @State private var currencyCode: String
+    @State private var userID: String
 
     init(state: AppState, account: CodixxAccount, onClose: @escaping () -> Void) {
         self.state = state
         self.account = account
         self.onClose = onClose
+        _divisorText = State(initialValue: String(account.apiProvider?.balanceQuery?.divisor ?? 1))
+        _userID = State(initialValue: account.apiProvider?.balanceQuery?.userID ?? "")
+        _currencyCode = State(initialValue: account.apiProvider?.balanceQuery?.currencyCode ?? "")
         _isEnabled = State(initialValue: account.apiProvider?.balanceQuery?.isEnabled ?? false)
         _urlText = State(initialValue: account.apiProvider?.balanceQuery?.urlText ?? "")
         _jsonPath = State(initialValue: account.apiProvider?.balanceQuery?.jsonPath ?? "")
@@ -801,62 +824,99 @@ private struct BalanceMonitorDialog: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text(state.strings.apiBalanceSection)
-                .font(.headline)
+            HStack {
+                Button { requestBack() } label: {
+                    Label(state.strings.balanceBack, systemImage: "chevron.left")
+                }
+                Text(state.strings.apiBalanceSection).font(.headline)
+                Spacer()
+            }
             Text(account.alias)
                 .font(.caption2.weight(.medium))
                 .foregroundStyle(.secondary)
 
-            Toggle(state.strings.apiBalanceMonitoring, isOn: $isEnabled)
+            ScrollView {
+                VStack(alignment: .leading, spacing: 10) {
+                    Toggle(state.strings.apiBalanceMonitoring, isOn: $isEnabled)
 
-            Text(state.strings.balanceQueryHint)
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
-
-            accountTextField(state.strings.balanceQueryURL, required: false, text: $urlText)
-                .disabled(!isEnabled)
-
-            accountTextField(state.strings.minimumAPIBalance, required: false, text: $minimumBalanceText)
-                .disabled(!isEnabled)
-
-            VStack(alignment: .leading, spacing: 4) {
-                HStack {
-                    Text("\(state.strings.balanceRefreshInterval): \(state.strings.minutesInterval(Int(refreshIntervalMinutes.rounded())))")
-                        .font(.caption2.weight(.medium))
+                    Text(state.strings.balanceQueryHint)
+                        .font(.caption)
                         .foregroundStyle(.secondary)
-                    Spacer()
+                        .fixedSize(horizontal: false, vertical: true)
+
+                    accountTextField(state.strings.balanceQueryURL, required: true, text: $urlText)
+                        .disabled(!isEnabled)
+
+                    accountTextField(state.strings.balanceJSONPath, required: true, text: $jsonPath)
+                        .disabled(!isEnabled)
+
+                    Group {
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text(state.strings.optionalField(state.strings.balanceToken)).font(.caption.weight(.medium))
+                            SecureField(state.strings.balanceToken, text: $balanceToken)
+                                .textFieldStyle(.roundedBorder)
+                            Text(state.strings.balanceTokenHint).font(.caption).foregroundStyle(.secondary)
+                                .fixedSize(horizontal: false, vertical: true)
+                            if savedTokenActive {
+                                Text(state.strings.balanceTokenSaved).font(.caption).foregroundStyle(.secondary)
+                            }
+                        }
+                        .disabled(!isEnabled)
+                    }
+
+                    accountTextField(state.strings.balanceUserID, required: false, text: $userID)
+                        .disabled(!isEnabled)
+                    Text(state.strings.balanceUserIDHint)
+                        .font(.caption).foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+
+                    HStack {
+                        accountTextField(state.strings.balanceDivisor, required: true, text: $divisorText)
+                        accountTextField(state.strings.balanceCurrency, required: false, text: $currencyCode)
+                    }
+                    .disabled(!isEnabled)
+                    Text(state.strings.balanceUnitsHint)
+                        .font(.caption).foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+
+                    accountTextField(state.strings.minimumAPIBalance, required: false, text: $minimumBalanceText)
+                        .disabled(!isEnabled)
+
+                    VStack(alignment: .leading, spacing: 4) {
+                        HStack {
+                            Text("\(state.strings.balanceRefreshInterval): \(state.strings.minutesInterval(Int(refreshIntervalMinutes.rounded())))")
+                                .font(.caption2.weight(.medium))
+                                .foregroundStyle(.secondary)
+                            Spacer()
+                        }
+                        Slider(value: $refreshIntervalMinutes, in: 1...120, step: 1)
+                    }
+                    .disabled(!isEnabled)
+
+                    if let validationMessage {
+                        Label(validationMessage, systemImage: "info.circle")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+
+                    if let status {
+                        Label(status.message, systemImage: status.icon)
+                            .font(.caption)
+                            .foregroundStyle(status.color)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+
                 }
-                Slider(value: $refreshIntervalMinutes, in: 1...120, step: 1)
+                .padding(2)
+                .disabled(isTesting)
             }
-            .disabled(!isEnabled)
-
-            VStack(alignment: .leading, spacing: 4) {
-                Text(state.strings.balanceJSONPath)
-                    .font(.caption2.weight(.medium))
-                    .foregroundStyle(.secondary)
-                TextEditor(text: $jsonPath)
-                    .font(.system(size: 12, design: .monospaced))
-                    .frame(minHeight: 92)
-                    .padding(4)
-                    .background(Color(nsColor: .textBackgroundColor), in: RoundedRectangle(cornerRadius: 6))
-            }
-            .disabled(!isEnabled)
-
-            if let status {
-                Label(status.message, systemImage: status.icon)
-                    .font(.caption)
-                    .foregroundStyle(status.color)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
+            .frame(minHeight: 180, maxHeight: .infinity)
 
             Divider()
                 .padding(.top, 4)
 
             HStack {
-                Button(state.strings.cancel) {
-                    onClose()
-                }
                 Spacer()
                 Button {
                     testBalanceQuery()
@@ -872,29 +932,56 @@ private struct BalanceMonitorDialog: View {
                 } label: {
                     Label(state.strings.save, systemImage: "checkmark")
                 }
+                .disabled(isTesting || validationMessage != nil)
                 .buttonStyle(.borderedProminent)
                 .keyboardShortcut(.defaultAction)
             }
         }
         .padding(18)
-        .frame(width: 420)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .onAppear { if initialConfig == nil { initialConfig = config } }
+        .confirmationDialog(state.strings.balanceDiscardTitle, isPresented: $confirmDiscard) {
+            Button(state.strings.balanceDiscard, role: .destructive) { onClose() }
+            Button(state.strings.cancel, role: .cancel) {}
+        }
     }
 
-    private var isCCSwitchConfig: Bool {
-        jsonPath.contains("request:") || jsonPath.contains("extractor:")
+    private var savedTokenActive: Bool {
+        account.apiProvider?.balanceQuery?.authenticationMode == .accessToken
+            && account.apiProvider?.balanceQuery?.credentialFingerprint != nil
+    }
+
+    private func requestBack() {
+        if config != initialConfig || !balanceToken.isEmpty {
+            confirmDiscard = true
+        } else {
+            onClose()
+        }
+    }
+
+    private var validationMessage: String? {
+        guard isEnabled else { return nil }
+        if urlText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return state.strings.balanceQueryURLRequired
+        }
+        if jsonPath.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return state.strings.balanceJSONPathRequired
+        }
+        guard let divisor = Double(divisorText), divisor.isFinite, divisor > 0 else {
+            return state.strings.balanceDivisorInvalid
+        }
+        return nil
     }
 
     private var canTest: Bool {
-        isEnabled &&
-            !jsonPath.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty &&
-            (isCCSwitchConfig || !urlText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+        isEnabled && validationMessage == nil
     }
 
     private func testBalanceQuery() {
         isTesting = true
         status = .info(state.strings.testingBalanceQuery)
         Task {
-            let result = await state.testAPIBalanceQuery(account: account, config: config)
+            let result = await state.testAPIBalanceQuery(account: account, config: config, token: balanceToken)
             await MainActor.run {
                 isTesting = false
                 status = result.isSuccess ? .success(result.message) : .failure(result.message)
@@ -903,15 +990,16 @@ private struct BalanceMonitorDialog: View {
     }
 
     private func save() {
-        state.updateAPIProviderAccount(
-            account,
-            alias: account.alias,
-            baseURLText: account.apiProvider?.baseURL.absoluteString ?? "",
-            apiKey: state.maskedAPIKey(for: account) ?? "",
-            defaultModel: account.apiProvider?.defaultModel ?? "",
-            balanceQuery: config
-        )
-        guard state.errorMessage == nil else { return }
+        guard validationMessage == nil else { return }
+        do {
+            try state.saveBalanceMonitoring(account: account, config: config, token: balanceToken)
+        } catch {
+            status = .failure(error.localizedDescription)
+            return
+        }
+        if let saved = state.accounts.first(where: { $0.id == account.id }), isEnabled {
+            Task { _ = await state.refreshAPIBalance(for: saved) }
+        }
         onClose()
     }
 
@@ -924,7 +1012,12 @@ private struct BalanceMonitorDialog: View {
             refreshIntervalSeconds: max(60, refreshIntervalMinutes.rounded() * 60),
             minimumBalance: minimumBalance,
             lastBalanceText: existing?.lastBalanceText,
-            lastRefreshedAt: existing?.lastRefreshedAt
+            lastRefreshedAt: existing?.lastRefreshedAt,
+            credentialFingerprint: savedTokenActive ? existing?.credentialFingerprint : nil,
+            divisor: Double(divisorText) ?? 1,
+            currencyCode: currencyCode.trimmingCharacters(in: .whitespacesAndNewlines),
+            authenticationMode: (savedTokenActive || !balanceToken.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty) ? .accessToken : .modelAPIKey,
+            userID: userID.trimmingCharacters(in: .whitespacesAndNewlines)
         )
     }
 
@@ -960,7 +1053,8 @@ private final class AccountPanelController<Content: View> {
     init(title: String, rootView: Content, onClose: @escaping () -> Void) {
         self.onClose = onClose
         self.delegateBox = PanelDelegateBox(onClose: onClose)
-        let hostingController = NSHostingController(rootView: rootView)
+        let hostingController = NSHostingController(rootView: rootView.codixxAppearance())
+        AppAppearancePolicy.apply(to: hostingController.view)
         self.panel = NSPanel(
             contentRect: NSRect(x: 0, y: 0, width: 420, height: 280),
             styleMask: [.titled, .closable, .nonactivatingPanel],
@@ -1028,37 +1122,6 @@ private final class EditAccountPanelController {
         self.controller = AccountPanelController(
             title: state.strings.editAccount,
             rootView: EditAccountDialog(
-                state: state,
-                account: account,
-                onClose: closePanel
-            ),
-            onClose: onClose
-        )
-        controller = self.controller
-    }
-
-    func show(attachedTo parent: NSWindow?) {
-        controller.show(attachedTo: parent)
-    }
-
-    func close() {
-        controller.close()
-    }
-}
-
-@MainActor
-private final class BalanceMonitorPanelController {
-    private let controller: AccountPanelController<BalanceMonitorDialog>
-
-    init(state: AppState, account: CodixxAccount, onClose: @escaping () -> Void) {
-        var controller: AccountPanelController<BalanceMonitorDialog>?
-        let closePanel = {
-            controller?.close()
-            return
-        }
-        self.controller = AccountPanelController(
-            title: state.strings.apiBalanceSection,
-            rootView: BalanceMonitorDialog(
                 state: state,
                 account: account,
                 onClose: closePanel
@@ -1590,7 +1653,7 @@ private struct AccountRowsView: View {
         else {
             return state.strings.currentBalanceUnavailable
         }
-        return state.strings.currentBalance(balance)
+        return state.strings.currentBalance(balance + ((account.apiProvider?.balanceQuery?.currencyCode.isEmpty == false) ? " " + (account.apiProvider?.balanceQuery?.currencyCode ?? "") : ""))
     }
 
     private func refreshBalance(for account: CodixxAccount) {

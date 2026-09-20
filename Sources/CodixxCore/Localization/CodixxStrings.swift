@@ -50,15 +50,36 @@ public struct CodixxStrings: Sendable {
     public var minimumAPIBalance: String { text(en: "Minimum usable balance", zh: "最低可用余额") }
     public var testBalanceQuery: String { text(en: "Test balance query", zh: "测试余额查询") }
     public var testingBalanceQuery: String { text(en: "Testing balance...", zh: "正在测试余额...") }
+    public var balanceQueryURLRequired: String { text(en: "Enter the balance query URL to test or save monitoring.", zh: "请填写余额查询 URL，才能测试或保存监测配置。") }
+    public var balanceJSONPathRequired: String { text(en: "Enter the balance JSON field path to test or save monitoring.", zh: "请填写余额 JSON 字段路径，才能测试或保存监测配置。") }
     public var noAPIAccountForBalance: String { text(en: "No API account available for balance query", zh: "暂无可用于余额查询的 API 账号") }
     public var currentBalanceUnavailable: String { text(en: "Current balance: --", zh: "当前余额：--") }
     public func currentBalance(_ balance: String) -> String {
         text(en: "Current balance: \(balance)", zh: "当前余额：\(balance)")
     }
+    public var balanceAuthentication: String { text(en: "Query authentication", zh: "查询方式") }
+    public var balanceUseAPIKey: String { text(en: "Model API Key", zh: "模型 API Key") }
+    public var balanceUseAccessToken: String { text(en: "System access token", zh: "系统访问令牌") }
+    public var balanceAPIKeyHint: String { text(en: "Uses this account’s model API key. Enter the provider’s balance URL and JSON field path below.", zh: "使用当前账号的模型 API Key，填写服务商提供的余额接口和 JSON 字段路径。") }
+    public var balanceTokenRequired: String { text(en: "Enter a system access token for this query mode.", zh: "此查询方式需要填写系统访问令牌。") }
+    public var balanceUserID: String { text(en: "Account ID (New-Api-User)", zh: "账号 ID（New-Api-User）") }
+    public var balanceUserIDHint: String { text(en: "Required by some providers alongside the access token. Enter your numeric account ID from the provider; this is not your username.", zh: "部分服务商要求同时提供此项。填写服务商分配的数字账号 ID，不是昵称。") }
+    public var balanceBack: String { text(en: "Back", zh: "返回") }
+    public var balanceDiscardTitle: String { text(en: "Discard unsaved changes?", zh: "放弃未保存的修改？") }
+    public var balanceDiscard: String { text(en: "Discard and go back", zh: "放弃修改并返回") }
+    public var balanceToken: String { text(en: "Balance access token", zh: "余额查询访问令牌") }
+    public var balanceTokenHint: String { text(en: "Optional. Uses the model API Key by default. Enter a separate token if required; leave blank to keep a saved token or enter a new one to replace it. Stored in Keychain.", zh: "默认使用模型 API Key；服务商要求独立令牌时填写。已保存令牌时留空保留，填写新令牌可替换。") }
+    public var balanceTokenSaved: String { text(en: "Separate balance token saved", zh: "已保存独立余额查询令牌") }
+    public var balanceDivisor: String { text(en: "Divide returned amount by", zh: "返回额度除以") }
+    public var balanceCurrency: String { text(en: "Currency label", zh: "货币标识") }
+    public var balanceDivisorInvalid: String { text(en: "The divisor must be a finite number greater than zero.", zh: "换算除数必须是大于零的有效数字。") }
+    public var balanceNotNumeric: String { text(en: "The balance field is not a valid number.", zh: "余额字段不是有效数字。") }
+    public var balanceConfigChanged: String { text(en: "Balance settings changed; refresh again.", zh: "余额配置已更改，请重新刷新。") }
+    public var balanceUnitsHint: String { text(en: "Displayed balance and minimum balance use the converted amount. Use divisor 1 for no conversion.", zh: "显示余额和最低可用余额均按换算后的金额计算。不需换算时填 1。") }
     public var balanceQueryHint: String {
         text(
-            en: "Uses the current API account key with GET and Authorization: Bearer. Example JSON path: data.balance.",
-            zh: "使用当前 API 账号密钥，以 GET 和 Authorization: Bearer 查询。示例字段路径：data.balance。"
+            en: "When monitoring is enabled, both fields are required: a balance endpoint URL that returns JSON (not a console page) and a balance field path, such as data.balance. Codixx uses the balance access token when provided.",
+            zh: "启用监测后，必须填写返回 JSON 的余额接口 URL（不是控制台网页地址）和余额字段路径，例如 data.balance。可使用独立的访问令牌查询账户余额。"
         )
     }
     public func requiredField(_ label: String) -> String {

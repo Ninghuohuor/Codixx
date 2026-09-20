@@ -13,7 +13,7 @@ public struct APIBalanceQueryResult: Equatable, Sendable {
 }
 
 public protocol APIBalanceQueryTesting: Sendable {
-    func queryBalance(url: URL, apiKey: String, jsonPath: String) async -> APIBalanceQueryResult
+    func queryBalance(url: URL, apiKey: String, jsonPath: String, userID: String) async -> APIBalanceQueryResult
 }
 
 public struct APIBalanceQueryTester: APIBalanceQueryTesting {
@@ -25,7 +25,7 @@ public struct APIBalanceQueryTester: APIBalanceQueryTesting {
         self.timeout = timeout
     }
 
-    public func queryBalance(url: URL, apiKey: String, jsonPath: String) async -> APIBalanceQueryResult {
+    public func queryBalance(url: URL, apiKey: String, jsonPath: String, userID: String = "") async -> APIBalanceQueryResult {
         let trimmedPath = jsonPath.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedPath.isEmpty else {
             return APIBalanceQueryResult(isSuccess: false, message: "JSON field path is required")
@@ -40,6 +40,13 @@ public struct APIBalanceQueryTester: APIBalanceQueryTesting {
         request.httpMethod = "GET"
         request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
         request.setValue("application/json", forHTTPHeaderField: "Accept")
+        let userID = userID.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !userID.isEmpty {
+            guard userID.allSatisfy({ $0.isASCII && $0.isNumber }) else {
+                return APIBalanceQueryResult(isSuccess: false, message: "New-Api-User must be a numeric account ID")
+            }
+            request.setValue(userID, forHTTPHeaderField: "New-Api-User")
+        }
         requestSpec.headers.forEach { key, value in
             request.setValue(value, forHTTPHeaderField: key)
         }
@@ -50,6 +57,11 @@ public struct APIBalanceQueryTester: APIBalanceQueryTesting {
                 return APIBalanceQueryResult(isSuccess: false, message: "Invalid response")
             }
             guard (200...299).contains(httpResponse.statusCode) else {
+                let payload = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
+                let serverMessage = payload?["message"] as? String ?? ""
+                if serverMessage.lowercased().contains("new-api-user") {
+                    return APIBalanceQueryResult(isSuccess: false, message: "HTTP \(httpResponse.statusCode): 请填写或检查账号 ID（New-Api-User）。 / Check the account ID (New-Api-User).")
+                }
                 return APIBalanceQueryResult(isSuccess: false, message: "Balance query failed: HTTP \(httpResponse.statusCode)")
             }
             guard let json = try? JSONSerialization.jsonObject(with: data),

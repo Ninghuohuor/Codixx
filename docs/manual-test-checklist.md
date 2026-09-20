@@ -67,6 +67,10 @@ Use a temporary macOS user profile or a disposable `HOME` when possible. Never u
 
 ## Packaging
 
+- [ ] With macOS in Dark appearance, open Accounts, Trends, and Settings; Codixx stays light with readable labels, buttons, and an opaque background.
+- [ ] Open Add Account, Edit Account, and a cancelable confirmation; their fields and native buttons use the same light appearance as the main popover.
+- [ ] Switch macOS between Light and Dark while Codixx is open; verify foreground/background colors remain consistent. Repeat with Increase Contrast enabled.
+
 - [ ] Run `bash scripts/package_app.sh`.
 - [ ] Confirm `build/Codixx.app/Contents/MacOS/Codixx` exists and is executable.
 - [ ] Confirm `build/Codixx.app/Contents/Info.plist` includes `LSUIElement=true`.
