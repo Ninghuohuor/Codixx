@@ -790,23 +790,53 @@ final class AppState: ObservableObject, LifecycleStateManaging {
         return result
     }
 
-    func testAPIBalanceQuery(account: CodixxAccount, config balanceQuery: APIBalanceQueryConfig) async -> APIBalanceQueryResult {
-        guard let url = URL(string: balanceQuery.urlText),
-              url.scheme?.hasPrefix("http") == true
-        else {
+    func saveBalanceMonitoring(account: CodixxAccount, config: APIBalanceQueryConfig, token: String) throws {
+        var updated = config
+        let token = token.trimmingCharacters(in: .whitespacesAndNewlines)
+        if updated.authenticationMode == .accessToken, !token.isEmpty {
+            let fingerprint = "balance:" + APIKeyFingerprint.generate(apiKey: token)
+            try apiKeyVault.save(apiKey: token, fingerprint: fingerprint)
+            updated.credentialFingerprint = fingerprint
+        }
+        if updated.isEnabled, updated.authenticationMode == .accessToken, updated.credentialFingerprint == nil {
+            throw NSError(domain: "Codixx.Balance", code: 1, userInfo: [NSLocalizedDescriptionKey: strings.balanceTokenRequired])
+        }
+        if updated.authenticationMode == .modelAPIKey { updated.credentialFingerprint = nil }
+        updated.lastBalanceText = nil
+        updated.lastRefreshedAt = nil
+        let saved = try accountStore.updateAPIBalanceQuery(account.id, balanceQuery: updated)
+        if let index = accounts.firstIndex(where: { $0.id == saved.id }) { accounts[index] = saved }
+        if currentAccount?.id == saved.id { currentAccount = saved }
+        if let previous = account.apiProvider?.balanceQuery?.credentialFingerprint,
+           previous != updated.credentialFingerprint,
+           !accounts.contains(where: { $0.apiProvider?.balanceQuery?.credentialFingerprint == previous }) {
+            try? apiKeyVault.delete(fingerprint: previous)
+        }
+    }
+
+    func testAPIBalanceQuery(account: CodixxAccount, config balanceQuery: APIBalanceQueryConfig, token: String = "") async -> APIBalanceQueryResult {
+        guard let url = URL(string: balanceQuery.urlText.trimmingCharacters(in: .whitespacesAndNewlines)),
+              ["https", "http"].contains(url.scheme?.lowercased() ?? ""), url.host != nil else {
             return APIBalanceQueryResult(isSuccess: false, message: strings.invalidBaseURL)
         }
-        guard let fingerprint = account.apiProvider?.keyFingerprint,
-              let apiKey = try? apiKeyVault.load(fingerprint: fingerprint)
-        else {
+        guard balanceQuery.divisor.isFinite, balanceQuery.divisor > 0 else {
+            return APIBalanceQueryResult(isSuccess: false, message: strings.balanceDivisorInvalid)
+        }
+        let enteredToken = balanceQuery.authenticationMode == .accessToken ? token.trimmingCharacters(in: .whitespacesAndNewlines) : ""
+        let fingerprint = balanceQuery.authenticationMode == .accessToken ? balanceQuery.credentialFingerprint : account.apiProvider?.keyFingerprint
+        guard let apiKey = enteredToken.isEmpty ? fingerprint.flatMap({ try? apiKeyVault.load(fingerprint: $0) }) : enteredToken else {
             return APIBalanceQueryResult(isSuccess: false, message: strings.noAPIAccountForBalance)
         }
-        let result = await balanceQueryTester.queryBalance(
-            url: url,
-            apiKey: apiKey,
-            jsonPath: balanceQuery.jsonPath
-        )
-        return result
+        let result = await balanceQueryTester.queryBalance(url: url, apiKey: apiKey, jsonPath: balanceQuery.jsonPath, userID: balanceQuery.userID)
+        guard result.isSuccess else { return result }
+        guard let raw = result.balanceText, let number = Double(raw), number.isFinite,
+              (number / balanceQuery.divisor).isFinite else {
+            return APIBalanceQueryResult(isSuccess: false, message: strings.balanceNotNumeric)
+        }
+        let formatted = String(format: "%.8f", locale: Locale(identifier: "en_US_POSIX"), number / balanceQuery.divisor)
+            .replacingOccurrences(of: "0+$", with: "", options: .regularExpression)
+            .replacingOccurrences(of: "\\.$", with: "", options: .regularExpression)
+        return APIBalanceQueryResult(isSuccess: true, message: strings.currentBalance(formatted + " " + balanceQuery.currencyCode), balanceText: formatted)
     }
 
     @discardableResult
@@ -816,6 +846,11 @@ final class AppState: ObservableObject, LifecycleStateManaging {
         }
 
         let result = await testAPIBalanceQuery(account: account, config: balanceQuery)
+        // A query started before the user changed credentials/units must not
+        // restore the old configuration or publish a value in the old units.
+        guard accounts.first(where: { $0.id == account.id })?.apiProvider?.balanceQuery == balanceQuery else {
+            return APIBalanceQueryResult(isSuccess: false, message: strings.balanceConfigChanged)
+        }
         guard result.isSuccess else {
             recordAppLog(
                 kind: .apiBalanceRefreshFailed,

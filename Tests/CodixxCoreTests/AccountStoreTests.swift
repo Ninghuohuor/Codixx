@@ -3,6 +3,19 @@ import XCTest
 @testable import CodixxCore
 
 final class AccountStoreTests: XCTestCase {
+    func testBalanceAuthenticationMigratesAndRoundTrips() throws {
+        let legacy = #"{"isEnabled":true,"urlText":"https://relay.example/balance","jsonPath":"data.balance"}"#
+        let decoder = JSONDecoder()
+        XCTAssertEqual(try decoder.decode(APIBalanceQueryConfig.self, from: Data(legacy.utf8)).authenticationMode, .modelAPIKey)
+        let withToken = legacy.dropLast() + #", "credentialFingerprint":"balance:example"}"#
+        var config = try decoder.decode(APIBalanceQueryConfig.self, from: Data(withToken.utf8))
+        XCTAssertEqual(config.authenticationMode, .accessToken)
+        config.authenticationMode = .modelAPIKey
+        let restored = try decoder.decode(APIBalanceQueryConfig.self, from: JSONEncoder().encode(config))
+        XCTAssertEqual(restored.authenticationMode, .modelAPIKey)
+        XCTAssertEqual(restored.credentialFingerprint, "balance:example")
+    }
+
     func testAuthSnapshotCanRepresentAPIKeyLogin() throws {
         let snapshot = try AuthSnapshot.apiKey("sk-test-123")
 

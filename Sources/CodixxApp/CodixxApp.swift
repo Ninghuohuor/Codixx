@@ -56,7 +56,9 @@ private final class StatusItemController: NSObject, NSPopoverDelegate {
 
         popover.behavior = .transient
         popover.contentSize = DashboardLayout.popoverContentSize
-        popover.contentViewController = NSHostingController(rootView: DashboardView(state: state))
+        let hostingController = NSHostingController(rootView: DashboardView(state: state))
+        AppAppearancePolicy.apply(to: hostingController.view)
+        popover.contentViewController = hostingController
         popover.delegate = self
         AppAppearancePolicy.apply(to: popover)
 

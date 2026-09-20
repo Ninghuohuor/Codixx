@@ -519,6 +519,76 @@ final class AppStateTrendRefreshTests: XCTestCase {
         XCTAssertEqual(balanceTester.callCount, 1)
     }
 
+    func testIndependentBalanceTokenConvertsQuotaWithoutReplacingModelKey() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let apiKeyVault = InMemoryAPIKeyVault()
+        let balanceTester = APIBalanceQueryTesterSpy(result: APIBalanceQueryResult(isSuccess: true, message: "Balance: 12.34", balanceText: "6170000"))
+        let observedAt = Date(timeIntervalSince1970: 1_778_300_000)
+        let state = AppState(
+            paths: CodixxPaths(home: directory),
+            vault: InMemoryVault(),
+            apiKeyVault: apiKeyVault,
+            codexDesktopState: NoopCodexDesktopStateCleaner(),
+            codexDesktopManager: CodexDesktopManagerSpy(),
+            balanceQueryTester: balanceTester,
+            now: { observedAt }
+        )
+        state.saveAPIProviderAccount(
+            alias: "Relay",
+            baseURLText: "https://relay.example.com/v1",
+            apiKey: "sk-test-123",
+            defaultModel: ""
+        )
+        let account = try XCTUnwrap(state.accounts.first)
+        let config = APIBalanceQueryConfig(
+            isEnabled: true,
+            urlText: "https://relay.example.com/balance",
+            jsonPath: "data.balance",
+            refreshIntervalSeconds: 600, divisor: 500000, currencyCode: "USD", authenticationMode: .accessToken
+        )
+        try state.saveBalanceMonitoring(account: account, config: config, token: "system-token")
+        let saved = try XCTUnwrap(state.accounts.first)
+        XCTAssertEqual(try apiKeyVault.load(fingerprint: saved.apiProvider!.keyFingerprint), "sk-test-123")
+        let encoded = String(data: try JSONEncoder().encode(saved), encoding: .utf8)!
+        XCTAssertFalse(encoded.contains("system-token"))
+
+        let result = await state.refreshAPIBalance(for: try XCTUnwrap(state.accounts.first))
+
+        XCTAssertTrue(result.isSuccess)
+        XCTAssertEqual(state.accounts.first?.apiProvider?.balanceQuery?.lastBalanceText, "12.34")
+        XCTAssertEqual(state.accounts.first?.apiProvider?.balanceQuery?.lastRefreshedAt, observedAt)
+        XCTAssertEqual(balanceTester.callCount, 1)
+        XCTAssertEqual(balanceTester.lastAPIKey, "system-token")
+        var modelConfig = saved.apiProvider!.balanceQuery!
+        modelConfig.authenticationMode = .modelAPIKey
+        let modelResult = await state.testAPIBalanceQuery(account: saved, config: modelConfig, token: "ignored-token")
+        XCTAssertTrue(modelResult.isSuccess)
+        XCTAssertEqual(balanceTester.lastAPIKey, "sk-test-123")
+        var missingTokenConfig = modelConfig
+        missingTokenConfig.authenticationMode = .accessToken
+        missingTokenConfig.credentialFingerprint = nil
+        let missing = await state.testAPIBalanceQuery(account: saved, config: missingTokenConfig)
+        XCTAssertFalse(missing.isSuccess)
+        XCTAssertEqual(balanceTester.callCount, 2)
+
+        XCTAssertEqual(state.accounts.first?.apiProvider?.balanceQuery?.parsedLastBalance, 12.34)
+        XCTAssertFalse(state.accounts.first!.apiProvider!.balanceQuery!.isBalanceDepleted)
+        var invalid = config
+        invalid.divisor = 0
+        let failed = await state.testAPIBalanceQuery(account: saved, config: invalid)
+        XCTAssertFalse(failed.isSuccess)
+        XCTAssertEqual(balanceTester.callCount, 2)
+        try state.saveBalanceMonitoring(account: saved, config: modelConfig, token: "")
+        let reset = try XCTUnwrap(state.accounts.first)
+        XCTAssertNil(reset.apiProvider?.balanceQuery?.credentialFingerprint)
+        XCTAssertEqual(reset.apiProvider?.balanceQuery?.authenticationMode, .modelAPIKey)
+        let resetResult = await state.refreshAPIBalance(for: reset)
+        XCTAssertTrue(resetResult.isSuccess)
+        XCTAssertEqual(balanceTester.lastAPIKey, "sk-test-123")
+
+    }
+
     func testAutomaticAPIBalanceRefreshSkipsAccountsBeforeInterval() async throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
         defer { try? FileManager.default.removeItem(at: directory) }
@@ -1496,13 +1566,15 @@ private final class InMemoryAPIKeyVault: APIKeyVault {
 private final class APIBalanceQueryTesterSpy: APIBalanceQueryTesting, @unchecked Sendable {
     let result: APIBalanceQueryResult
     private(set) var callCount = 0
+    private(set) var lastAPIKey: String?
 
     init(result: APIBalanceQueryResult) {
         self.result = result
     }
 
-    func queryBalance(url: URL, apiKey: String, jsonPath: String) async -> APIBalanceQueryResult {
+    func queryBalance(url: URL, apiKey: String, jsonPath: String, userID: String) async -> APIBalanceQueryResult {
         callCount += 1
+        lastAPIKey = apiKey
         return result
     }
 }

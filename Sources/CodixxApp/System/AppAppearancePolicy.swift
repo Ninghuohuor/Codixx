@@ -47,3 +47,14 @@ enum AppAppearancePolicy {
         target?.appearance = pinnedAppearance
     }
 }
+
+extension View {
+    /// AppKit hosting boundaries do not necessarily consume SwiftUI presentation
+    /// preferences. Set the environment as well, including for standalone panels.
+    func codixxAppearance() -> some View {
+        self
+            .background(Color(nsColor: .windowBackgroundColor))
+            .environment(\.colorScheme, AppAppearancePolicy.pinnedColorScheme)
+            .preferredColorScheme(AppAppearancePolicy.pinnedColorScheme)
+    }
+}

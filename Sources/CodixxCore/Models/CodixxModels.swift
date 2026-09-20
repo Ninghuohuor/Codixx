@@ -114,8 +114,14 @@ public enum CredentialKind: String, Codable, Equatable, Hashable, Sendable {
     case apiProvider
 }
 
+public enum BalanceAuthenticationMode: String, Codable, Sendable {
+    case modelAPIKey
+    case accessToken
+}
+
 public struct APIBalanceQueryConfig: Codable, Equatable, Sendable {
     private enum CodingKeys: String, CodingKey {
+        case credentialFingerprint, divisor, currencyCode, authenticationMode, userID
         case isEnabled
         case urlText
         case jsonPath
@@ -125,6 +131,11 @@ public struct APIBalanceQueryConfig: Codable, Equatable, Sendable {
         case lastRefreshedAt
     }
 
+    public var authenticationMode: BalanceAuthenticationMode
+    public var userID: String
+    public var credentialFingerprint: String?
+    public var divisor: Double
+    public var currencyCode: String
     public var isEnabled: Bool
     public var urlText: String
     public var jsonPath: String
@@ -140,8 +151,18 @@ public struct APIBalanceQueryConfig: Codable, Equatable, Sendable {
         refreshIntervalSeconds: TimeInterval = 900,
         minimumBalance: Double = 0,
         lastBalanceText: String? = nil,
-        lastRefreshedAt: Date? = nil
+        lastRefreshedAt: Date? = nil,
+        credentialFingerprint: String? = nil,
+        divisor: Double = 1,
+        currencyCode: String = "",
+        authenticationMode: BalanceAuthenticationMode? = nil,
+        userID: String = ""
     ) {
+        self.authenticationMode = authenticationMode ?? (credentialFingerprint == nil ? .modelAPIKey : .accessToken)
+        self.userID = userID
+        self.credentialFingerprint = credentialFingerprint
+        self.divisor = divisor
+        self.currencyCode = currencyCode
         self.isEnabled = isEnabled
         self.urlText = urlText
         self.jsonPath = jsonPath
@@ -153,6 +174,11 @@ public struct APIBalanceQueryConfig: Codable, Equatable, Sendable {
 
     public init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.userID = try container.decodeIfPresent(String.self, forKey: .userID) ?? ""
+        self.credentialFingerprint = try container.decodeIfPresent(String.self, forKey: .credentialFingerprint)
+        self.authenticationMode = try container.decodeIfPresent(BalanceAuthenticationMode.self, forKey: .authenticationMode) ?? (credentialFingerprint == nil ? .modelAPIKey : .accessToken)
+        self.divisor = try container.decodeIfPresent(Double.self, forKey: .divisor) ?? 1
+        self.currencyCode = try container.decodeIfPresent(String.self, forKey: .currencyCode) ?? ""
         self.isEnabled = try container.decode(Bool.self, forKey: .isEnabled)
         self.urlText = try container.decode(String.self, forKey: .urlText)
         self.jsonPath = try container.decode(String.self, forKey: .jsonPath)
