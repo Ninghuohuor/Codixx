@@ -10,6 +10,9 @@ struct CodixxApp: App {
     private let statusItemController: StatusItemController
 
     init() {
+        // 必须在任何界面创建之前钉住外观，否则 popover 会先用系统外观建好。
+        AppAppearancePolicy.apply()
+
         let appState = AppState()
         let coordinator = AppLifecycleCoordinator(state: appState)
         self.singleInstanceGuard = SingleInstanceGuard.acquire(paths: appState.paths)
@@ -55,6 +58,7 @@ private final class StatusItemController: NSObject, NSPopoverDelegate {
         popover.contentSize = DashboardLayout.popoverContentSize
         popover.contentViewController = NSHostingController(rootView: DashboardView(state: state))
         popover.delegate = self
+        AppAppearancePolicy.apply(to: popover)
 
         if let button = statusItem.button {
             button.imagePosition = .imageOnly
