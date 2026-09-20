@@ -52,6 +52,7 @@ final class AppState: ObservableObject, LifecycleStateManaging {
     @Published var errorMessage: String?
 
     let paths: CodixxPaths
+    let resetForecastStore: ResetForecastStore
 
     private let configStore: CodixxConfigStore
     private let metadataStore: AccountMetadataStore
@@ -96,6 +97,7 @@ final class AppState: ObservableObject, LifecycleStateManaging {
         now: @escaping () -> Date = Date.init
     ) {
         self.paths = paths
+        self.resetForecastStore = ResetForecastStore(directory: paths.applicationSupport)
         self.vault = vault
         self.apiKeyVault = apiKeyVault
         self.codexDesktopManager = codexDesktopManager ?? SystemCodexDesktopManager()
@@ -232,6 +234,7 @@ final class AppState: ObservableObject, LifecycleStateManaging {
     }
 
     func refreshNow() {
+        resetForecastStore.refresh()
         defer { refreshDueChatGPTQuotas(force: true) }
         refresh(
             applyRateLimitObservations: true,
@@ -242,6 +245,7 @@ final class AppState: ObservableObject, LifecycleStateManaging {
     }
 
     func refreshQuotaNow() {
+        resetForecastStore.refresh()
         refreshQuotaPipeline(
             allowAutoSwitch: true,
             preservingError: nil,

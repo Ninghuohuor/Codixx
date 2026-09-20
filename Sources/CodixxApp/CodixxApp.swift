@@ -26,6 +26,7 @@ struct CodixxApp: App {
             }
         } else {
             coordinator.start()
+            appState.resetForecastStore.startMonitoring()
         }
     }
 
