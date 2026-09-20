@@ -1589,6 +1589,20 @@ private struct AccountRowsView: View {
 
     private func quotaProgressRows(for account: CodixxAccount) -> some View {
         VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                if let error = state.quotaQueryErrors[account.id] {
+                    Text(error).font(.caption).foregroundStyle(.orange).fixedSize(horizontal: false, vertical: true)
+                }
+                Spacer()
+                Button {
+                    state.refreshChatGPTQuota(for: account)
+                } label: {
+                    Label(state.queryingQuotaAccounts.contains(account.id) ? "查询中…" : "刷新额度", systemImage: "arrow.clockwise")
+                }
+                .font(.caption)
+                .buttonStyle(.borderless)
+                .disabled(state.queryingQuotaAccounts.contains(account.id))
+            }
             if account.quota.primaryUsedPercent == nil && account.quota.secondaryUsedPercent == nil {
                 Text(state.strings.quotaNotReported)
                     .font(.caption)

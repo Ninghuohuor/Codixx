@@ -28,6 +28,9 @@ final class AppState: ObservableObject, LifecycleStateManaging {
     @Published private(set) var accounts: [CodixxAccount] = []
     @Published private(set) var currentAccount: CodixxAccount?
     @Published private(set) var pendingAccountID: UUID?
+    @Published private(set) var quotaQueryErrors: [UUID: String] = [:]
+    @Published private(set) var queryingQuotaAccounts: Set<UUID> = []
+    private var lastQuotaQueries: [UUID: Date] = [:]
     private var runtimeAccountState: RuntimeAccountState?
     private var loadedRuntimeAccountState = false
     @Published private(set) var usageSnapshot = ThreadUsageSnapshot(
@@ -188,7 +191,48 @@ final class AppState: ObservableObject, LifecycleStateManaging {
         CodixxStrings(language: config.language)
     }
 
+    func refreshChatGPTQuota(for account: CodixxAccount, force: Bool = true) {
+        guard account.isChatGPT, !queryingQuotaAccounts.contains(account.id) else { return }
+        if !force, let last = lastQuotaQueries[account.id], now().timeIntervalSince(last) < max(60, config.quotaRefreshIntervalSeconds) { return }
+        lastQuotaQueries[account.id] = now()
+        queryingQuotaAccounts.insert(account.id)
+        quotaQueryErrors[account.id] = nil
+        Task {
+            defer { queryingQuotaAccounts.remove(account.id) }
+            do {
+                let snapshot: AuthSnapshot
+                if let data = try? Data(contentsOf: paths.authJSON),
+                   let live = try? AuthSnapshot(jsonData: data),
+                   (try? AccountFingerprint.generate(from: live)) == account.fingerprint {
+                    snapshot = live
+                } else {
+                    snapshot = try vault.load(fingerprint: account.fingerprint)
+                }
+                let quota = try await ChatGPTQuotaClient().query(snapshot: snapshot, accountID: account.id.uuidString, alias: account.alias)
+                var latest = try metadataStore.load().accounts
+                guard let index = latest.firstIndex(where: { $0.id == account.id && $0.fingerprint == account.fingerprint }) else { return }
+                var updatedQuota = quota
+                updatedQuota.alias = latest[index].alias
+                updatedQuota.planType = quota.planType ?? latest[index].quota.planType
+                latest[index].quota = updatedQuota
+                latest[index].updatedAt = now()
+                try metadataStore.save(AccountMetadataList(accounts: latest))
+                accounts = latest
+                if currentAccount?.id == account.id { currentAccount = latest[index] }
+            } catch {
+                quotaQueryErrors[account.id] = error.localizedDescription
+            }
+        }
+    }
+
+    private func refreshDueChatGPTQuotas(force: Bool = false) {
+        for account in accounts where account.isChatGPT && account.isEnabled {
+            refreshChatGPTQuota(for: account, force: force)
+        }
+    }
+
     func refreshNow() {
+        defer { refreshDueChatGPTQuotas(force: true) }
         refresh(
             applyRateLimitObservations: true,
             allowAutoSwitch: true,
@@ -264,6 +308,7 @@ final class AppState: ObservableObject, LifecycleStateManaging {
 
         accounts = loadedAccounts
         currentAccount = currentAccount(in: loadedAccounts)
+        refreshDueChatGPTQuotas()
         refreshAuthHealthIfNeeded()
         do {
             switchEvents = try auditLog.loadEvents().sorted { $0.timestamp > $1.timestamp }
@@ -350,6 +395,7 @@ final class AppState: ObservableObject, LifecycleStateManaging {
 
         accounts = loadedAccounts
         currentAccount = currentAccount(in: loadedAccounts)
+        refreshDueChatGPTQuotas()
         do {
             switchEvents = try auditLog.loadEvents().sorted { $0.timestamp > $1.timestamp }
         } catch {
@@ -1565,9 +1611,12 @@ final class AppState: ObservableObject, LifecycleStateManaging {
             }
             return
         }
-        let minimumObservedAt = current.lastUsedAt
+        guard !current.isAPIProvider,
+              let authData = try? Data(contentsOf: paths.authJSON),
+              let auth = try? AuthSnapshot(jsonData: authData),
+              (try? AccountFingerprint.generate(from: auth)) == current.fingerprint else { return }
+        let minimumObservedAt = max(current.lastUsedAt ?? .distantPast, current.quota.lastObservedAt ?? .distantPast)
         let observations = try rateLimitReader.readNewObservations().filter { observation in
-            guard let minimumObservedAt else { return true }
             return observation.observedAt >= minimumObservedAt
         }
         guard let observation = Self.preferredRateLimitObservation(in: observations) else {
