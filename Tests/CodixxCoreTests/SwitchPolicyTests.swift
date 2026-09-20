@@ -214,7 +214,7 @@ final class SwitchPolicyTests: XCTestCase {
         XCTAssertTrue(policy.orderedCandidates(from: [unknown]) { _ in true }.isEmpty)
     }
 
-    func testAutoSwitchCandidateRequiresRecentCompleteQuotaEvidence() {
+    func testAutoSwitchCandidateAcceptsRecentSingleWindowButRejectsUnknownAndStale() {
         let now = Date(timeIntervalSince1970: 1_000)
         let policy = SwitchPolicy(primaryThresholdPercent: 93, secondaryThresholdPercent: 90)
 
@@ -229,7 +229,7 @@ final class SwitchPolicyTests: XCTestCase {
             snapshotExists: { _ in true }
         )
 
-        XCTAssertEqual(ordered.map(\.alias), ["Known"])
+        XCTAssertEqual(Set(ordered.map(\.alias)), Set(["Known", "Missing Weekly", "Missing Five Hour"]))
     }
 
     func testAutoSwitchRespectsCooldownAfterLastSuccessfulSwitch() {
@@ -378,6 +378,19 @@ final class SwitchPolicyTests: XCTestCase {
             allAccounts: [depletedAPI, chatgpt],
             context: .idle(now: now)
         ))
+    }
+
+    func testWeeklyOnlyProUsesWeeklyThresholdInEitherSlot() {
+        let now = Date(timeIntervalSince1970: 1_000)
+        let policy = SwitchPolicy(primaryThresholdPercent: 95, secondaryThresholdPercent: 80)
+        var pro = account(alias: "Pro", primary: 85, secondary: nil, confidence: .fresh, now: now)
+        pro.quota.primaryWindowMinutes = 10_080
+        XCTAssertTrue(policy.shouldAutoSwitch(currentAccount: pro, context: .idle(now: now)))
+        XCTAssertFalse(pro.isEligibleForSwitch(hasSnapshot: true, primaryThresholdPercent: 95, secondaryThresholdPercent: 80))
+        pro.quota.primaryUsedPercent = 75
+        XCTAssertTrue(pro.isEligibleForSwitch(hasSnapshot: true, primaryThresholdPercent: 95, secondaryThresholdPercent: 80))
+        let secondaryOnly = account(alias: "Other", primary: nil, secondary: 75, confidence: .fresh, now: now)
+        XCTAssertEqual(Set(policy.orderedCandidates(from: [pro, secondaryOnly]) { _ in true }.map(\.alias)), Set(["Pro", "Other"]))
     }
 
     private func account(

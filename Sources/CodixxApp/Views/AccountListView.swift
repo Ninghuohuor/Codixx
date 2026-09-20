@@ -35,14 +35,14 @@ struct AccountSummaryMetrics: Equatable {
                 continue
             }
 
-            guard let primary = account.quota.primaryUsedPercent,
-                  let secondary = account.quota.secondaryUsedPercent
+            let windows = account.quota.reportedWindows
+            guard !windows.isEmpty
             else {
                 unknown += 1
                 continue
             }
 
-            if primary >= 100 || secondary >= 100 {
+            if windows.contains(where: { $0.usedPercent >= 100 }) {
                 full += 1
             } else {
                 available += 1
@@ -1594,20 +1594,12 @@ private struct AccountRowsView: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
-            if account.quota.primaryUsedPercent != nil {
+            ForEach(Array(account.quota.reportedWindows.enumerated()), id: \.offset) { _, window in
                 quotaProgressRow(
-                    title: state.strings.quotaWindowTitle(minutes: account.quota.primaryWindowMinutes),
-                    percent: account.quota.primaryUsedPercent,
-                    resetText: account.quota.primaryResetsAt.map(state.strings.resets) ?? state.strings.resetUnknown,
-                    tint: account.quota.primaryUsedPercent.map { $0 >= state.config.primaryThresholdPercent ? .orange : .accentColor } ?? .secondary
-                )
-            }
-            if account.quota.secondaryUsedPercent != nil {
-                quotaProgressRow(
-                    title: state.strings.quotaWindowTitle(minutes: account.quota.secondaryWindowMinutes),
-                    percent: account.quota.secondaryUsedPercent,
-                    resetText: account.quota.secondaryResetsAt.map(state.strings.resets) ?? state.strings.resetUnknown,
-                    tint: account.quota.secondaryUsedPercent.map { $0 >= state.config.secondaryThresholdPercent ? .orange : .green } ?? .secondary
+                    title: state.strings.quotaWindowTitle(minutes: window.minutes),
+                    percent: window.usedPercent,
+                    resetText: window.resetsAt.map(state.strings.resets) ?? state.strings.resetUnknown,
+                    tint: window.usedPercent >= window.threshold(short: state.config.primaryThresholdPercent, weekly: state.config.secondaryThresholdPercent) ? .orange : .accentColor
                 )
             }
         }

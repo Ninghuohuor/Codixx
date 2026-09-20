@@ -137,11 +137,11 @@ struct QuotaView: View {
 
     private var progressTint: Color {
         guard let used = quota?.primaryUsedPercent else { return .secondary }
-        return used >= config.primaryThresholdPercent ? .orange : .accentColor
+        return used >= (quota?.reportedWindows.first { !$0.isSecondary }?.threshold(short: config.primaryThresholdPercent, weekly: config.secondaryThresholdPercent) ?? config.primaryThresholdPercent) ? .orange : .accentColor
     }
 
     private var secondaryProgressTint: Color {
         guard let used = quota?.secondaryUsedPercent else { return .secondary }
-        return used >= config.secondaryThresholdPercent ? .orange : .green
+        return used >= (quota?.reportedWindows.first { $0.isSecondary }?.threshold(short: config.primaryThresholdPercent, weekly: config.secondaryThresholdPercent) ?? config.secondaryThresholdPercent) ? .orange : .green
     }
 }

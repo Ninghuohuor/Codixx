@@ -58,9 +58,7 @@ public struct SwitchPolicy: Sendable {
         guard isSafeToAutoSwitch(context: context) else {
             return false
         }
-        let primaryAtThreshold = currentAccount.quota.primaryUsedPercent.map { $0 >= primaryThresholdPercent } ?? false
-        let secondaryAtThreshold = currentAccount.quota.secondaryUsedPercent.map { $0 >= secondaryThresholdPercent } ?? false
-        return primaryAtThreshold || secondaryAtThreshold
+        return currentAccount.quota.reachesThreshold(short: primaryThresholdPercent, weekly: secondaryThresholdPercent)
     }
 
     public func isSafeToAutoSwitch(context: SwitchSafetyContext) -> Bool {
@@ -123,15 +121,22 @@ public struct SwitchPolicy: Sendable {
     }
 
     private func minimumNormalizedHeadroom(for account: CodixxAccount) -> Double {
-        min(
-            normalizedHeadroom(usedPercent: account.quota.primaryUsedPercent, threshold: primaryThresholdPercent),
-            normalizedHeadroom(usedPercent: account.quota.secondaryUsedPercent, threshold: secondaryThresholdPercent)
-        )
+        account.quota.reportedWindows.map {
+            normalizedHeadroom(usedPercent: $0.usedPercent, threshold: $0.threshold(short: primaryThresholdPercent, weekly: secondaryThresholdPercent))
+        }.min() ?? 0
     }
 
     private func weightedHeadroomScore(for account: CodixxAccount) -> Double {
-        normalizedHeadroom(usedPercent: account.quota.primaryUsedPercent, threshold: primaryThresholdPercent) * 0.6
-            + normalizedHeadroom(usedPercent: account.quota.secondaryUsedPercent, threshold: secondaryThresholdPercent) * 0.4
+        let windows = account.quota.reportedWindows
+        let weights = windows.map { window -> Double in
+            if let minutes = window.minutes { return minutes >= 10_080 ? 0.4 : 0.6 }
+            return window.isSecondary ? 0.4 : 0.6
+        }
+        let total = weights.reduce(0, +)
+        guard total > 0 else { return 0 }
+        return zip(windows, weights).reduce(0) { sum, entry in
+            sum + normalizedHeadroom(usedPercent: entry.0.usedPercent, threshold: entry.0.threshold(short: primaryThresholdPercent, weekly: secondaryThresholdPercent)) * entry.1
+        } / total
     }
 
     private func normalizedHeadroom(usedPercent: Double?, threshold: Double) -> Double {

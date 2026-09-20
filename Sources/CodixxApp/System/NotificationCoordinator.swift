@@ -38,10 +38,9 @@ final class NotificationCoordinator: NSObject, UNUserNotificationCenterDelegate,
     private func sendQuotaWarningIfNeeded(state: AppState) {
         guard state.config.notificationsEnabled,
               let account = state.currentAccount,
-              let primaryUsedPercent = account.quota.primaryUsedPercent,
-              primaryUsedPercent >= 80,
+              let window = account.quota.reportedWindows.filter({ $0.usedPercent >= 80 }).max(by: { $0.usedPercent < $1.usedPercent }),
               throttle.shouldSend(
-                .quotaWarning(accountId: account.id.uuidString, quotaKind: .primary),
+                .quotaWarning(accountId: account.id.uuidString, quotaKind: window.isSecondary ? .secondary : .primary),
                 at: Date()
               )
         else {
@@ -50,15 +49,14 @@ final class NotificationCoordinator: NSObject, UNUserNotificationCenterDelegate,
 
         send(
             title: state.strings.codixxQuotaWarning,
-            body: state.strings.quotaWarningBody(alias: account.alias, percent: Int(primaryUsedPercent.rounded()))
+            body: state.strings.quotaWarningBody(alias: account.alias, percent: Int(window.usedPercent.rounded()), minutes: window.minutes)
         )
     }
 
     private func sendProtectionModeIfNeeded(state: AppState) {
         guard state.config.notificationsEnabled,
               let account = state.currentAccount,
-              let primaryUsedPercent = account.quota.primaryUsedPercent,
-              primaryUsedPercent >= state.config.primaryThresholdPercent,
+              account.quota.reachesThreshold(short: state.config.primaryThresholdPercent, weekly: state.config.secondaryThresholdPercent),
               state.candidateAccounts.isEmpty,
               throttle.shouldSend(.protectionModeEntered, at: Date())
         else {

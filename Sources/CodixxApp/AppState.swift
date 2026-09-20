@@ -144,7 +144,7 @@ final class AppState: ObservableObject, LifecycleStateManaging {
 
     var menuBarTitle: String {
         guard let account = currentAccount else { return "Codixx" }
-        if let used = account.quota.primaryUsedPercent {
+        if let used = account.quota.reportedWindows.first?.usedPercent {
             return "Codixx \(Self.percentFormatter.string(from: NSNumber(value: used / 100)) ?? "")"
         }
         return "Codixx"
@@ -155,27 +155,21 @@ final class AppState: ObservableObject, LifecycleStateManaging {
             return strings.noActiveAccountTitle
         }
 
-        let primaryPercent = quotaPercentText(account.quota.primaryUsedPercent)
-        let secondaryPercent = quotaPercentText(account.quota.secondaryUsedPercent)
-        let primaryReset = account.quota.primaryResetsAt.map(strings.resets) ?? strings.resetUnknown
-        let secondaryReset = account.quota.secondaryResetsAt.map(strings.weeklyResets) ?? strings.resetUnknown
-        let primaryThreshold = "\(Int(config.primaryThresholdPercent.rounded()))%"
-        let secondaryThreshold = "\(Int(config.secondaryThresholdPercent.rounded()))%"
-
-        return [
-            account.alias,
-            "\(strings.fiveHourQuota): \(primaryPercent) · \(primaryReset)",
-            "\(strings.weeklyQuota): \(secondaryPercent) · \(secondaryReset)",
-            "\(strings.threshold): \(primaryThreshold)",
-            "\(strings.weeklyThreshold): \(secondaryThreshold)"
-        ].joined(separator: "\n")
+        let windows = account.quota.reportedWindows
+        var lines = [account.alias]
+        if windows.isEmpty { lines.append(strings.quotaNotReported) }
+        for window in windows {
+            let title = strings.quotaWindowTitle(minutes: window.minutes)
+            let reset = window.resetsAt.map(strings.resets) ?? strings.resetUnknown
+            lines.append("\(title): \(quotaPercentText(window.usedPercent)) · \(reset)")
+        }
+        return lines.joined(separator: "\n")
     }
 
     var menuBarSystemImage: String {
-        guard currentAccount != nil else { return "bolt.slash.circle.fill" }
-        let primaryAtThreshold = currentAccount?.quota.primaryUsedPercent.map { $0 >= config.primaryThresholdPercent } ?? false
-        let secondaryAtThreshold = currentAccount?.quota.secondaryUsedPercent.map { $0 >= config.secondaryThresholdPercent } ?? false
-        return primaryAtThreshold || secondaryAtThreshold ? "exclamationmark.triangle.fill" : "bolt.circle.fill"
+        guard let currentAccount else { return "bolt.slash.circle.fill" }
+        return currentAccount.quota.reachesThreshold(short: config.primaryThresholdPercent, weekly: config.secondaryThresholdPercent)
+            ? "exclamationmark.triangle.fill" : "bolt.circle.fill"
     }
 
     var candidateAccounts: [CodixxAccount] {

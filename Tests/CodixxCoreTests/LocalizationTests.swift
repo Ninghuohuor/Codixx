@@ -2,6 +2,15 @@ import XCTest
 @testable import CodixxCore
 
 final class LocalizationTests: XCTestCase {
+    func testQuotaLabelsAndWarningsUseReportedDuration() {
+        let strings = CodixxStrings(language: .chinese)
+        XCTAssertEqual(strings.quotaWindowTitle(minutes: 10080), strings.weeklyQuota)
+        XCTAssertEqual(strings.quotaWindowTitle(minutes: 300), "5 小时额度")
+        XCTAssertFalse(strings.quotaWindowTitle(minutes: nil).contains("5 小时"))
+        XCTAssertTrue(strings.quotaWarningBody(alias: "Pro", percent: 85, minutes: 10080).contains(strings.weeklyQuota))
+        XCTAssertFalse(strings.quotaWarningBody(alias: "Pro", percent: 85, minutes: 10080).contains("5 小时"))
+    }
+
     func testEnglishStringsExplainUnsavedCurrentAccount() {
         let strings = CodixxStrings(language: .english)
 

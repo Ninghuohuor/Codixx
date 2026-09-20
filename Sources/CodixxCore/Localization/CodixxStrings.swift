@@ -159,12 +159,12 @@ public struct CodixxStrings: Sendable {
             zh: "macOS 系统设置里未允许 Codixx 通知，请先在系统设置中开启。"
         )
     }
-    public var threshold: String { text(en: "5-hour threshold", zh: "5 小时阈值") }
+    public var threshold: String { text(en: "Short-window threshold", zh: "短周期额度阈值") }
     public var weeklyThreshold: String { text(en: "Weekly threshold", zh: "周额度阈值") }
     public var thresholdHint: String {
         text(
-            en: "Auto switch triggers when the 5-hour quota reaches this percentage.",
-            zh: "当 5 小时额度达到此百分比时，自动切换将触发。"
+            en: "Applies only to reported short usage windows, such as five hours. Weekly-only accounts use the weekly threshold.",
+            zh: "仅用于实际返回的短周期额度（如 5 小时）；只有周额度的账号使用周额度阈值。"
         )
     }
     public var weeklyThresholdHint: String {
@@ -500,10 +500,10 @@ public struct CodixxStrings: Sendable {
         }
     }
 
-    public func quotaWarningBody(alias: String, percent: Int) -> String {
+    public func quotaWarningBody(alias: String, percent: Int, minutes: Int? = nil) -> String {
         text(
-            en: "\(alias) is at \(percent)% of the 5-hour quota.",
-            zh: "\(alias) 已使用 5 小时额度的 \(percent)% 。"
+            en: "\(alias) is at \(percent)% of the \(quotaWindowTitle(minutes: minutes)).",
+            zh: "\(alias) 已使用\(quotaWindowTitle(minutes: minutes))的 \(percent)% 。"
         )
     }
 
