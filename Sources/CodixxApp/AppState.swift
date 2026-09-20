@@ -1636,12 +1636,27 @@ final class AppState: ObservableObject, LifecycleStateManaging {
             runtimeAccountState = try? store.load()
             loadedRuntimeAccountState = true
         }
-        let resolved = RuntimeAccountState.resolve(previous: runtimeAccountState, processIdentity: codexDesktopManager.processIdentity, configuredAccountID: configured?.id)
+        // Codixx only restores ChatGPT snapshots after quitting Codex. A ChatGPT
+        // login on the official route can therefore become current in the same
+        // process (including a login saved to our account list afterwards).
+        let isChatGPTLogin = snapshot.stringValue(for: "auth_mode") != "apikey"
+            && !(snapshot.stringValue(for: "access_token") ?? "").isEmpty
+            && !isManagedProviderRouted
+        let resolved = RuntimeAccountState.resolve(
+            previous: runtimeAccountState,
+            processIdentity: codexDesktopManager.processIdentity,
+            configuredAccountID: configured?.id,
+            isChatGPTLogin: isChatGPTLogin
+        )
         if resolved != runtimeAccountState {
             runtimeAccountState = resolved
             try? store.save(resolved)
         }
         pendingAccountID = resolved.accountID != configured?.id ? configured?.id : nil
+        if isChatGPTLogin {
+            apiProviderSignOutMessage = nil
+            postSwitchRestartMessage = nil
+        }
         return accounts.first { $0.id == resolved.accountID }
     }
 
