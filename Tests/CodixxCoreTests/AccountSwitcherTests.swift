@@ -526,6 +526,144 @@ final class AccountSwitcherTests: XCTestCase {
         XCTAssertTrue(try before.abnormalChanges(comparedTo: .capture(paths: paths)).contains(.removed(stateDB.path)))
     }
 
+    // MARK: - signOutAPIProvider
+
+    func testProviderConfigStoreReportsRoutingToManagedAPIProvider() throws {
+        let fixture = try SwitchFixture()
+        defer { fixture.cleanup() }
+        let store = CodexProviderConfigStore(paths: fixture.paths)
+
+        XCTAssertFalse(store.isRoutingToManagedAPIProvider)
+
+        try fixture.seedManagedProviderConfig()
+        XCTAssertTrue(store.isRoutingToManagedAPIProvider)
+
+        try store.clearManagedAPIProvider()
+        XCTAssertFalse(store.isRoutingToManagedAPIProvider)
+    }
+
+    /// Case A：账号列表里有 ChatGPT 账号 → 直接切回「最近用过的」那个。
+    func testSignOutAPIProviderSwitchesBackToMostRecentlyUsedChatGPTAccount() throws {
+        let fixture = try SwitchFixture()
+        defer { fixture.cleanup() }
+        let codexDesktopState = RecordingCodexDesktopState()
+        let threadProviderSync = RecordingThreadProviderSync()
+        let switcher = fixture.switcher(
+            codexDesktopState: codexDesktopState,
+            threadProviderSync: threadProviderSync
+        )
+
+        var metadata = try fixture.metadataStore.load()
+        let targetIndex = try XCTUnwrap(metadata.accounts.firstIndex { $0.id == fixture.target.id })
+        metadata.accounts[targetIndex].lastUsedAt = fixture.now.addingTimeInterval(60)
+        try fixture.metadataStore.save(metadata)
+        try fixture.seedAPIProviderState()
+
+        let result = try switcher.signOutAPIProvider(trigger: .manual)
+
+        XCTAssertEqual(result, .switchedToAccount(alias: fixture.target.alias))
+        XCTAssertEqual(try Data(contentsOf: fixture.paths.authJSON), fixture.targetAuth.jsonData)
+
+        let config = try String(contentsOf: fixture.paths.configTOML)
+        XCTAssertFalse(config.contains("[model_providers.openai-custom]"))
+        XCTAssertFalse(config.contains("model_provider = \"openai-custom\""))
+
+        XCTAssertEqual(codexDesktopState.clearCallCount, 1)
+        XCTAssertEqual(threadProviderSync.calls, [
+            .init(from: "openai-custom", to: "openai", scope: .visibleDesktopThreads)
+        ])
+        XCTAssertEqual(try fixture.auditLog.loadEvents().map(\.result), [.success])
+    }
+
+    /// Case B：账号列表里没有 ChatGPT 账号（首次使用就加了 API Key）→ 删掉 auth.json，等用户重新登录。
+    func testSignOutAPIProviderRemovesAPIKeyAuthWhenNoChatGPTAccountSaved() throws {
+        let fixture = try SwitchFixture()
+        defer { fixture.cleanup() }
+        try fixture.metadataStore.save(AccountMetadataList(accounts: [fixture.apiProviderAccount(alias: "Relay")]))
+        try fixture.seedAPIProviderState()
+        let switcher = fixture.switcher()
+
+        let result = try switcher.signOutAPIProvider(trigger: .manual)
+
+        XCTAssertEqual(result, .signedOutNeedsLogin)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: fixture.paths.authJSON.path))
+        let config = try String(contentsOf: fixture.paths.configTOML)
+        XCTAssertFalse(config.contains("openai-custom"))
+        XCTAssertEqual(try fixture.auditLog.loadEvents().map(\.result), [.success])
+    }
+
+    /// 当前登录不是 API Key，只是 config.toml 里残留了托管 provider → 清配置，登录保持不变。
+    func testSignOutAPIProviderKeepsExistingChatGPTAuthWhenNothingToRestore() throws {
+        let fixture = try SwitchFixture()
+        defer { fixture.cleanup() }
+        try fixture.metadataStore.save(AccountMetadataList(accounts: []))
+        try fixture.seedManagedProviderConfig()
+        let switcher = fixture.switcher()
+
+        let result = try switcher.signOutAPIProvider(trigger: .manual)
+
+        XCTAssertEqual(result, .cleanedProviderConfig)
+        XCTAssertEqual(try Data(contentsOf: fixture.paths.authJSON), fixture.sourceAuth.jsonData)
+        let config = try String(contentsOf: fixture.paths.configTOML)
+        XCTAssertFalse(config.contains("openai-custom"))
+    }
+
+    func testSignOutAPIProviderStopsBeforeWritingWhenCodexDesktopIsRunning() throws {
+        let fixture = try SwitchFixture()
+        defer { fixture.cleanup() }
+        let codexDesktopState = RecordingCodexDesktopState(isRunning: true)
+        let switcher = fixture.switcher(codexDesktopState: codexDesktopState)
+        try fixture.seedAPIProviderState()
+        let apiKeySnapshot = try AuthSnapshot.apiKey("sk-test-123")
+        let configBefore = try String(contentsOf: fixture.paths.configTOML)
+
+        XCTAssertThrowsError(try switcher.signOutAPIProvider(trigger: .manual)) { error in
+            XCTAssertEqual(error as? AccountSwitchError, .codexDesktopRunning)
+        }
+
+        XCTAssertEqual(try Data(contentsOf: fixture.paths.authJSON), apiKeySnapshot.jsonData)
+        XCTAssertEqual(try String(contentsOf: fixture.paths.configTOML), configBefore)
+        XCTAssertEqual(codexDesktopState.clearCallCount, 0)
+        XCTAssertEqual(try fixture.auditLog.loadEvents().map(\.result), [.failedBeforeWrite])
+    }
+
+    func testSignOutAPIProviderRejectsExpiredTargetSnapshotBeforeWriting() throws {
+        let fixture = try SwitchFixture()
+        defer { fixture.cleanup() }
+        let expiredAuth = try AuthSnapshot(
+            jsonData: Data(#"{"account_id":"target","access_token":"\#(Self.jwt(expiration: 1))"}"#.utf8)
+        )
+        try fixture.vault.save(snapshot: expiredAuth, fingerprint: fixture.target.fingerprint)
+        try fixture.seedAPIProviderState()
+        let apiKeySnapshot = try AuthSnapshot.apiKey("sk-test-123")
+        let configBefore = try String(contentsOf: fixture.paths.configTOML)
+        let switcher = fixture.switcher()
+
+        XCTAssertThrowsError(try switcher.signOutAPIProvider(trigger: .manual)) { error in
+            XCTAssertEqual(error as? AccountSwitchError, .expiredAuthSnapshot(alias: fixture.target.alias))
+        }
+
+        XCTAssertEqual(try String(contentsOf: fixture.paths.configTOML), configBefore)
+        XCTAssertEqual(try Data(contentsOf: fixture.paths.authJSON), apiKeySnapshot.jsonData)
+        XCTAssertEqual(try fixture.auditLog.loadEvents().map(\.result), [.failedBeforeWrite])
+    }
+
+    func testSignOutAPIProviderRestoresConfigAndAuthWhenWriteFails() throws {
+        let fixture = try SwitchFixture()
+        defer { fixture.cleanup() }
+        let switcher = fixture.switcher(writer: FailingAtomicWriter())
+        try fixture.seedAPIProviderState()
+        let apiKeySnapshot = try AuthSnapshot.apiKey("sk-test-123")
+
+        XCTAssertThrowsError(try switcher.signOutAPIProvider(trigger: .manual))
+
+        let config = try String(contentsOf: fixture.paths.configTOML)
+        XCTAssertTrue(config.contains("[model_providers.openai-custom]"))
+        XCTAssertTrue(config.contains("model_provider = \"openai-custom\""))
+        XCTAssertEqual(try Data(contentsOf: fixture.paths.authJSON), apiKeySnapshot.jsonData)
+        XCTAssertEqual(try fixture.auditLog.loadEvents().map(\.result), [.failedDuringWrite, .rolledBack])
+    }
+
     private static func jwt(expiration: Int) -> String {
         [
             base64URL(["alg": "none"]),
@@ -605,6 +743,46 @@ private final class SwitchFixture {
 
     func cleanup() {
         try? FileManager.default.removeItem(at: home)
+    }
+
+    /// 只写 `config.toml` 的托管 provider 块（不动 `auth.json`）。
+    func seedManagedProviderConfig() throws {
+        try CodexProviderConfigStore(paths: paths).writeAPIProvider(
+            providerID: CodexProviderConfigStore.managedProviderID,
+            providerName: "Relay",
+            baseURL: URL(string: "https://relay.example.com/v1")!,
+            defaultModel: "gpt-5"
+        )
+    }
+
+    /// 布置成「当前用 API provider 登录」：`auth.json` 是 API Key 快照，`config.toml` 带托管块。
+    func seedAPIProviderState(apiKey: String = "sk-test-123") throws {
+        try AuthSnapshot.apiKey(apiKey).jsonData.write(to: paths.authJSON)
+        try seedManagedProviderConfig()
+    }
+
+    /// 造一个 API provider 账号，用于「账号列表里没有 ChatGPT 账号」的场景。
+    func apiProviderAccount(alias: String, priority: Int = 2) -> CodixxAccount {
+        let id = UUID()
+        let keyFingerprint = APIKeyFingerprint.generate(apiKey: "sk-test-123")
+        return CodixxAccount(
+            id: id,
+            alias: alias,
+            fingerprint: "api-provider:\(keyFingerprint)",
+            credentialKind: .apiProvider,
+            apiProvider: APIProviderAccount(
+                providerName: alias,
+                baseURL: URL(string: "https://relay.example.com/v1")!,
+                defaultModel: "gpt-5",
+                keyFingerprint: keyFingerprint
+            ),
+            createdAt: now,
+            updatedAt: now,
+            lastUsedAt: nil,
+            quota: .unknown(accountId: id.uuidString, alias: alias),
+            isEnabled: true,
+            priority: priority
+        )
     }
 
     private static func account(alias: String, fingerprint: String, now: Date) -> CodixxAccount {

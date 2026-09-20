@@ -41,6 +41,8 @@ final class AppState: ObservableObject, LifecycleStateManaging {
     @Published private(set) var isLoadingFullUsageSnapshot = false
     @Published private(set) var accountSaveStatus: AccountSaveStatus?
     @Published private(set) var postSwitchRestartMessage: String?
+    @Published private(set) var apiProviderSignOutMessage: String?
+    @Published private(set) var authHealth: CodexAuthHealth = .notChatGPT
     @Published var errorMessage: String?
 
     let paths: CodixxPaths
@@ -53,6 +55,8 @@ final class AppState: ObservableObject, LifecycleStateManaging {
     private let appActivityLog: AppActivityLog
     private let accountStore: AccountStore
     private let switcher: AccountSwitcher
+    private let providerConfigStore: CodexProviderConfigStore
+    private let authHealthInspector: CodexAuthHealthInspector
     private let vault: AuthSnapshotVault
     private let apiKeyVault: APIKeyVault
     private let codexDesktopManager: CodexDesktopManaging
@@ -69,6 +73,8 @@ final class AppState: ObservableObject, LifecycleStateManaging {
     private var lastRefreshStartedAt: Date?
     private var hasPendingAccountOrderCommit = false
     private let menuRefreshThrottleSeconds: TimeInterval = 30
+    private let authHealthCheckInterval: TimeInterval = 60
+    private var lastAuthHealthCheckAt: Date?
     private let manualSwitchAutoSuppressionSeconds: TimeInterval = 300
     private var autoSwitchSuppressedUntil: Date?
     var onNotificationsEnabled: (() -> Void)?
@@ -97,8 +103,8 @@ final class AppState: ObservableObject, LifecycleStateManaging {
             databaseURL: paths.latestStateDatabaseURL(),
             trendCacheStore: TrendCacheStore(paths: paths)
         )
-        self.auditLog = SwitchAuditLog(paths: paths)
-        self.appActivityLog = AppActivityLog(paths: paths)
+        self.auditLog = SwitchAuditLog(paths: paths, retention: .init(now: now))
+        self.appActivityLog = AppActivityLog(paths: paths, retention: .init(now: now))
         self.accountStore = AccountStore(
             paths: paths,
             metadataStore: metadataStore,
@@ -114,11 +120,13 @@ final class AppState: ObservableObject, LifecycleStateManaging {
                 ).isEmpty
             }
         )
+        self.providerConfigStore = CodexProviderConfigStore(paths: paths)
+        self.authHealthInspector = CodexAuthHealthInspector(paths: paths, now: now)
         self.switcher = AccountSwitcher(
             paths: paths,
             metadataStore: metadataStore,
             vault: vault,
-            backupManager: SwitchBackupManager(paths: paths),
+            backupManager: SwitchBackupManager(paths: paths, now: now),
             auditLog: auditLog,
             now: now,
             apiKeyVault: apiKeyVault,
@@ -259,6 +267,7 @@ final class AppState: ObservableObject, LifecycleStateManaging {
 
         accounts = loadedAccounts
         currentAccount = currentAccount(in: loadedAccounts)
+        refreshAuthHealthIfNeeded()
         do {
             switchEvents = try auditLog.loadEvents().sorted { $0.timestamp > $1.timestamp }
         } catch {
@@ -948,6 +957,107 @@ final class AppState: ObservableObject, LifecycleStateManaging {
         }
     }
 
+    // MARK: - 退出 API 登录
+
+    /// `config.toml` 仍指向中转站，但当前登录不是 API Key。
+    ///
+    /// 这是静默的凭据外发：Codex 会把 `auth.json` 里的凭据（典型是 ChatGPT
+    /// access token）当作 `Authorization: Bearer` 发到中转站的 `base_url`。
+    var needsAPIProviderCleanup: Bool {
+        guard currentAuthMode != "apikey" else { return false }
+        return providerConfigStore.hasManagedAPIProviderBlock
+            || providerConfigStore.isRoutingToManagedAPIProvider
+    }
+
+    private var currentAuthMode: String? {
+        guard let data = try? Data(contentsOf: paths.authJSON),
+              let snapshot = try? AuthSnapshot(jsonData: data)
+        else {
+            return nil
+        }
+        return snapshot.stringValue(for: "auth_mode")
+    }
+
+    /// ChatGPT 凭据还在本地、但服务端已经作废。
+    ///
+    /// 这种状态下 `codex login status` 会照常说"已登录"，而 Codex 的每个请求
+    /// 都在 401 —— 桌面端因此拉不到账号态数据，界面看起来像"没登录/历史没了"。
+    var needsCodexReLogin: Bool {
+        if case .credentialRevoked = authHealth {
+            return true
+        }
+        return false
+    }
+
+    private func refreshAuthHealthIfNeeded() {
+        let checkStartedAt = now()
+        if let lastAuthHealthCheckAt,
+           checkStartedAt.timeIntervalSince(lastAuthHealthCheckAt) < authHealthCheckInterval
+        {
+            return
+        }
+        lastAuthHealthCheckAt = checkStartedAt
+        authHealth = authHealthInspector.inspect()
+    }
+
+    func signOutAPIProvider() {
+        guard !isSwitchInProgress else { return }
+        isSwitchInProgress = true
+        defer { isSwitchInProgress = false }
+        accountSaveStatus = nil
+        apiProviderSignOutMessage = nil
+
+        refresh(
+            applyRateLimitObservations: true,
+            allowAutoSwitch: false,
+            preservingError: nil,
+            throttled: false,
+            refreshUsage: false,
+            refreshUsageIfEmpty: false
+        )
+
+        do {
+            codexDesktopManager.quitForCleanSwitch()
+            let result = try switcher.signOutAPIProvider(trigger: .manual)
+            markFullUsageSnapshotNeedsReload()
+            suppressAutoSwitchAfterManualSwitch()
+            refresh(
+                applyRateLimitObservations: false,
+                allowAutoSwitch: false,
+                preservingError: nil,
+                throttled: false,
+                refreshUsage: false,
+                refreshUsageIfEmpty: false
+            )
+            apiProviderSignOutMessage = message(for: result)
+            lastAuthHealthCheckAt = nil
+            refreshAuthHealthIfNeeded()
+            postSwitchRestartMessage = nil
+            try codexDesktopManager.restart()
+        } catch {
+            let preservedError = pauseAutoSwitchIfRollbackFailed(error)
+            refresh(
+                applyRateLimitObservations: false,
+                allowAutoSwitch: false,
+                preservingError: preservedError,
+                throttled: false,
+                refreshUsage: false,
+                refreshUsageIfEmpty: false
+            )
+        }
+    }
+
+    private func message(for result: SignOutAPIProviderResult) -> String {
+        switch result {
+        case .switchedToAccount:
+            return strings.signOutAPIProviderSwitchedToAccount
+        case .signedOutNeedsLogin:
+            return strings.signOutAPIProviderNeedsLogin
+        case .cleanedProviderConfig:
+            return strings.signOutAPIProviderCleanedConfig
+        }
+    }
+
     func setAccount(_ account: CodixxAccount, isEnabled: Bool) {
         updateAccount(account) { updated in
             updated.isEnabled = isEnabled
@@ -1004,10 +1114,11 @@ final class AppState: ObservableObject, LifecycleStateManaging {
                 )
             }
         let paths = paths
+        let clock = now
         let previousTask = accountOrderPersistenceTask
         hasPendingAccountOrderCommit = false
 
-        let task = Task.detached(priority: .utility) { [accountSnapshot, event, paths, previousTask] in
+        let task = Task.detached(priority: .utility) { [accountSnapshot, event, paths, clock, previousTask] in
             if let previousTask {
                 await previousTask.value
             }
@@ -1017,7 +1128,7 @@ final class AppState: ObservableObject, LifecycleStateManaging {
                 try AccountMetadataStore(paths: paths).save(AccountMetadataList(accounts: accountSnapshot))
                 let loadedEvents: [AppLogEvent]?
                 if let event {
-                    let appActivityLog = AppActivityLog(paths: paths)
+                    let appActivityLog = AppActivityLog(paths: paths, retention: .init(now: clock))
                     try appActivityLog.append(event)
                     loadedEvents = try appActivityLog.loadEvents().sorted { $0.timestamp > $1.timestamp }
                 } else {
@@ -1310,8 +1421,9 @@ final class AppState: ObservableObject, LifecycleStateManaging {
 
     private func scheduleAccountMetadataPersistence(accounts accountSnapshot: [CodixxAccount], event: AppLogEvent?) {
         let paths = paths
+        let clock = now
         let previousTask = accountOrderPersistenceTask
-        let task = Task.detached(priority: .utility) { [accountSnapshot, event, paths, previousTask] in
+        let task = Task.detached(priority: .utility) { [accountSnapshot, event, paths, clock, previousTask] in
             if let previousTask {
                 await previousTask.value
             }
@@ -1320,7 +1432,7 @@ final class AppState: ObservableObject, LifecycleStateManaging {
             do {
                 try AccountMetadataStore(paths: paths).save(AccountMetadataList(accounts: accountSnapshot))
                 guard let event else { return }
-                let appActivityLog = AppActivityLog(paths: paths)
+                let appActivityLog = AppActivityLog(paths: paths, retention: .init(now: clock))
                 try appActivityLog.append(event)
                 let loadedEvents = try appActivityLog.loadEvents().sorted { $0.timestamp > $1.timestamp }
                 await MainActor.run { [weak self] in

@@ -42,7 +42,31 @@ public struct CodixxPaths: Sendable {
     }
 
     public func latestStateDatabaseURL(fileManager: FileManager = .default) -> URL {
-        let fallback = codexHome.appendingPathComponent("state_5.sqlite")
+        latestVersionedDatabaseURL(
+            prefix: "state_",
+            fallbackName: "state_5.sqlite",
+            fileManager: fileManager
+        )
+    }
+
+    /// Codex 的运行日志库（`logs_*.sqlite`）。
+    ///
+    /// `CodexAuthHealthInspector` 用它判断 `auth.json` 里的凭据是否已被服务端作废
+    /// —— 这种状态下 `codex login status` 仍会报"已登录"，只有日志能说明真相。
+    public func latestLogsDatabaseURL(fileManager: FileManager = .default) -> URL {
+        latestVersionedDatabaseURL(
+            prefix: "logs_",
+            fallbackName: "logs_2.sqlite",
+            fileManager: fileManager
+        )
+    }
+
+    private func latestVersionedDatabaseURL(
+        prefix: String,
+        fallbackName: String,
+        fileManager: FileManager
+    ) -> URL {
+        let fallback = codexHome.appendingPathComponent(fallbackName)
         guard let entries = try? fileManager.contentsOfDirectory(
             at: codexHome,
             includingPropertiesForKeys: nil
@@ -53,9 +77,9 @@ public struct CodixxPaths: Sendable {
         return entries
             .compactMap { url -> (version: Int, url: URL)? in
                 let name = url.lastPathComponent
-                guard name.hasPrefix("state_"), name.hasSuffix(".sqlite") else { return nil }
+                guard name.hasPrefix(prefix), name.hasSuffix(".sqlite") else { return nil }
                 let versionText = name
-                    .dropFirst("state_".count)
+                    .dropFirst(prefix.count)
                     .dropLast(".sqlite".count)
                 guard let version = Int(versionText) else { return nil }
                 return (version, url)

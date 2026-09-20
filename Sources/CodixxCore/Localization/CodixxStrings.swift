@@ -245,6 +245,46 @@ public struct CodixxStrings: Sendable {
             zh: "Codex Desktop 会缓存登录状态。切换账号后需要重启 Codex 才会真正生效。"
         )
     }
+    public var apiProviderStillRouted: String {
+        text(
+            en: "Codex is still pointed at a relay provider, but the current login is not an API key. Your ChatGPT credential can be sent to that relay. Clean this up now.",
+            zh: "Codex 仍指向中转站 provider，但当前登录并不是 API Key —— 你的 ChatGPT 凭据可能被发送到该中转站。建议立即清理。"
+        )
+    }
+    public var signOutAPIProvider: String { text(en: "Exit API login", zh: "退出 API 登录") }
+    public var signOutAPIProviderConfirmTitle: String {
+        text(en: "Exit API login?", zh: "确定退出 API 登录吗？")
+    }
+    public var signOutAPIProviderConfirmMessage: String {
+        text(
+            en: "Codixx removes the relay provider from config.toml and restores Codex to your ChatGPT account. Codex Desktop will be restarted.",
+            zh: "Codixx 会从 config.toml 移除中转站 provider，并把 Codex 还原成走你的 ChatGPT 账号。过程中会重启 Codex Desktop。"
+        )
+    }
+    public var signOutAPIProviderSwitchedToAccount: String {
+        text(
+            en: "API login removed. Codex is back on your ChatGPT account.",
+            zh: "已退出 API 登录，Codex 已回到你的 ChatGPT 账号。"
+        )
+    }
+    public var signOutAPIProviderNeedsLogin: String {
+        text(
+            en: "API login removed. Sign in to Codex with your ChatGPT account to continue.",
+            zh: "已退出 API 登录。请在 Codex 里用 ChatGPT 账号重新登录以继续。"
+        )
+    }
+    public var signOutAPIProviderCleanedConfig: String {
+        text(
+            en: "Relay provider config removed. Your current Codex login was left untouched.",
+            zh: "已清理中转站 provider 配置，当前 Codex 登录保持不变。"
+        )
+    }
+    public var credentialRevokedWarning: String {
+        text(
+            en: "Your Codex login has been revoked on the server. Codex still looks signed in locally, but every request fails. Sign in to Codex again.",
+            zh: "你的 Codex 登录已在服务端失效。本地看着仍是已登录，但所有请求都会失败。请在 Codex 里重新登录。"
+        )
+    }
 
     public func secondsInterval(_ seconds: Int) -> String {
         text(en: "\(seconds)s", zh: "\(seconds) 秒")

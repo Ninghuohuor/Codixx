@@ -141,6 +141,32 @@ struct AccountListView: View {
                         .background(Color.blue.opacity(0.08), in: RoundedRectangle(cornerRadius: 8))
                 }
 
+                if state.needsAPIProviderCleanup {
+                    APIProviderCleanupBanner(state: state, onCleanUp: confirmSignOutAPIProvider)
+                }
+
+                if state.needsCodexReLogin {
+                    Label(
+                        state.strings.credentialRevokedWarning,
+                        systemImage: "person.crop.circle.badge.exclamationmark"
+                    )
+                    .font(.caption)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(12)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(Color.red.opacity(0.10), in: RoundedRectangle(cornerRadius: 8))
+                }
+
+                if let message = state.apiProviderSignOutMessage {
+                    Label(message, systemImage: "checkmark.circle")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .padding(12)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .background(Color.green.opacity(0.10), in: RoundedRectangle(cornerRadius: 8))
+                }
+
                 if state.accounts.isEmpty {
                     EmptyAccountStateView(
                         strings: state.strings,
@@ -201,6 +227,22 @@ struct AccountListView: View {
         }
         balanceMonitorPanel = panel
         panel.show(attachedTo: presentationParentWindow)
+    }
+
+    private func confirmSignOutAPIProvider() {
+        let windowToClose = presentationParentWindow
+        let confirmed = IconlessConfirmationDialog.run(
+            title: state.strings.signOutAPIProviderConfirmTitle,
+            message: state.strings.signOutAPIProviderConfirmMessage,
+            confirmTitle: state.strings.signOutAPIProvider,
+            cancelTitle: state.strings.cancel,
+            parent: windowToClose
+        )
+        guard confirmed else { return }
+        windowToClose?.close()
+        DispatchQueue.main.async {
+            state.signOutAPIProvider()
+        }
     }
 
     private var presentationParentWindow: NSWindow? {
@@ -1630,6 +1672,25 @@ private struct AccountRowsView: View {
         )
         guard confirmed else { return }
         state.deleteAccount(account)
+    }
+}
+
+private struct APIProviderCleanupBanner: View {
+    @ObservedObject var state: AppState
+    var onCleanUp: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Label(state.strings.apiProviderStillRouted, systemImage: "exclamationmark.triangle.fill")
+                .font(.caption)
+                .fixedSize(horizontal: false, vertical: true)
+
+            Button(state.strings.signOutAPIProvider, action: onCleanUp)
+                .controlSize(.small)
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color.orange.opacity(0.12), in: RoundedRectangle(cornerRadius: 8))
     }
 }
 

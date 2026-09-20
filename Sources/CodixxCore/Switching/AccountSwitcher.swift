@@ -5,6 +5,18 @@ public enum AccountSwitchResult: Equatable, Sendable {
     case rolledBack
 }
 
+/// 「退出 API 登录」的收尾方式。
+public enum SignOutAPIProviderResult: Equatable, Sendable {
+    /// 账号列表里有可用的 ChatGPT 账号，已直接切回它。
+    case switchedToAccount(alias: String)
+    /// 账号列表里没有 ChatGPT 账号（典型是首次使用就加了 API Key）。
+    /// `auth.json` 已移除，等用户在 Codex 里重新登录。
+    case signedOutNeedsLogin
+    /// 当前登录不是 API Key，只是 `config.toml` 里残留了中转站 provider 配置。
+    /// 已清理，当前登录保持不变。
+    case cleanedProviderConfig
+}
+
 public enum AccountSwitchError: Error, Equatable, LocalizedError, Sendable {
     case rollbackFailed(String)
     case insufficientDiskSpace(minimumBytes: Int64)
@@ -104,6 +116,191 @@ public struct AccountSwitcher {
         try FileLock(url: paths.codexHome.appendingPathComponent("auth.json.lock")).withExclusiveLock {
             try performSwitch(targetId, trigger: trigger)
         }
+    }
+
+    /// 退出 API provider 登录，把 Codex 还原成「走 ChatGPT 账号」的状态。
+    ///
+    /// 一个入口覆盖三种收尾（见 `SignOutAPIProviderResult`）。无论哪种，
+    /// 都会清掉 `config.toml` 里的托管 provider 块并还原会话标记 —— 否则
+    /// Codex 会继续把 ChatGPT 凭据当 `Authorization: Bearer` 发到中转站的
+    /// `base_url`，而且中转站通常会接受，形成静默的凭据外发。
+    ///
+    /// 需要先退出 Codex 桌面端：它持有 `auth.json`，且 Electron 侧缓存了账号态。
+    @discardableResult
+    public func signOutAPIProvider(trigger: SwitchTrigger = .manual) throws -> SignOutAPIProviderResult {
+        try FileLock(url: paths.codexHome.appendingPathComponent("auth.json.lock")).withExclusiveLock {
+            try performSignOutAPIProvider(trigger: trigger)
+        }
+    }
+
+    private func performSignOutAPIProvider(trigger: SwitchTrigger) throws -> SignOutAPIProviderResult {
+        let metadata = try metadataStore.load()
+        let source = currentAccount(in: metadata)
+
+        if codexDesktopState.isCodexDesktopRunning {
+            let error = AccountSwitchError.codexDesktopRunning
+            try auditLog.append(event(
+                trigger: trigger,
+                source: source,
+                target: nil,
+                result: .failedBeforeWrite,
+                error: error,
+                backupURL: nil
+            ))
+            throw error
+        }
+
+        guard diskSpaceChecker.hasAvailableSpace(
+            at: paths.applicationSupport,
+            minimumBytes: Self.minimumFreeDiskSpaceBytes
+        ) else {
+            let error = AccountSwitchError.insufficientDiskSpace(minimumBytes: Self.minimumFreeDiskSpaceBytes)
+            try auditLog.append(event(
+                trigger: trigger,
+                source: source,
+                target: nil,
+                result: .failedBeforeWrite,
+                error: error,
+                backupURL: nil
+            ))
+            throw error
+        }
+
+        // 动手前先把收尾目标和快照解析完，避免改了一半再回滚。
+        let signOutTarget: SignOutTarget?
+        do {
+            signOutTarget = try resolveSignOutTarget(in: metadata)
+        } catch {
+            try auditLog.append(event(
+                trigger: trigger,
+                source: source,
+                target: nil,
+                result: .failedBeforeWrite,
+                error: error,
+                backupURL: nil
+            ))
+            throw error
+        }
+        let target = signOutTarget?.account
+
+        let authBackupURL: URL?
+        do {
+            authBackupURL = try backupCurrentAuthIfPresent(alias: source?.alias ?? "unknown")
+        } catch {
+            try auditLog.append(event(
+                trigger: trigger,
+                source: source,
+                target: target,
+                result: .failedBeforeWrite,
+                error: error,
+                backupURL: nil
+            ))
+            throw error
+        }
+        let configBackup = try providerConfigStore.backupConfig()
+
+        do {
+            try providerConfigStore.clearManagedAPIProvider()
+
+            let result: SignOutAPIProviderResult
+            if let signOutTarget {
+                try writer.write(signOutTarget.snapshot.jsonData, to: paths.authJSON, fileManager: .default)
+                result = .switchedToAccount(alias: signOutTarget.account.alias)
+            } else if currentAuthIsAPIKeySnapshot() {
+                try removeAuthJSONIfPresent()
+                result = .signedOutNeedsLogin
+            } else {
+                result = .cleanedProviderConfig
+            }
+
+            try codexDesktopState.clearState()
+            try threadProviderSync.syncProvider(
+                from: CodexProviderConfigStore.managedProviderID,
+                to: "openai",
+                scope: apiSwitchThreadSyncScope()
+            )
+
+            if let target, let index = metadata.accounts.firstIndex(where: { $0.id == target.id }) {
+                var updatedMetadata = metadata
+                updatedMetadata.accounts[index].lastUsedAt = now()
+                updatedMetadata.accounts[index].updatedAt = now()
+                try metadataStore.save(updatedMetadata)
+            }
+
+            try auditLog.append(event(
+                trigger: trigger,
+                source: source,
+                target: target,
+                result: .success,
+                error: nil,
+                backupURL: authBackupURL
+            ))
+            return result
+        } catch {
+            try? providerConfigStore.restoreConfig(from: configBackup)
+            try auditLog.append(event(
+                trigger: trigger,
+                source: source,
+                target: target,
+                result: .failedDuringWrite,
+                error: error,
+                backupURL: authBackupURL
+            ))
+            try restoreAfterFailureIfPossible(
+                trigger: .recovery,
+                source: target,
+                target: source,
+                backupURL: authBackupURL,
+                removeAuthWhenMissingBackup: true
+            )
+            throw error
+        }
+    }
+
+    private struct SignOutTarget {
+        var account: CodixxAccount
+        var snapshot: AuthSnapshot
+    }
+
+    private func resolveSignOutTarget(in metadata: AccountMetadataList) throws -> SignOutTarget? {
+        guard let account = chatGPTTargetForSignOut(in: metadata) else { return nil }
+        let snapshot = try vault.load(fingerprint: account.fingerprint)
+        if let accessTokenExpiresAt = snapshot.accessTokenExpiresAt,
+           accessTokenExpiresAt <= now().addingTimeInterval(Self.minimumTargetAccessTokenLifetime)
+        {
+            throw AccountSwitchError.expiredAuthSnapshot(alias: account.alias)
+        }
+        return SignOutTarget(account: account, snapshot: snapshot)
+    }
+
+    /// 收尾目标取「最近用过的、已启用的 ChatGPT 账号」；并列时取优先级高的。
+    private func chatGPTTargetForSignOut(in metadata: AccountMetadataList) -> CodixxAccount? {
+        metadata.accounts
+            .filter { $0.isChatGPT && $0.isEnabled }
+            .sorted { lhs, rhs in
+                let lhsDate = lhs.lastUsedAt ?? lhs.updatedAt
+                let rhsDate = rhs.lastUsedAt ?? rhs.updatedAt
+                if lhsDate != rhsDate { return lhsDate > rhsDate }
+                if lhs.priority != rhs.priority { return lhs.priority > rhs.priority }
+                return lhs.alias < rhs.alias
+            }
+            .first
+    }
+
+    /// 当前 `auth.json` 是否是 API Key 快照。
+    /// 用来区分「该把 auth.json 删掉让用户重新登录」和「当前登录有效、别动它」。
+    private func currentAuthIsAPIKeySnapshot() -> Bool {
+        guard let data = try? Data(contentsOf: paths.authJSON),
+              let snapshot = try? AuthSnapshot(jsonData: data)
+        else {
+            return false
+        }
+        return snapshot.stringValue(for: "auth_mode") == "apikey"
+    }
+
+    private func removeAuthJSONIfPresent() throws {
+        guard FileManager.default.fileExists(atPath: paths.authJSON.path) else { return }
+        try FileManager.default.removeItem(at: paths.authJSON)
     }
 
     private func performSwitch(_ targetId: UUID, trigger: SwitchTrigger) throws -> AccountSwitchResult {
@@ -381,7 +578,7 @@ public struct AccountSwitcher {
     private func providerID(for account: CodixxAccount) -> String {
         // Codex reserves built-in provider ids like "openai", but recommends
         // an OpenAI-compatible custom id for relay/base URL providers.
-        "openai-custom"
+        CodexProviderConfigStore.managedProviderID
     }
 
     private func backupCurrentAuthIfPresent(alias: String) throws -> URL? {
