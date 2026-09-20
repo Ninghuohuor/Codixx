@@ -8,6 +8,13 @@ DEFAULT_SIGN_IDENTITY="Codixx Local Code Signing"
 SIGN_IDENTITY="${CODE_SIGN_IDENTITY:-$DEFAULT_SIGN_IDENTITY}"
 APP_VERSION="$(tr -d '[:space:]' < "$ROOT_DIR/VERSION")"
 
+# CFBundleVersion 必须单调递增，否则 macOS 不会把重新打包的 app 当成升级。
+# 沿用历史上手写的 103（= 1.0.3）所隐含的 M*100 + m*10 + p 方案，改为从 VERSION 推导。
+IFS='.' read -r V_MAJOR V_MINOR V_PATCH <<< "$APP_VERSION"
+V_MINOR="${V_MINOR%%[!0-9]*}"
+V_PATCH="${V_PATCH%%[!0-9]*}"
+APP_BUILD_NUMBER=$(( ${V_MAJOR:-0} * 100 + ${V_MINOR:-0} * 10 + ${V_PATCH:-0} ))
+
 swift build -c release
 
 BIN_DIR="$(swift build -c release --show-bin-path)"
@@ -50,7 +57,7 @@ cat > "$CONTENTS_DIR/Info.plist" <<'PLIST'
   <key>CFBundleShortVersionString</key>
   <string>__APP_VERSION__</string>
   <key>CFBundleVersion</key>
-  <string>103</string>
+  <string>__APP_BUILD_NUMBER__</string>
   <key>LSMinimumSystemVersion</key>
   <string>13.0</string>
   <key>LSUIElement</key>
@@ -62,6 +69,7 @@ cat > "$CONTENTS_DIR/Info.plist" <<'PLIST'
 PLIST
 
 /usr/bin/sed -i '' "s/__APP_VERSION__/$APP_VERSION/g" "$CONTENTS_DIR/Info.plist"
+/usr/bin/sed -i '' "s/__APP_BUILD_NUMBER__/$APP_BUILD_NUMBER/g" "$CONTENTS_DIR/Info.plist"
 
 if security find-identity -v -p codesigning | grep -Fq "\"$SIGN_IDENTITY\""; then
   codesign --force --deep --timestamp=none --sign "$SIGN_IDENTITY" "$APP_DIR"
