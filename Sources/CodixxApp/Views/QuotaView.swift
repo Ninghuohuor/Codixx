@@ -25,21 +25,29 @@ struct QuotaView: View {
                     .foregroundStyle(confidenceColor)
             }
 
-            quotaProgress(
-                title: strings.fiveHourQuota,
-                percentText: primaryPercentText,
-                resetText: resetText,
-                progress: primaryProgress,
-                tint: progressTint
-            )
-
-            quotaProgress(
-                title: strings.weeklyQuota,
-                percentText: secondaryPercentText,
-                resetText: weeklyResetText,
-                progress: secondaryProgress,
-                tint: secondaryProgressTint
-            )
+            if quota?.primaryUsedPercent == nil && quota?.secondaryUsedPercent == nil {
+                Text(strings.quotaNotReported)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            if quota?.primaryUsedPercent != nil {
+                quotaProgress(
+                    title: strings.quotaWindowTitle(minutes: quota?.primaryWindowMinutes),
+                    percentText: primaryPercentText,
+                    resetText: resetText,
+                    progress: primaryProgress,
+                    tint: progressTint
+                )
+            }
+            if quota?.secondaryUsedPercent != nil {
+                quotaProgress(
+                    title: strings.quotaWindowTitle(minutes: quota?.secondaryWindowMinutes),
+                    percentText: secondaryPercentText,
+                    resetText: weeklyResetText,
+                    progress: secondaryProgress,
+                    tint: secondaryProgressTint
+                )
+            }
         }
         .padding(14)
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -98,7 +106,7 @@ struct QuotaView: View {
 
     private var weeklyResetText: String {
         guard let date = quota?.secondaryResetsAt else { return strings.resetUnknown }
-        return strings.weeklyResets(date)
+        return strings.resets(date)
     }
 
     private var confidenceText: String {
