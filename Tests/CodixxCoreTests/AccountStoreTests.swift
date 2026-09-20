@@ -384,6 +384,77 @@ final class AccountStoreTests: XCTestCase {
         XCTAssertNil(apiKeyVault.keys[try XCTUnwrap(account.apiProvider?.keyFingerprint)])
     }
 
+    /// API Key 登录态不能被当成「ChatGPT 账号」存进来。
+    ///
+    /// 否则会凭空多出一个幽灵账号：指纹走 `api-key:<hash>` 分支，而
+    /// `saveAPIProvider` 写的是 `api-provider:api-key:<hash>`，两者不相等，
+    /// 于是同一个中转站 key 会在列表里出现两次。
+    func testSaveCurrentAuthRejectsAPIKeyLoginSnapshot() throws {
+        let home = try makeTempHome()
+        defer { try? FileManager.default.removeItem(at: home) }
+        let paths = CodixxPaths(home: home)
+        try FileManager.default.createDirectory(at: paths.codexHome, withIntermediateDirectories: true)
+        let authData = Data(#"{"auth_mode":"apikey","OPENAI_API_KEY":"sk-relay-123"}"#.utf8)
+        try authData.write(to: paths.authJSON)
+        let vault = InMemoryAuthSnapshotVault()
+        let store = AccountStore(
+            paths: paths,
+            metadataStore: AccountMetadataStore(paths: paths),
+            vault: vault,
+            now: { Date(timeIntervalSince1970: 10) },
+            idGenerator: { UUID(uuidString: "33333333-3333-3333-3333-333333333333")! }
+        )
+
+        XCTAssertThrowsError(try store.saveCurrentAuth(alias: "Relay")) { error in
+            XCTAssertEqual(error as? AccountStoreError, .authIsAPIKeyLogin)
+        }
+        XCTAssertTrue(try AccountMetadataStore(paths: paths).load().accounts.isEmpty)
+        XCTAssertTrue(vault.snapshotDataByFingerprint.isEmpty)
+    }
+
+    /// 导入路径同样要挡住 —— 用户可能随手挑一个 apikey 的 auth.json。
+    func testImportAuthSnapshotRejectsAPIKeyLoginSnapshot() throws {
+        let home = try makeTempHome()
+        defer { try? FileManager.default.removeItem(at: home) }
+        let paths = CodixxPaths(home: home)
+        let importDirectory = home.appendingPathComponent("imports", isDirectory: true)
+        try FileManager.default.createDirectory(at: importDirectory, withIntermediateDirectories: true)
+        let importedAuthURL = importDirectory.appendingPathComponent("auth.json")
+        try Data(#"{"auth_mode":"apikey","OPENAI_API_KEY":"sk-relay-123"}"#.utf8)
+            .write(to: importedAuthURL)
+        let vault = InMemoryAuthSnapshotVault()
+        let store = AccountStore(
+            paths: paths,
+            metadataStore: AccountMetadataStore(paths: paths),
+            vault: vault,
+            now: { Date(timeIntervalSince1970: 10) },
+            idGenerator: { UUID(uuidString: "44444444-4444-4444-4444-444444444444")! }
+        )
+
+        XCTAssertThrowsError(try store.importAuthSnapshot(from: importedAuthURL, alias: "Relay")) { error in
+            XCTAssertEqual(error as? AccountStoreError, .authIsAPIKeyLogin)
+        }
+        XCTAssertTrue(try AccountMetadataStore(paths: paths).load().accounts.isEmpty)
+        XCTAssertTrue(vault.snapshotDataByFingerprint.isEmpty)
+    }
+
+    /// 老版本 Codex 写的 auth.json 可能没有 `auth_mode`，靠字段形状兜底。
+    func testIsAPIKeyLoginFallsBackToFieldShapeWhenAuthModeIsMissing() throws {
+        let legacyAPIKey = try AuthSnapshot(jsonData: Data(#"{"OPENAI_API_KEY":"sk-legacy"}"#.utf8))
+        XCTAssertTrue(AccountStore.isAPIKeyLogin(legacyAPIKey))
+
+        let legacyChatGPT = try AuthSnapshot(jsonData: Data(#"{"tokens":{"access_token":"secret"}}"#.utf8))
+        XCTAssertFalse(AccountStore.isAPIKeyLogin(legacyChatGPT))
+    }
+
+    func testIsAPIKeyLoginTreatsAuthModeAsAuthoritative() throws {
+        let apiKeyMode = try AuthSnapshot(jsonData: Data(#"{"auth_mode":"apikey","tokens":{"access_token":"secret"}}"#.utf8))
+        XCTAssertTrue(AccountStore.isAPIKeyLogin(apiKeyMode))
+
+        let chatGPTMode = try AuthSnapshot(jsonData: Data(#"{"auth_mode":"chatgpt","OPENAI_API_KEY":"sk-leftover"}"#.utf8))
+        XCTAssertFalse(AccountStore.isAPIKeyLogin(chatGPTMode))
+    }
+
     private func makeTempHome() throws -> URL {
         let home = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
         try FileManager.default.createDirectory(at: home, withIntermediateDirectories: true)

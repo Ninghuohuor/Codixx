@@ -613,9 +613,19 @@ final class AppState: ObservableObject, LifecycleStateManaging {
             recordAppLog(kind: .accountSaved, account: account)
             refreshNow()
         } catch {
-            accountSaveStatus = .failure(message: error.localizedDescription)
-            errorMessage = error.localizedDescription
+            let message = localizedSaveMessage(for: error)
+            accountSaveStatus = .failure(message: message)
+            errorMessage = message
         }
+    }
+
+    /// `AccountStoreError.localizedDescription` 是英文硬编码的，只给需要中文
+    /// 解释的那几条做映射，其余沿用原文，避免动到既有行为。
+    private func localizedSaveMessage(for error: Error) -> String {
+        if case AccountStoreError.authIsAPIKeyLogin = error {
+            return strings.cannotSaveAPIKeyAsCodexAccount
+        }
+        return error.localizedDescription
     }
 
     func importAuthSnapshot(alias: String, fileURL: URL) {
@@ -632,8 +642,9 @@ final class AppState: ObservableObject, LifecycleStateManaging {
             recordAppLog(kind: .authImported, account: account)
             refreshNow()
         } catch {
-            accountSaveStatus = .failure(message: error.localizedDescription)
-            errorMessage = error.localizedDescription
+            let message = localizedSaveMessage(for: error)
+            accountSaveStatus = .failure(message: message)
+            errorMessage = message
         }
     }
 
@@ -965,7 +976,24 @@ final class AppState: ObservableObject, LifecycleStateManaging {
     /// access token）当作 `Authorization: Bearer` 发到中转站的 `base_url`。
     var needsAPIProviderCleanup: Bool {
         guard currentAuthMode != "apikey" else { return false }
-        return providerConfigStore.hasManagedAPIProviderBlock
+        return isManagedProviderRouted
+    }
+
+    /// 当前就是 API Key 登录，且 `config.toml` 指向 Codixx 托管的 provider。
+    ///
+    /// 这不是错误状态 —— 用户主动切过来的。但必须给一个出口：否则切到 API
+    /// 模式之后就再也回不到 ChatGPT 账号了。
+    ///
+    /// 注意别把它和 `needsAPIProviderCleanup` 合并：两者的文案完全不同。
+    /// 危险态说的是"你的 ChatGPT 凭据正在被发到中转站"，而这句在 API Key
+    /// 登录下是**假警报** —— 用户就是特意这么配的。
+    var isSignedInWithAPIProvider: Bool {
+        currentAuthMode == "apikey" && isManagedProviderRouted
+    }
+
+    /// `config.toml` 里还挂着 Codixx 写入的托管 provider 块（或其根级引用）。
+    private var isManagedProviderRouted: Bool {
+        providerConfigStore.hasManagedAPIProviderBlock
             || providerConfigStore.isRoutingToManagedAPIProvider
     }
 
