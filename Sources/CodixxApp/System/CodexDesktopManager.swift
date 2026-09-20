@@ -10,6 +10,7 @@ struct CodexActivation {
 @MainActor
 protocol CodexDesktopManaging: AnyObject {
     var isRunning: Bool { get }
+    var processIdentity: String? { get }
 
     func currentActivation() -> CodexActivation
     func restoreActivationIfNeeded(_ activation: CodexActivation)
@@ -17,8 +18,18 @@ protocol CodexDesktopManaging: AnyObject {
     func restart() throws
 }
 
+extension CodexDesktopManaging {
+    var processIdentity: String? { isRunning ? "running" : nil }
+}
+
 @MainActor
 final class SystemCodexDesktopManager: CodexDesktopManaging {
+    var processIdentity: String? {
+        let applications = NSRunningApplication.runningApplications(withBundleIdentifier: CodexActivation.bundleIdentifier)
+        guard !applications.isEmpty else { return nil }
+        return applications.map { "\($0.processIdentifier):\($0.launchDate?.timeIntervalSince1970 ?? 0)" }.sorted().joined(separator: ",")
+    }
+
     var isRunning: Bool {
         !NSRunningApplication.runningApplications(
             withBundleIdentifier: CodexActivation.bundleIdentifier

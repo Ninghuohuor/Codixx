@@ -3,6 +3,17 @@ import XCTest
 @testable import CodixxCore
 
 final class APIBalanceQueryTesterTests: XCTestCase {
+    func testUnlimitedTokenDoesNotReturnNumericBalance() async {
+        let config = URLSessionConfiguration.ephemeral
+        config.protocolClasses = [BalanceAuthProtocol.self]
+        let session = URLSession(configuration: config)
+        defer { session.invalidateAndCancel() }
+        let result = await APIBalanceQueryTester(session: session).queryBalance(url: URL(string: "https://relay.example/unlimited")!, apiKey: "test-token", jsonPath: "data.total_available", userID: "123")
+        XCTAssertFalse(result.isSuccess)
+        XCTAssertTrue(result.isUnlimitedToken)
+        XCTAssertNil(result.balanceText)
+    }
+
     func testAccountIDHeaderAndMissingIDError() async {
         let config = URLSessionConfiguration.ephemeral
         config.protocolClasses = [BalanceAuthProtocol.self]
@@ -25,7 +36,7 @@ private final class BalanceAuthProtocol: URLProtocol {
     override func startLoading() {
         let valid = request.value(forHTTPHeaderField: "New-Api-User") == "123"
             && request.value(forHTTPHeaderField: "Authorization") == "Bearer test-token"
-        let data = Data((valid ? #"{"success":true,"data":{"quota":6170000}}"# : #"{"success":false,"message":"未提供 New-Api-User"}"#).utf8)
+        let data = request.url?.path == "/unlimited" ? Data(#"{"data":{"unlimited_quota":true,"total_available":-780743}}"#.utf8) : Data((valid ? #"{"success":true,"data":{"quota":6170000}}"# : #"{"success":false,"message":"未提供 New-Api-User"}"#).utf8)
         client?.urlProtocol(self, didReceive: HTTPURLResponse(url: request.url!, statusCode: valid ? 200 : 401, httpVersion: nil, headerFields: nil)!, cacheStoragePolicy: .notAllowed)
         client?.urlProtocol(self, didLoad: data)
         client?.urlProtocolDidFinishLoading(self)

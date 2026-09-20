@@ -257,7 +257,8 @@ final class AppStateTrendRefreshTests: XCTestCase {
                 providerName: "Relay",
                 baseURL: URL(string: "https://relay.example.com/v1")!,
                 defaultModel: nil,
-                keyFingerprint: apiKeyFingerprint
+                keyFingerprint: apiKeyFingerprint,
+                balanceQuery: APIBalanceQueryConfig(isEnabled: true, lastBalanceText: "0")
             ),
             createdAt: now,
             updatedAt: now,
@@ -517,6 +518,39 @@ final class AppStateTrendRefreshTests: XCTestCase {
         XCTAssertEqual(state.accounts.first?.apiProvider?.balanceQuery?.lastBalanceText, "12.34")
         XCTAssertEqual(state.accounts.first?.apiProvider?.balanceQuery?.lastRefreshedAt, observedAt)
         XCTAssertEqual(balanceTester.callCount, 1)
+    }
+
+    func testCurrentAccountSurvivesConfigSwitchAndCodixxReloadUntilCodexRestarts() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let paths = CodixxPaths(home: directory)
+        let vault = InMemoryVault()
+        let keys = InMemoryAPIKeyVault()
+        let desktop = CodexDesktopManagerSpy()
+        let state = AppState(paths: paths, vault: vault, apiKeyVault: keys, codexDesktopState: NoopCodexDesktopStateCleaner(), codexDesktopManager: desktop)
+        state.saveAPIProviderAccount(alias: "First", baseURLText: "https://first.example/v1", apiKey: "sk-first", defaultModel: "")
+        state.saveAPIProviderAccount(alias: "Second", baseURLText: "https://second.example/v1", apiKey: "sk-second", defaultModel: "")
+        let persisted = try AccountMetadataStore(paths: paths).load().accounts
+        let first = try XCTUnwrap(persisted.first { $0.alias == "First" })
+        let second = try XCTUnwrap(persisted.first { $0.alias == "Second" })
+        try FileManager.default.createDirectory(at: paths.codexHome, withIntermediateDirectories: true)
+        try Data(#"{"auth_mode":"apikey","OPENAI_API_KEY":"sk-first"}"#.utf8).write(to: paths.authJSON)
+        desktop.isRunning = true
+        desktop.identity = "process-one"
+        state.refreshQuotaNow()
+        XCTAssertEqual(state.currentAccount?.id, first.id)
+        try Data(#"{"auth_mode":"apikey","OPENAI_API_KEY":"sk-second"}"#.utf8).write(to: paths.authJSON)
+        state.refreshQuotaNow()
+        XCTAssertEqual(state.currentAccount?.id, first.id)
+        XCTAssertEqual(state.pendingAccountID, second.id)
+        let reopened = AppState(paths: paths, vault: vault, apiKeyVault: keys, codexDesktopState: NoopCodexDesktopStateCleaner(), codexDesktopManager: desktop)
+        reopened.refreshQuotaNow()
+        XCTAssertEqual(reopened.currentAccount?.id, first.id)
+        XCTAssertEqual(reopened.pendingAccountID, second.id)
+        desktop.identity = "process-two"
+        reopened.refreshQuotaNow()
+        XCTAssertEqual(reopened.currentAccount?.id, second.id)
+        XCTAssertNil(reopened.pendingAccountID)
     }
 
     func testIndependentBalanceTokenConvertsQuotaWithoutReplacingModelKey() async throws {
@@ -1509,6 +1543,8 @@ private enum InMemoryVaultError: Error {
 @MainActor
 private final class CodexDesktopManagerSpy: CodexDesktopManaging {
     var isRunning = false
+    var identity = "test-process"
+    var processIdentity: String? { isRunning ? identity : nil }
     var quitForCleanSwitchCallCount = 0
     var restartCallCount = 0
     var restoreActivationCallCount = 0
