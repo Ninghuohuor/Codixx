@@ -236,6 +236,16 @@ public struct CodixxStrings: Sendable {
     }
     public var weeklyUnknown: String { text(en: "Weekly quota --", zh: "每周额度 --") }
     public var resetUnknown: String { text(en: "Reset unknown", zh: "重置时间未知") }
+    public var quotaNotReported: String { text(en: "Quota data not received", zh: "暂未获取到额度数据") }
+
+    public func quotaWindowTitle(minutes: Int?) -> String {
+        guard let minutes, minutes > 0 else { return text(en: "Usage quota", zh: "使用额度") }
+        if minutes == 10_080 { return weeklyQuota }
+        if minutes % 1_440 == 0 { return text(en: "\(minutes / 1_440)-day quota", zh: "\(minutes / 1_440) 天额度") }
+        if minutes % 60 == 0 { return text(en: "\(minutes / 60)-hour quota", zh: "\(minutes / 60) 小时额度") }
+        return text(en: "\(minutes)-minute quota", zh: "\(minutes) 分钟额度")
+    }
+
     public var fiveHourQuota: String { text(en: "5-hour quota", zh: "5 小时额度") }
     public var weeklyQuota: String { text(en: "Weekly quota", zh: "周额度") }
     public var unknownPlan: String { text(en: "Unknown plan", zh: "未知会员") }

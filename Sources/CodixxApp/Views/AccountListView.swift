@@ -1589,19 +1589,27 @@ private struct AccountRowsView: View {
 
     private func quotaProgressRows(for account: CodixxAccount) -> some View {
         VStack(alignment: .leading, spacing: 8) {
-            quotaProgressRow(
-                title: state.strings.fiveHourQuota,
-                percent: account.quota.primaryUsedPercent,
-                resetText: account.quota.primaryResetsAt.map(state.strings.resets) ?? state.strings.resetUnknown,
-                tint: account.quota.primaryUsedPercent.map { $0 >= state.config.primaryThresholdPercent ? .orange : .accentColor } ?? .secondary
-            )
-
-            quotaProgressRow(
-                title: state.strings.weeklyQuota,
-                percent: account.quota.secondaryUsedPercent,
-                resetText: account.quota.secondaryResetsAt.map(state.strings.weeklyResets) ?? state.strings.resetUnknown,
-                tint: account.quota.secondaryUsedPercent.map { $0 >= state.config.secondaryThresholdPercent ? .orange : .green } ?? .secondary
-            )
+            if account.quota.primaryUsedPercent == nil && account.quota.secondaryUsedPercent == nil {
+                Text(state.strings.quotaNotReported)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            if account.quota.primaryUsedPercent != nil {
+                quotaProgressRow(
+                    title: state.strings.quotaWindowTitle(minutes: account.quota.primaryWindowMinutes),
+                    percent: account.quota.primaryUsedPercent,
+                    resetText: account.quota.primaryResetsAt.map(state.strings.resets) ?? state.strings.resetUnknown,
+                    tint: account.quota.primaryUsedPercent.map { $0 >= state.config.primaryThresholdPercent ? .orange : .accentColor } ?? .secondary
+                )
+            }
+            if account.quota.secondaryUsedPercent != nil {
+                quotaProgressRow(
+                    title: state.strings.quotaWindowTitle(minutes: account.quota.secondaryWindowMinutes),
+                    percent: account.quota.secondaryUsedPercent,
+                    resetText: account.quota.secondaryResetsAt.map(state.strings.resets) ?? state.strings.resetUnknown,
+                    tint: account.quota.secondaryUsedPercent.map { $0 >= state.config.secondaryThresholdPercent ? .orange : .green } ?? .secondary
+                )
+            }
         }
     }
 

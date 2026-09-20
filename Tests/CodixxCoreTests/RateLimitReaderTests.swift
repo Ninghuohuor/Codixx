@@ -2,6 +2,28 @@ import XCTest
 @testable import CodixxCore
 
 final class RateLimitReaderTests: XCTestCase {
+    func testWeeklyOnlyWindowAndEmptyReports() throws {
+        let home = try makeTempHome()
+        defer { try? FileManager.default.removeItem(at: home) }
+        let paths = CodixxPaths(home: home)
+        let session = paths.codexHome.appendingPathComponent("sessions/2026/05/06/session.jsonl")
+        try writeJSONLLines([
+            #"{"timestamp":"2026-05-06T03:30:00Z","payload":{"rate_limits":{"primary":{"used_percent":42,"window_minutes":10080,"resets_at":1776937959},"secondary":null}}}"#,
+            #"{"timestamp":"2026-05-06T03:31:00Z","payload":{"rate_limits":{"primary":null,"secondary":null}}}"#,
+            #"{"timestamp":"2026-05-06T03:32:00Z","payload":{"rate_limits":{"secondary":{"used_percent":43,"window_minutes":10080,"resets_at":1776937959}}}}"#
+        ], to: session)
+        let observations = try RateLimitReader(paths: paths).readNewObservations()
+        XCTAssertEqual(observations.count, 2)
+        let first = try XCTUnwrap(observations.first)
+        let state = first.accountQuotaState(accountId: "test", alias: "pro", now: first.observedAt)
+        XCTAssertEqual(state.primaryUsedPercent, 42)
+        XCTAssertEqual(state.primaryWindowMinutes, 10080)
+        XCTAssertNil(state.secondaryUsedPercent)
+        XCTAssertNil(state.secondaryResetsAt)
+        XCTAssertNil(observations.last?.primaryUsedPercent)
+        XCTAssertEqual(observations.last?.secondaryUsedPercent, 43)
+    }
+
     func testFirstParseReturnsObservationAndAdvancesCursorThenSecondParseReturnsNoDuplicate() throws {
         let home = try makeTempHome()
         defer { try? FileManager.default.removeItem(at: home) }

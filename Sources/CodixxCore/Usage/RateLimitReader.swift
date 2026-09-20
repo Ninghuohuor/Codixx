@@ -4,12 +4,12 @@ public struct RateLimitObservation: Codable, Equatable, Sendable {
     public var limitID: String?
     public var planType: String?
     public var membershipExpiresAt: Date?
-    public var primaryUsedPercent: Double
-    public var primaryWindowMinutes: Int
-    public var primaryResetsAt: Date
-    public var secondaryUsedPercent: Double
-    public var secondaryWindowMinutes: Int
-    public var secondaryResetsAt: Date
+    public var primaryUsedPercent: Double?
+    public var primaryWindowMinutes: Int?
+    public var primaryResetsAt: Date?
+    public var secondaryUsedPercent: Double?
+    public var secondaryWindowMinutes: Int?
+    public var secondaryResetsAt: Date?
     public var observedAt: Date
     public var sourceFile: String
 
@@ -17,12 +17,12 @@ public struct RateLimitObservation: Codable, Equatable, Sendable {
         limitID: String? = nil,
         planType: String? = nil,
         membershipExpiresAt: Date? = nil,
-        primaryUsedPercent: Double,
-        primaryWindowMinutes: Int,
-        primaryResetsAt: Date,
-        secondaryUsedPercent: Double,
-        secondaryWindowMinutes: Int,
-        secondaryResetsAt: Date,
+        primaryUsedPercent: Double?,
+        primaryWindowMinutes: Int?,
+        primaryResetsAt: Date?,
+        secondaryUsedPercent: Double?,
+        secondaryWindowMinutes: Int?,
+        secondaryResetsAt: Date?,
         observedAt: Date,
         sourceFile: String
     ) {
@@ -146,7 +146,8 @@ public struct RateLimitReader {
         guard line.contains(#""rate_limits""#),
               let data = line.data(using: .utf8),
               let event = try? decoder.decode(RateLimitEvent.self, from: data),
-              let rateLimits = event.rateLimits
+              let rateLimits = event.rateLimits,
+              rateLimits.primary != nil || rateLimits.secondary != nil
         else {
             return nil
         }
@@ -155,12 +156,12 @@ public struct RateLimitReader {
             limitID: rateLimits.limitID,
             planType: rateLimits.planType,
             membershipExpiresAt: rateLimits.membershipExpiresAt,
-            primaryUsedPercent: rateLimits.primary.usedPercent,
-            primaryWindowMinutes: rateLimits.primary.windowMinutes,
-            primaryResetsAt: Date(timeIntervalSince1970: TimeInterval(rateLimits.primary.resetsAt)),
-            secondaryUsedPercent: rateLimits.secondary.usedPercent,
-            secondaryWindowMinutes: rateLimits.secondary.windowMinutes,
-            secondaryResetsAt: Date(timeIntervalSince1970: TimeInterval(rateLimits.secondary.resetsAt)),
+            primaryUsedPercent: rateLimits.primary?.usedPercent,
+            primaryWindowMinutes: rateLimits.primary?.windowMinutes,
+            primaryResetsAt: rateLimits.primary.map { Date(timeIntervalSince1970: TimeInterval($0.resetsAt)) },
+            secondaryUsedPercent: rateLimits.secondary?.usedPercent,
+            secondaryWindowMinutes: rateLimits.secondary?.windowMinutes,
+            secondaryResetsAt: rateLimits.secondary.map { Date(timeIntervalSince1970: TimeInterval($0.resetsAt)) },
             observedAt: parseISO8601Date(event.timestamp) ?? Date(timeIntervalSince1970: 0),
             sourceFile: sourceFile
         )
@@ -304,8 +305,8 @@ private struct RateLimits: Decodable {
     var limitID: String?
     var planType: String?
     var membershipExpiresAt: Date?
-    var primary: RateLimitWindow
-    var secondary: RateLimitWindow
+    var primary: RateLimitWindow?
+    var secondary: RateLimitWindow?
 
     enum CodingKeys: String, CodingKey {
         case limitID = "limit_id"
@@ -333,8 +334,8 @@ private struct RateLimits: Decodable {
                 .currentPeriodEnd
             ]
         )
-        self.primary = try container.decode(RateLimitWindow.self, forKey: .primary)
-        self.secondary = try container.decode(RateLimitWindow.self, forKey: .secondary)
+        self.primary = try container.decodeIfPresent(RateLimitWindow.self, forKey: .primary)
+        self.secondary = try container.decodeIfPresent(RateLimitWindow.self, forKey: .secondary)
     }
 
     private static func decodeFirstDate(
