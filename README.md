@@ -4,12 +4,14 @@ Current version: **1.0.7**
 
 Codixx is a native macOS menu bar app for people who use Codex heavily and want a local way to track usage, monitor quota state, and switch between saved Codex accounts.
 
-The app is local-first. It reads Codex data from files on your Mac, stores account snapshots and API keys in macOS Keychain, and does not upload your authentication data, API keys, token logs, or account data to any remote server.
+The app is local-first. It reads Codex data from files on your Mac, stores account snapshots and API keys in macOS Keychain, and keeps token logs and account metadata on your Mac. Quota queries authenticate only with the relevant service; the public reset forecast feed receives no Codex credentials.
 
 ## Features
 
 - **Menu bar dashboard**: Open a compact macOS popover from the menu bar to view Codex usage and account state.
-- **Quota monitoring**: Track the current account's 5-hour quota and weekly quota from local Codex session data.
+- **Quota monitoring**: Query saved ChatGPT accounts directly and read local Codex session data; show the quota windows actually returned, including weekly-only accounts.
+- **Reset forecast**: A native tab between Accounts and Trends shows codexreset's announcement forecast, daily probability, average interval, latest automatic reset, and reset-card outlook. Public data is fetched from `https://codexreset.club/api/feed` every five minutes with a local cache. Forecasts concern extra public resets, not an account's regular weekly reset.
+- **Local reset reminders**: Opt in to automatic-reset or reset-card notifications within Codixx. macOS notification permission is required; Codixx must be running. Old, duplicate, retracted, and stale announcements are not replayed. No email or web-push subscription is created.
 - **Token usage overview**: View total usage, recent trends, active thread usage, and top token-consuming threads.
 - **Multiple account snapshots**: Save local Codex account auth snapshots with readable aliases.
 - **Manual account switching**: Switch the local Codex auth state between saved accounts.

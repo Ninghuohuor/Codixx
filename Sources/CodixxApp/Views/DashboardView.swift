@@ -29,18 +29,22 @@ struct DashboardView: View {
                 .tabItem { Label(state.strings.accounts, systemImage: "person.2") }
                 .tag(0)
 
+            ResetForecastView(store: state.resetForecastStore)
+                .tabItem { Label("重置预测", systemImage: "calendar.badge.clock") }
+                .tag(1)
+
             trends
                 .tabItem { Label(state.strings.trends, systemImage: "chart.xyaxis.line") }
-                .tag(1)
+                .tag(2)
 
             settings
                 .tabItem { Label(state.strings.settings, systemImage: "gearshape") }
-                .tag(2)
+                .tag(3)
         }
         .frame(width: DashboardLayout.width)
         .frame(minHeight: 400, idealHeight: 520, maxHeight: 620)
         .onChange(of: selectedTab) { tab in
-            guard tab == 1 else {
+            guard tab == 2 else {
                 trendRefreshTask?.cancel()
                 trendRefreshTask = nil
                 return
@@ -48,7 +52,7 @@ struct DashboardView: View {
             scheduleTrendRefresh()
         }
         .onAppear {
-            if selectedTab == 1 {
+            if selectedTab == 2 {
                 scheduleTrendRefresh()
             }
         }
@@ -60,7 +64,7 @@ struct DashboardView: View {
         trendRefreshTask?.cancel()
         trendRefreshTask = Task { @MainActor in
             await Task.yield()
-            guard !Task.isCancelled, selectedTab == 1 else { return }
+            guard !Task.isCancelled, selectedTab == 2 else { return }
             state.refreshTrendsIfNeeded()
         }
     }
