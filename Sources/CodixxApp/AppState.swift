@@ -186,7 +186,10 @@ final class AppState: ObservableObject, LifecycleStateManaging {
     }
 
     var canEnableAutoSwitch: Bool {
-        accounts.filter { $0.isEnabled && $0.isChatGPT }.count >= 2
+        accounts.filter { account in
+            guard account.isEnabled else { return false }
+            return account.isChatGPT || account.hasSufficientAPIBalance
+        }.count >= 2
     }
 
     var strings: CodixxStrings {

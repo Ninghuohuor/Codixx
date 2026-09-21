@@ -151,6 +151,29 @@ final class AppStateTrendRefreshTests: XCTestCase {
         }
     }
 
+    func testAutoSwitchSetupCountsEnabledAPIAccountsWithAvailableBalance() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let paths = CodixxPaths(home: directory)
+        let now = Date(timeIntervalSince1970: 1_778_000_000)
+        let firstAPI = autoSwitchAPIAccount(alias: "OpenLux", balance: "1.84", now: now)
+        let secondAPI = autoSwitchAPIAccount(alias: "86API", balance: "1.54", now: now)
+        let pro = displayOrderAccount(alias: "Pro", priority: 0, now: now)
+        try AccountMetadataStore(paths: paths).save(AccountMetadataList(accounts: [firstAPI, secondAPI, pro]))
+
+        let state = AppState(
+            paths: paths,
+            vault: InMemoryVault(),
+            apiKeyVault: InMemoryAPIKeyVault(),
+            codexDesktopState: NoopCodexDesktopStateCleaner(),
+            codexDesktopManager: CodexDesktopManagerSpy(),
+            now: { now }
+        )
+        state.refreshQuotaNow()
+
+        XCTAssertTrue(state.canEnableAutoSwitch)
+    }
+
     func testManualSwitchSuppressesImmediateAutoSwitchBounceFromDepletedTarget() throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
         defer { try? FileManager.default.removeItem(at: directory) }
@@ -1577,6 +1600,37 @@ private func displayOrderAccount(alias: String, priority: Int, now: Date) -> Cod
         quota: .unknown(accountId: alias, alias: alias),
         isEnabled: true,
         priority: priority
+    )
+}
+
+private func autoSwitchAPIAccount(alias: String, balance: String, now: Date) -> CodixxAccount {
+    let id = UUID()
+    let slug = alias.lowercased()
+    let fingerprint = "api-" + alias
+    return CodixxAccount(
+        id: id,
+        alias: alias,
+        fingerprint: fingerprint,
+        credentialKind: .apiProvider,
+        apiProvider: APIProviderAccount(
+            providerName: alias,
+            baseURL: URL(string: "https://" + slug + ".example/v1")!,
+            defaultModel: nil,
+            keyFingerprint: fingerprint,
+            balanceQuery: APIBalanceQueryConfig(
+                isEnabled: true,
+                urlText: "https://" + slug + ".example/balance",
+                jsonPath: "data.balance",
+                lastBalanceText: balance,
+                lastRefreshedAt: now
+            )
+        ),
+        createdAt: now,
+        updatedAt: now,
+        lastUsedAt: nil,
+        quota: .unknown(accountId: id.uuidString, alias: alias),
+        isEnabled: true,
+        priority: 0
     )
 }
 
