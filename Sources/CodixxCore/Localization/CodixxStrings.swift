@@ -144,8 +144,8 @@ public struct CodixxStrings: Sendable {
     public var autoSwitch: String { text(en: "Auto switch", zh: "自动切换") }
     public var autoSwitchNeedsTwoAccounts: String {
         text(
-            en: "Save a second enabled account to use auto switch.",
-            zh: "请先保存第二个已启用账号，再使用自动切换。"
+            en: "Enable at least two accounts that can switch. API accounts need an available balance.",
+            zh: "至少需要两个可切换的已启用账号；API 账号需要有可用余额。"
         )
     }
     public var notifications: String { text(en: "Notifications", zh: "通知") }
