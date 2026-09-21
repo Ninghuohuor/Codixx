@@ -101,12 +101,15 @@ struct QuotaView: View {
 
     private var resetText: String {
         guard let date = quota?.primaryResetsAt else { return strings.resetUnknown }
+        if (quota?.primaryWindowMinutes ?? 0) >= 10_080 {
+            return strings.weeklyResets(date)
+        }
         return strings.resets(date)
     }
 
     private var weeklyResetText: String {
         guard let date = quota?.secondaryResetsAt else { return strings.resetUnknown }
-        return strings.resets(date)
+        return strings.weeklyResets(date)
     }
 
     private var confidenceText: String {

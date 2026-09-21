@@ -1617,7 +1617,12 @@ private struct AccountRowsView: View {
                 quotaProgressRow(
                     title: state.strings.quotaWindowTitle(minutes: window.minutes),
                     percent: window.usedPercent,
-                    resetText: window.resetsAt.map(state.strings.resets) ?? state.strings.resetUnknown,
+                    resetText: window.resetsAt.map { date in
+                        if window.isSecondary || (window.minutes ?? 0) >= 10_080 {
+                            return state.strings.weeklyResets(date)
+                        }
+                        return state.strings.resets(date)
+                    } ?? state.strings.resetUnknown,
                     tint: window.usedPercent >= window.threshold(short: state.config.primaryThresholdPercent, weekly: state.config.secondaryThresholdPercent) ? .orange : .accentColor
                 )
             }

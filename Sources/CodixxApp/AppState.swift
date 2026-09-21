@@ -165,7 +165,12 @@ final class AppState: ObservableObject, LifecycleStateManaging {
         if windows.isEmpty { lines.append(strings.quotaNotReported) }
         for window in windows {
             let title = strings.quotaWindowTitle(minutes: window.minutes)
-            let reset = window.resetsAt.map(strings.resets) ?? strings.resetUnknown
+            let reset = window.resetsAt.map { date in
+                if window.isSecondary || (window.minutes ?? 0) >= 10_080 {
+                    return strings.weeklyResets(date)
+                }
+                return strings.resets(date)
+            } ?? strings.resetUnknown
             lines.append("\(title): \(quotaPercentText(window.usedPercent)) · \(reset)")
         }
         return lines.joined(separator: "\n")
