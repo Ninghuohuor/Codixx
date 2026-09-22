@@ -34,6 +34,37 @@ public struct AuthSnapshot: Equatable, Sendable {
         return Self.jwtExpirationDate(accessToken)
     }
 
+    /// Returns a new snapshot with rotated ChatGPT OAuth tokens while preserving
+    /// the rest of Codex's auth.json payload. OpenAI may omit an id or refresh
+    /// token from a successful refresh response, so nil values keep the existing
+    /// field instead of deleting it.
+    public func replacingChatGPTTokens(
+        idToken: String?,
+        accessToken: String,
+        refreshToken: String?,
+        refreshedAt: Date
+    ) throws -> AuthSnapshot {
+        guard !accessToken.isEmpty else { throw AccountStoreError.invalidAuthSnapshot }
+        guard var root = try JSONSerialization.jsonObject(with: jsonData) as? [String: Any] else {
+            throw AccountStoreError.invalidAuthSnapshot
+        }
+
+        if var tokens = root["tokens"] as? [String: Any] {
+            if let idToken, !idToken.isEmpty { tokens["id_token"] = idToken }
+            tokens["access_token"] = accessToken
+            if let refreshToken, !refreshToken.isEmpty { tokens["refresh_token"] = refreshToken }
+            root["tokens"] = tokens
+        } else {
+            if let idToken, !idToken.isEmpty { root["id_token"] = idToken }
+            root["access_token"] = accessToken
+            if let refreshToken, !refreshToken.isEmpty { root["refresh_token"] = refreshToken }
+        }
+        root["last_refresh"] = Self.iso8601WithFractionalSeconds.string(from: refreshedAt)
+
+        let data = try JSONSerialization.data(withJSONObject: root, options: [.prettyPrinted, .sortedKeys])
+        return try AuthSnapshot(jsonData: data)
+    }
+
     public static func == (lhs: AuthSnapshot, rhs: AuthSnapshot) -> Bool {
         lhs.jsonData == rhs.jsonData
     }
@@ -75,6 +106,12 @@ public struct AuthSnapshot: Equatable, Sendable {
             return nil
         }
     }
+
+    private static let iso8601WithFractionalSeconds: ISO8601DateFormatter = {
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return formatter
+    }()
 }
 
 private struct AnySendableValue: @unchecked Sendable {
