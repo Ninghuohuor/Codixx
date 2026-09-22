@@ -1672,6 +1672,7 @@ private struct AccountRowsView: View {
         tint: Color
     ) -> some View {
         let percentText = percent.map { "\(Int($0.rounded()))%" } ?? "--"
+        let progress = min(max((percent ?? 0) / 100, 0), 1)
         return VStack(alignment: .leading, spacing: 4) {
             HStack {
                 Text("\(title) · \(resetText)")
@@ -1683,8 +1684,19 @@ private struct AccountRowsView: View {
             .font(.caption)
             .foregroundStyle(.secondary)
 
-            ProgressView(value: min(max((percent ?? 0) / 100, 0), 1))
-                .tint(tint)
+            GeometryReader { proxy in
+                ZStack(alignment: .leading) {
+                    Capsule()
+                        .fill(Color.secondary.opacity(0.16))
+                    Capsule()
+                        .fill(tint)
+                        .frame(width: proxy.size.width * progress)
+                }
+            }
+            .frame(height: 8)
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel(title)
+            .accessibilityValue(percentText)
         }
         .help("\(title): \(percentText) · \(resetText)")
     }

@@ -55,7 +55,7 @@ final class PersistenceTests: XCTestCase {
         XCTAssertTrue(backups.contains { $0.hasPrefix("state_5.sqlite.provider-sync-") })
     }
 
-    func testThreadProviderSyncUpdatesSessionMetadataRolloutFiles() throws {
+    func testThreadProviderSyncLeavesSessionHistoryUntouched() throws {
         let tempHome = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
         defer { try? FileManager.default.removeItem(at: tempHome) }
         let paths = CodixxPaths(home: tempHome)
@@ -81,12 +81,9 @@ final class PersistenceTests: XCTestCase {
 
         XCTAssertEqual(changedRows, 1)
         XCTAssertEqual(try sqliteScalar(databaseURL, sql: "SELECT model_provider FROM threads WHERE id = 'thread-1'"), "openai-custom")
-        let firstLine = try String(contentsOf: sessionURL, encoding: .utf8)
-            .split(separator: "\n", omittingEmptySubsequences: false)
-            .first
-        XCTAssertTrue(firstLine?.contains(#""model_provider":"openai-custom""#) == true)
+        XCTAssertTrue(try String(contentsOf: sessionURL, encoding: .utf8).contains(#""model_provider":"openai""#))
         let backups = try FileManager.default.contentsOfDirectory(atPath: paths.backups.path)
-        XCTAssertTrue(backups.contains { $0.hasPrefix("rollout-test.jsonl.provider-sync-") })
+        XCTAssertFalse(backups.contains { $0.hasPrefix("rollout-test.jsonl.provider-sync-") })
     }
 
     func testThreadProviderSyncRestoresSessionMetadataWhenDatabaseUpdateFails() throws {
@@ -151,7 +148,7 @@ final class PersistenceTests: XCTestCase {
         XCTAssertEqual(changedRows, 1)
         XCTAssertEqual(try sqliteScalar(databaseURL, sql: "SELECT model_provider FROM threads WHERE id = 'visible'"), "openai-custom")
         XCTAssertEqual(try sqliteScalar(databaseURL, sql: "SELECT model_provider FROM threads WHERE id = 'subagent'"), "openai")
-        XCTAssertTrue(try String(contentsOf: visibleSessionURL).contains(#""model_provider":"openai-custom""#))
+        XCTAssertTrue(try String(contentsOf: visibleSessionURL).contains(#""model_provider":"openai""#))
         XCTAssertTrue(try String(contentsOf: subagentSessionURL).contains(#""model_provider":"openai""#))
     }
 
@@ -184,8 +181,8 @@ final class PersistenceTests: XCTestCase {
         XCTAssertEqual(changedRows, 2)
         XCTAssertEqual(try sqliteScalar(databaseURL, sql: "SELECT model_provider FROM threads WHERE id = 'visible'"), "openai-custom")
         XCTAssertEqual(try sqliteScalar(databaseURL, sql: "SELECT model_provider FROM threads WHERE id = 'subagent'"), "openai-custom")
-        XCTAssertTrue(try String(contentsOf: visibleSessionURL).contains(#""model_provider":"openai-custom""#))
-        XCTAssertTrue(try String(contentsOf: subagentSessionURL).contains(#""model_provider":"openai-custom""#))
+        XCTAssertTrue(try String(contentsOf: visibleSessionURL).contains(#""model_provider":"openai""#))
+        XCTAssertTrue(try String(contentsOf: subagentSessionURL).contains(#""model_provider":"openai""#))
     }
 
     func testConfigStoreLoadsDefaultConfigWhenFileIsAbsent() throws {
