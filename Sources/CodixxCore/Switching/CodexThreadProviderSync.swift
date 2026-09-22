@@ -44,18 +44,7 @@ public struct SQLiteCodexThreadProviderSync: CodexThreadProviderSyncing {
             database: database
         )
         guard matchingRows > 0 else { return 0 }
-        let rolloutPaths = try rolloutPaths(
-            provider: sourceProvider,
-            visibleThreadFilter: visibleThreadFilter,
-            columns: columns,
-            database: database
-        )
         try backup(databaseURL: databaseURL, database: database)
-        let sessionMetadataChanges = try syncSessionMetadata(
-            rolloutPaths: rolloutPaths,
-            from: sourceProvider,
-            to: targetProvider
-        )
 
         do {
             try exec("BEGIN IMMEDIATE", database: database)
@@ -69,7 +58,6 @@ public struct SQLiteCodexThreadProviderSync: CodexThreadProviderSyncing {
             return changedRows
         } catch {
             try? exec("ROLLBACK", database: database)
-            try? restoreSessionMetadata(sessionMetadataChanges)
             throw error
         }
     }
@@ -115,34 +103,6 @@ public struct SQLiteCodexThreadProviderSync: CodexThreadProviderSyncing {
         }
     }
 
-    private func rolloutPaths(
-        provider: String,
-        visibleThreadFilter: String,
-        columns: Set<String>,
-        database: OpaquePointer
-    ) throws -> [URL] {
-        guard columns.contains("rollout_path") else { return [] }
-        let statement = try prepare(
-            "SELECT DISTINCT rollout_path FROM threads WHERE model_provider = ?\(visibleThreadFilter) AND rollout_path IS NOT NULL AND rollout_path != ''",
-            database: database
-        )
-        defer { sqlite3_finalize(statement) }
-        sqlite3_bind_text(statement, 1, provider, -1, SQLITE_TRANSIENT)
-
-        var urls: [URL] = []
-        while true {
-            let stepResult = sqlite3_step(statement)
-            if stepResult == SQLITE_ROW {
-                guard let path = sqlite3_column_text(statement, 0) else { continue }
-                urls.append(URL(fileURLWithPath: String(cString: path)))
-            } else if stepResult == SQLITE_DONE {
-                return urls
-            } else {
-                throw CodexThreadProviderSyncError.sqlite(errorMessage(database))
-            }
-        }
-    }
-
     private func countRows(provider: String, visibleThreadFilter: String, database: OpaquePointer) throws -> Int {
         let statement = try prepare(
             "SELECT COUNT(*) FROM threads WHERE model_provider = ?\(visibleThreadFilter)",
@@ -175,71 +135,6 @@ public struct SQLiteCodexThreadProviderSync: CodexThreadProviderSyncing {
             throw CodexThreadProviderSyncError.sqlite(errorMessage(database))
         }
         return Int(sqlite3_changes(database))
-    }
-
-    private func syncSessionMetadata(
-        rolloutPaths: [URL],
-        from sourceProvider: String,
-        to targetProvider: String
-    ) throws -> [SessionMetadataChange] {
-        let fileManager = FileManager.default
-        var changes: [SessionMetadataChange] = []
-        for rolloutPath in rolloutPaths where fileManager.fileExists(atPath: rolloutPath.path) {
-            let text = try String(contentsOf: rolloutPath, encoding: .utf8)
-            guard let newline = text.firstIndex(of: "\n") else { continue }
-            let firstLine = String(text[..<newline])
-            let rest = String(text[newline...])
-            guard let updatedFirstLine = try updatedSessionMetaLine(firstLine, from: sourceProvider, to: targetProvider) else {
-                continue
-            }
-            try backupSessionFile(rolloutPath)
-            try (updatedFirstLine + rest).write(to: rolloutPath, atomically: true, encoding: .utf8)
-            changes.append(SessionMetadataChange(url: rolloutPath, originalText: text))
-        }
-        return changes
-    }
-
-    private func restoreSessionMetadata(_ changes: [SessionMetadataChange]) throws {
-        for change in changes.reversed() {
-            try change.originalText.write(to: change.url, atomically: true, encoding: .utf8)
-        }
-    }
-
-    private func updatedSessionMetaLine(_ line: String, from sourceProvider: String, to targetProvider: String) throws -> String? {
-        guard let data = line.data(using: .utf8),
-              var object = try JSONSerialization.jsonObject(with: data) as? [String: Any],
-              object["type"] as? String == "session_meta",
-              var payload = object["payload"] as? [String: Any],
-              payload["model_provider"] as? String == sourceProvider
-        else {
-            return nil
-        }
-
-        payload["model_provider"] = targetProvider
-        object["payload"] = payload
-        let updatedData = try JSONSerialization.data(withJSONObject: object, options: [.sortedKeys])
-        guard let updatedLine = String(data: updatedData, encoding: .utf8) else {
-            throw CodexThreadProviderSyncError.sessionMetadata("Could not encode session metadata")
-        }
-        return updatedLine
-    }
-
-    private func backupSessionFile(_ rolloutPath: URL) throws {
-        let fileManager = FileManager.default
-        try fileManager.createDirectory(at: paths.backups, withIntermediateDirectories: true)
-        let existingPrefix = "\(rolloutPath.lastPathComponent).provider-sync-"
-        let existingBackups = (try? fileManager.contentsOfDirectory(atPath: paths.backups.path)) ?? []
-        guard !existingBackups.contains(where: { $0.hasPrefix(existingPrefix) }) else {
-            return
-        }
-
-        let stamp = ISO8601DateFormatter()
-            .string(from: Date())
-            .replacingOccurrences(of: ":", with: "-")
-        let backupURL = paths.backups.appendingPathComponent(
-            "\(rolloutPath.lastPathComponent).provider-sync-\(stamp).bak"
-        )
-        try fileManager.copyItem(at: rolloutPath, to: backupURL)
     }
 
     private func backup(databaseURL: URL, database: OpaquePointer) throws {
@@ -287,21 +182,13 @@ public struct SQLiteCodexThreadProviderSync: CodexThreadProviderSyncing {
     }
 }
 
-private struct SessionMetadataChange {
-    var url: URL
-    var originalText: String
-}
-
 public enum CodexThreadProviderSyncError: Error, Equatable, LocalizedError {
     case sqlite(String)
-    case sessionMetadata(String)
 
     public var errorDescription: String? {
         switch self {
         case .sqlite(let message):
             return "Could not synchronize Codex thread providers. \(message)"
-        case .sessionMetadata(let message):
-            return "Could not synchronize Codex session metadata. \(message)"
         }
     }
 }

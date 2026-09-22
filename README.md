@@ -1,10 +1,10 @@
 # Codixx
 
-Current version: **1.0.11**
+Current version: **1.0.12**
 
 ## Download
 
-For Apple Silicon Macs, download `Codixx-1.0.11-macos-arm64.zip` from the [v1.0.11 GitHub Release](https://github.com/Ninghuohuor/Codixx/releases/tag/v1.0.11), unzip it, and double-click `Codixx.app`. Codixx is a menu bar app, so it runs from the menu bar rather than the Dock. The release package is currently unsigned; if macOS blocks the first launch, right-click the app and choose **Open**.
+For Apple Silicon Macs, download `Codixx-1.0.12-macos-arm64.zip` from the [v1.0.12 GitHub Release](https://github.com/Ninghuohuor/Codixx/releases/tag/v1.0.12), unzip it, and double-click `Codixx.app`. Codixx is a menu bar app, so it runs from the menu bar rather than the Dock. The release package is currently unsigned; if macOS blocks the first launch, right-click the app and choose **Open**.
 
 Codixx is a native macOS menu bar app for people who use Codex heavily and want a local way to track usage, monitor quota state, and switch between saved Codex accounts.
 
@@ -237,7 +237,7 @@ swift build -c release
 build/Codixx.app
 ```
 
-Apple Silicon 用户也可以直接从 [GitHub Release v1.0.11](https://github.com/Ninghuohuor/Codixx/releases/tag/v1.0.11) 下载 `Codixx-1.0.11-macos-arm64.zip`，解压后双击 `Codixx.app`。Codixx 是菜单栏 App，启动后不会固定显示在 Dock 中。当前发布包未使用 Apple Developer ID 签名，如果 macOS 首次拦截，请右键 App 选择“打开”。
+Apple Silicon 用户也可以直接从 [GitHub Release v1.0.12](https://github.com/Ninghuohuor/Codixx/releases/tag/v1.0.12) 下载 `Codixx-1.0.12-macos-arm64.zip`，解压后双击 `Codixx.app`。Codixx 是菜单栏 App，启动后不会固定显示在 Dock 中。当前发布包未使用 Apple Developer ID 签名，如果 macOS 首次拦截，请右键 App 选择“打开”。
 
 打包脚本会构建 release 可执行文件，创建 macOS app bundle，写入 `Info.plist`，复制应用图标，并在本机存在签名身份时进行本地签名。
 
