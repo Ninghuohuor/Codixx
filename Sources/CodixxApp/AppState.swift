@@ -69,6 +69,7 @@ final class AppState: ObservableObject, LifecycleStateManaging {
     private let codexDesktopManager: CodexDesktopManaging
     private let connectivityTester: APIProviderConnectivityTesting
     private let balanceQueryTester: APIBalanceQueryTesting
+    private let chatGPTCredentialRefresher: ChatGPTCredentialRefreshing
     private let now: () -> Date
     private var isRefreshInProgress = false
     private var isQuotaRefreshInProgress = false
@@ -94,6 +95,7 @@ final class AppState: ObservableObject, LifecycleStateManaging {
         codexDesktopManager: CodexDesktopManaging? = nil,
         connectivityTester: APIProviderConnectivityTesting = APIProviderConnectivityTester(),
         balanceQueryTester: APIBalanceQueryTesting = APIBalanceQueryTester(),
+        chatGPTCredentialRefresher: ChatGPTCredentialRefreshing = ChatGPTCredentialRefresher(),
         now: @escaping () -> Date = Date.init
     ) {
         self.paths = paths
@@ -103,6 +105,7 @@ final class AppState: ObservableObject, LifecycleStateManaging {
         self.codexDesktopManager = codexDesktopManager ?? SystemCodexDesktopManager()
         self.connectivityTester = connectivityTester
         self.balanceQueryTester = balanceQueryTester
+        self.chatGPTCredentialRefresher = chatGPTCredentialRefresher
         self.now = now
         self.configStore = CodixxConfigStore(paths: paths)
         self.metadataStore = AccountMetadataStore(paths: paths)
@@ -211,14 +214,29 @@ final class AppState: ObservableObject, LifecycleStateManaging {
             defer { queryingQuotaAccounts.remove(account.id) }
             do {
                 let snapshot: AuthSnapshot
+                let isLiveSnapshot: Bool
                 if let data = try? Data(contentsOf: paths.authJSON),
                    let live = try? AuthSnapshot(jsonData: data),
                    (try? AccountFingerprint.generate(from: live)) == account.fingerprint {
                     snapshot = live
+                    isLiveSnapshot = true
                 } else {
                     snapshot = try vault.load(fingerprint: account.fingerprint)
+                    isLiveSnapshot = false
                 }
-                let quota = try await ChatGPTQuotaClient().query(snapshot: snapshot, accountID: account.id.uuidString, alias: account.alias)
+                let quota: AccountQuotaState
+                do {
+                    quota = try await ChatGPTQuotaClient().query(snapshot: snapshot, accountID: account.id.uuidString, alias: account.alias)
+                } catch ChatGPTQuotaClient.QueryError.expiredLogin {
+                    let refreshed = try await chatGPTCredentialRefresher.refresh(snapshot: snapshot)
+                    if isLiveSnapshot,
+                       let currentData = try? Data(contentsOf: paths.authJSON),
+                       currentData == snapshot.jsonData {
+                        try AtomicFileWriter().write(refreshed.jsonData, to: paths.authJSON)
+                    }
+                    try vault.save(snapshot: refreshed, fingerprint: account.fingerprint)
+                    quota = try await ChatGPTQuotaClient().query(snapshot: refreshed, accountID: account.id.uuidString, alias: account.alias)
+                }
                 var latest = try metadataStore.load().accounts
                 guard let index = latest.firstIndex(where: { $0.id == account.id && $0.fingerprint == account.fingerprint }) else { return }
                 var updatedQuota = quota

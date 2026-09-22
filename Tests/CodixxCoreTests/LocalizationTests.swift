@@ -2,6 +2,18 @@ import XCTest
 @testable import CodixxCore
 
 final class LocalizationTests: XCTestCase {
+    func testRevokedSavedAccountExplainsOneTimeReloginAndBackgroundRenewal() {
+        let error = ChatGPTCredentialRefresher.RefreshError.rejected(
+            status: 401,
+            code: "refresh_token_invalidated"
+        )
+        XCTAssertEqual(
+            CodixxStrings(language: .chinese).quotaQueryFailure(error),
+            "服务端已撤销该账号的续期凭据。请登录一次该账号并重新保存，之后 Codixx 会在它不是当前账号时继续自动更新额度。"
+        )
+        XCTAssertTrue(CodixxStrings(language: .english).quotaQueryFailure(error).contains("keep its quota updated"))
+    }
+
     func testQuotaNetworkErrorsDoNotLeakSystemEnglishOrRawDetails() {
         let strings = CodixxStrings(language: .chinese)
         let tls = NSError(domain: NSURLErrorDomain, code: URLError.secureConnectionFailed.rawValue,

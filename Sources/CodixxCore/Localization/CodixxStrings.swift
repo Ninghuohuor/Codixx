@@ -241,6 +241,25 @@ public struct CodixxStrings: Sendable {
     }
 
     public func quotaQueryFailure(_ error: Error) -> String {
+        if let refresh = error as? ChatGPTCredentialRefresher.RefreshError {
+            switch refresh {
+            case .missingRefreshToken:
+                return text(
+                    en: "This saved account cannot renew its quota credential. Sign in to this account once and save it again.",
+                    zh: "该账号缺少可续期凭据，请登录一次该账号并重新保存。"
+                )
+            case .rejected(_, let code):
+                if code == "refresh_token_expired" || code == "refresh_token_reused" || code == "refresh_token_invalidated" {
+                    return text(
+                        en: "The server revoked this saved account's renewal credential. Sign in to this account once and save it again; Codixx will then keep its quota updated while it is inactive.",
+                        zh: "服务端已撤销该账号的续期凭据。请登录一次该账号并重新保存，之后 Codixx 会在它不是当前账号时继续自动更新额度。"
+                    )
+                }
+                return text(en: "Could not renew this account's quota credential. Try again later.", zh: "暂时无法续期该账号的额度凭据，请稍后重试。")
+            case .invalidResponse, .accountChanged:
+                return text(en: "The credential renewal response was invalid. Sign in to this account and save it again.", zh: "额度凭据续期结果异常，请登录该账号并重新保存。")
+            }
+        }
         if let query = error as? ChatGPTQuotaClient.QueryError {
             switch query {
             case .missingLogin: return text(en: "Missing login credentials. Sign in and save the account again.", zh: "缺少登录凭据，请登录后重新保存账号。")
