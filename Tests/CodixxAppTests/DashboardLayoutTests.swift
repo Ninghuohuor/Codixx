@@ -7,6 +7,14 @@ final class DashboardLayoutTests: XCTestCase {
         XCTAssertGreaterThanOrEqual(DashboardLayout.width, 540)
         XCTAssertEqual(DashboardLayout.popoverContentSize.width, DashboardLayout.width)
         XCTAssertEqual(DashboardLayout.accountCardMinHeight, 200)
+        XCTAssertEqual(
+            DashboardLayout.accountCardHeight(quotaWindowCount: 2, showsQuotaError: false),
+            244
+        )
+        XCTAssertEqual(
+            DashboardLayout.accountCardHeight(quotaWindowCount: 2, showsQuotaError: true),
+            300
+        )
         XCTAssertEqual(DashboardLayout.accountCardFooterSpacerMinLength, 0)
         XCTAssertEqual(DashboardLayout.draggingAccountOpacity, 1)
         XCTAssertGreaterThan(DashboardLayout.draggingAccountScale, 1)
@@ -14,6 +22,21 @@ final class DashboardLayoutTests: XCTestCase {
         XCTAssertGreaterThan(DashboardLayout.dragReleaseSettlingDelay, 0)
         XCTAssertGreaterThan(DashboardLayout.dragReleaseFadeDuration, 0)
         XCTAssertGreaterThan(DashboardLayout.dropTargetStrokeWidth, 0)
+    }
+
+    func testAccountDragGridUsesExpandedCardHeightForTwoQuotaWindows() {
+        let frame = AccountDragGridLayout.frame(
+            for: 2,
+            containerWidth: 532,
+            cardHeight: 244
+        )
+        XCTAssertEqual(frame.origin.y, 258, accuracy: 0.001)
+        XCTAssertEqual(frame.height, 244, accuracy: 0.001)
+        XCTAssertEqual(
+            AccountDragGridLayout.contentHeight(itemCount: 4, cardHeight: 244),
+            502,
+            accuracy: 0.001
+        )
     }
 
     func testAccountDragGridCalculatesTwoColumnFrames() {

@@ -1210,14 +1210,21 @@ enum PopoverPanelPresentation {
 }
 
 struct AccountDragGridLayout {
-    static func contentHeight(itemCount: Int) -> CGFloat {
+    static func contentHeight(
+        itemCount: Int,
+        cardHeight: CGFloat = DashboardLayout.accountCardMinHeight
+    ) -> CGFloat {
         guard itemCount > 0 else { return 0 }
         let rows = (itemCount + DashboardLayout.accountColumnCount - 1) / DashboardLayout.accountColumnCount
-        return CGFloat(rows) * DashboardLayout.accountCardMinHeight
+        return CGFloat(rows) * cardHeight
             + CGFloat(max(0, rows - 1)) * DashboardLayout.accountColumnSpacing
     }
 
-    static func frame(for index: Int, containerWidth: CGFloat) -> CGRect {
+    static func frame(
+        for index: Int,
+        containerWidth: CGFloat,
+        cardHeight: CGFloat = DashboardLayout.accountCardMinHeight
+    ) -> CGRect {
         let safeWidth = max(0, containerWidth)
         let columnCount = DashboardLayout.accountColumnCount
         let spacing = DashboardLayout.accountColumnSpacing
@@ -1227,19 +1234,24 @@ struct AccountDragGridLayout {
         let column = max(0, index) % columnCount
         return CGRect(
             x: CGFloat(column) * (cardWidth + spacing),
-            y: CGFloat(row) * (DashboardLayout.accountCardMinHeight + spacing),
+            y: CGFloat(row) * (cardHeight + spacing),
             width: cardWidth,
-            height: DashboardLayout.accountCardMinHeight
+            height: cardHeight
         )
     }
 
-    static func insertionIndex(for point: CGPoint, itemCount: Int, containerWidth: CGFloat) -> Int {
+    static func insertionIndex(
+        for point: CGPoint,
+        itemCount: Int,
+        containerWidth: CGFloat,
+        cardHeight: CGFloat = DashboardLayout.accountCardMinHeight
+    ) -> Int {
         let upperBound = max(0, itemCount)
         var bestIndex = 0
         var bestDistance = CGFloat.greatestFiniteMagnitude
 
         for index in 0...upperBound {
-            let frame = frame(for: index, containerWidth: containerWidth)
+            let frame = frame(for: index, containerWidth: containerWidth, cardHeight: cardHeight)
             let center = CGPoint(x: frame.midX, y: frame.midY)
             let dx = center.x - point.x
             let dy = center.y - point.y
@@ -1337,7 +1349,10 @@ private struct AccountRowsView: View {
             }
             .coordinateSpace(name: "accountRowsDragArea")
             .frame(
-                height: AccountDragGridLayout.contentHeight(itemCount: layoutItemCount),
+                height: AccountDragGridLayout.contentHeight(
+                    itemCount: layoutItemCount,
+                    cardHeight: accountCardHeight
+                ),
                 alignment: .topLeading
             )
             .animation(
@@ -1345,7 +1360,19 @@ private struct AccountRowsView: View {
                 value: state.accounts.map(\.id)
             )
         }
-        .frame(height: AccountDragGridLayout.contentHeight(itemCount: layoutItemCount))
+        .frame(height: AccountDragGridLayout.contentHeight(
+            itemCount: layoutItemCount,
+            cardHeight: accountCardHeight
+        ))
+    }
+
+    private var accountCardHeight: CGFloat {
+        state.accounts.map { account in
+            DashboardLayout.accountCardHeight(
+                quotaWindowCount: account.isChatGPT ? account.quota.reportedWindows.count : 0,
+                showsQuotaError: state.quotaQueryErrors[account.id] != nil
+            )
+        }.max() ?? DashboardLayout.accountCardMinHeight
     }
 
     private func frame(for account: CodixxAccount, containerWidth: CGFloat) -> CGRect {
@@ -1359,7 +1386,11 @@ private struct AccountRowsView: View {
             forVisibleIndex: visibleIndex,
             reservedInsertionIndex: reservedInsertionIndex
         )
-        return AccountDragGridLayout.frame(for: slotIndex, containerWidth: containerWidth)
+        return AccountDragGridLayout.frame(
+            for: slotIndex,
+            containerWidth: containerWidth,
+            cardHeight: accountCardHeight
+        )
     }
 
     private var layoutItemCount: Int {
@@ -1426,7 +1457,11 @@ private struct AccountRowsView: View {
 
     private func beginDrag(_ account: CodixxAccount, containerWidth: CGFloat) {
         guard let index = state.accounts.firstIndex(where: { $0.id == account.id }) else { return }
-        dragOrigin = AccountDragGridLayout.frame(for: index, containerWidth: containerWidth)
+        dragOrigin = AccountDragGridLayout.frame(
+            for: index,
+            containerWidth: containerWidth,
+            cardHeight: accountCardHeight
+        )
         dragTranslation = .zero
         draggingAccountID = account.id
         lastInsertionIndex = index
@@ -1438,7 +1473,8 @@ private struct AccountRowsView: View {
         let insertionIndex = AccountDragGridLayout.insertionIndex(
             for: location,
             itemCount: visibleCount,
-            containerWidth: containerWidth
+            containerWidth: containerWidth,
+            cardHeight: accountCardHeight
         )
         guard insertionIndex != lastInsertionIndex else { return }
         lastInsertionIndex = insertionIndex
@@ -1502,7 +1538,7 @@ private struct AccountRowsView: View {
             .font(.caption)
         }
         .padding(12)
-        .frame(height: DashboardLayout.accountCardMinHeight, alignment: .top)
+        .frame(height: accountCardHeight, alignment: .top)
         .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 8))
     }
 

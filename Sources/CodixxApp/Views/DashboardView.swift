@@ -8,6 +8,8 @@ enum DashboardLayout {
     static let accountColumnCount = 2
     static let accountColumnSpacing: CGFloat = 14
     static let accountCardMinHeight: CGFloat = 200
+    static let accountCardAdditionalQuotaHeight: CGFloat = 44
+    static let accountCardQuotaErrorHeight: CGFloat = 56
     static let accountCardFooterSpacerMinLength: CGFloat = 0
     static let draggingAccountOpacity: Double = 1
     static let draggingAccountScale: CGFloat = 1.026
@@ -16,6 +18,12 @@ enum DashboardLayout {
     static let dragReleaseFadeDuration: TimeInterval = 0.16
     static let dropTargetStrokeWidth: CGFloat = 2
     static let accountDragMinimumDistance: CGFloat = 7
+
+    static func accountCardHeight(quotaWindowCount: Int, showsQuotaError: Bool) -> CGFloat {
+        accountCardMinHeight
+            + CGFloat(max(0, quotaWindowCount - 1)) * accountCardAdditionalQuotaHeight
+            + (showsQuotaError ? accountCardQuotaErrorHeight : 0)
+    }
 }
 
 struct DashboardView: View {
