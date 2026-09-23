@@ -40,6 +40,19 @@ struct SettingsView: View {
                     ))
                     .disabled(!state.canEnableAutoSwitch)
 
+                    if state.isAutoSwitchSnoozed {
+                        HStack(alignment: .firstTextBaseline) {
+                            Text(state.strings.autoSwitchSnoozedHint)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                            Spacer(minLength: 8)
+                            Button(state.strings.resumeAutoSwitch) {
+                                state.resumeAutoSwitch()
+                            }
+                            .buttonStyle(.link)
+                        }
+                    }
+
                     Text(state.strings.manualSelectionHoldHint)
                         .font(.caption)
                         .foregroundStyle(.secondary)

@@ -8,6 +8,13 @@ enum AccountSaveStatus: Equatable {
     case failure(message: String)
 }
 
+struct AutoSwitchProposal: Equatable {
+    let sourceID: UUID
+    let sourceAlias: String
+    let targetID: UUID
+    let targetAlias: String
+}
+
 @MainActor
 protocol LifecycleStateManaging: AnyObject {
     var config: CodixxConfig { get }
@@ -76,6 +83,7 @@ final class AppState: ObservableObject, LifecycleStateManaging {
     @Published private(set) var accounts: [CodixxAccount] = []
     @Published private(set) var currentAccount: CodixxAccount?
     @Published private(set) var pendingAccountID: UUID?
+    @Published private(set) var pendingAutoSwitch: AutoSwitchProposal?
     @Published private(set) var quotaQueryErrors: [UUID: String] = [:]
     @Published private(set) var queryingQuotaAccounts: Set<UUID> = []
     private var lastQuotaQueries: [UUID: Date] = [:]
@@ -125,6 +133,7 @@ final class AppState: ObservableObject, LifecycleStateManaging {
     private var usageRefreshTask: Task<Void, Never>?
     private var accountOrderPersistenceTask: Task<Void, Never>?
     private var configPersistenceTask: Task<Void, Never>?
+    private var configPersistenceRevision = 0
     private var errorDismissWork: DispatchWorkItem?
     private var lastRefreshStartedAt: Date?
     private var hasPendingAccountOrderCommit = false
@@ -246,6 +255,12 @@ final class AppState: ObservableObject, LifecycleStateManaging {
             guard account.isEnabled else { return false }
             return account.isChatGPT || account.hasSufficientAPIBalance
         }.count >= 2
+    }
+
+    var isAutoSwitchSnoozed: Bool {
+        config.autoSwitchEnabled
+            && config.autoSwitchSnoozedAccountID == currentAccount?.id
+            && (config.autoSwitchSnoozedUntil.map { now() < $0 } ?? false)
     }
 
     var strings: CodixxStrings {
@@ -397,10 +412,12 @@ final class AppState: ObservableObject, LifecycleStateManaging {
 
         let refreshStartedAt = now()
         var refreshErrors: [String] = []
-        do {
-            config = try configStore.load()
-        } catch {
-            refreshErrors.append(error.localizedDescription)
+        if configPersistenceTask == nil {
+            do {
+                config = try configStore.load()
+            } catch {
+                refreshErrors.append(error.localizedDescription)
+            }
         }
 
         var loadedAccounts: [CodixxAccount] = []
@@ -535,10 +552,12 @@ final class AppState: ObservableObject, LifecycleStateManaging {
         lastRefreshStartedAt = refreshStartedAt
 
         var refreshErrors: [String] = []
-        do {
-            config = try configStore.load()
-        } catch {
-            refreshErrors.append(error.localizedDescription)
+        if configPersistenceTask == nil {
+            do {
+                config = try configStore.load()
+            } catch {
+                refreshErrors.append(error.localizedDescription)
+            }
         }
 
         var loadedAccounts: [CodixxAccount] = []
@@ -752,8 +771,10 @@ final class AppState: ObservableObject, LifecycleStateManaging {
     }
 
     func attemptAutoSwitchIfNeeded(activitySnapshotIsFresh: Bool = false) {
-        guard config.autoSwitchEnabled, !isSwitchInProgress, pendingAccountID == nil else { return }
+        guard config.autoSwitchEnabled, !isSwitchInProgress, pendingAccountID == nil,
+              pendingAutoSwitch == nil else { return }
         let timestamp = now()
+        if isAutoSwitchSnoozed { return }
         if let autoSwitchSuppressedUntil {
             guard timestamp >= autoSwitchSuppressedUntil else { return }
             self.autoSwitchSuppressedUntil = nil
@@ -792,6 +813,71 @@ final class AppState: ObservableObject, LifecycleStateManaging {
         else {
             return
         }
+
+        guard let source = currentAccount else { return }
+        pendingAutoSwitch = AutoSwitchProposal(
+            sourceID: source.id,
+            sourceAlias: source.alias,
+            targetID: target.id,
+            targetAlias: target.alias
+        )
+    }
+
+    func confirmPendingAutoSwitch() {
+        guard let proposal = pendingAutoSwitch else { return }
+        pendingAutoSwitch = nil
+        guard config.autoSwitchEnabled, currentAccount?.id == proposal.sourceID,
+              let target = candidateAccounts.first(where: { $0.id == proposal.targetID })
+        else { return }
+        let policy = SwitchPolicy(
+            primaryThresholdPercent: config.primaryThresholdPercent,
+            secondaryThresholdPercent: config.secondaryThresholdPercent
+        )
+        guard policy.shouldAutoSwitch(
+            currentAccount: currentAccount,
+            allAccounts: accounts,
+            context: SwitchSafetyContext(
+                now: now(),
+                activeThreadUpdatedAt: usageSnapshot.activeThread?.updatedAt,
+                lastSwitchAt: lastSuccessfulSwitchAt
+            )
+        ) else { return }
+        performAutomaticSwitch(to: target)
+    }
+
+    func snoozePendingAutoSwitch() {
+        guard let proposal = pendingAutoSwitch, currentAccount?.id == proposal.sourceID,
+              let account = currentAccount else { return }
+        let timestamp = now()
+        let nextReset = account.quota.reportedWindows
+            .filter { window in
+                window.usedPercent >= (window.isSecondary
+                    ? config.secondaryThresholdPercent : config.primaryThresholdPercent)
+            }
+            .compactMap(\.resetsAt)
+            .filter { $0 > timestamp }
+            .min() ?? timestamp.addingTimeInterval(86_400)
+        pendingAutoSwitch = nil
+        updateConfig {
+            $0.autoSwitchSnoozedAccountID = account.id
+            $0.autoSwitchSnoozedUntil = nextReset
+        }
+    }
+
+    func disablePendingAutoSwitch() {
+        pendingAutoSwitch = nil
+        setAutoSwitchEnabled(false)
+    }
+
+    func resumeAutoSwitch() {
+        updateConfig {
+            $0.autoSwitchSnoozedAccountID = nil
+            $0.autoSwitchSnoozedUntil = nil
+        }
+        attemptAutoSwitchIfNeeded()
+    }
+
+    private func performAutomaticSwitch(to target: CodixxAccount) {
 
         isSwitchInProgress = true
         defer { isSwitchInProgress = false }
@@ -1184,6 +1270,7 @@ final class AppState: ObservableObject, LifecycleStateManaging {
     }
 
     func switchToAccount(_ account: CodixxAccount) {
+        pendingAutoSwitch = nil
         accountSaveStatus = nil
         guard account.isAPIProvider else {
             switchToAccountAndRestartCodex(account)
@@ -1238,6 +1325,7 @@ final class AppState: ObservableObject, LifecycleStateManaging {
     }
 
     func switchToAccountAndRestartCodex(_ account: CodixxAccount) {
+        pendingAutoSwitch = nil
         guard !isSwitchInProgress else { return }
         isSwitchInProgress = true
         defer { isSwitchInProgress = false }
@@ -1564,7 +1652,14 @@ final class AppState: ObservableObject, LifecycleStateManaging {
     }
 
     func setAutoSwitchEnabled(_ isEnabled: Bool) {
-        updateConfig { $0.autoSwitchEnabled = isEnabled && canEnableAutoSwitch }
+        if !isEnabled { pendingAutoSwitch = nil }
+        updateConfig {
+            $0.autoSwitchEnabled = isEnabled && canEnableAutoSwitch
+            if isEnabled {
+                $0.autoSwitchSnoozedAccountID = nil
+                $0.autoSwitchSnoozedUntil = nil
+            }
+        }
     }
 
     func setNotificationsEnabled(_ isEnabled: Bool) {
@@ -1621,8 +1716,10 @@ final class AppState: ObservableObject, LifecycleStateManaging {
         var updated = config
         mutate(&updated)
         config = updated
+        configPersistenceRevision += 1
 
         let paths = paths
+        let revision = configPersistenceRevision
         let previousTask = configPersistenceTask
         let task = Task.detached(priority: .utility) { [updated, paths, previousTask] in
             if let previousTask {
@@ -1636,6 +1733,11 @@ final class AppState: ObservableObject, LifecycleStateManaging {
                 let message = error.localizedDescription
                 await MainActor.run { [weak self] in
                     self?.errorMessage = message
+                }
+            }
+            await MainActor.run { [weak self] in
+                if self?.configPersistenceRevision == revision {
+                    self?.configPersistenceTask = nil
                 }
             }
         }

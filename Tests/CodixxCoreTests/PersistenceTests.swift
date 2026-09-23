@@ -229,6 +229,8 @@ final class PersistenceTests: XCTestCase {
         let config = CodixxConfig(
             codexDirectoryPath: "/tmp/codex",
             autoSwitchEnabled: false,
+            autoSwitchSnoozedAccountID: UUID(),
+            autoSwitchSnoozedUntil: Date(timeIntervalSince1970: 1_800_000_000),
             primaryThresholdPercent: 88,
             secondaryThresholdPercent: 85,
             notificationsEnabled: false,
@@ -245,6 +247,8 @@ final class PersistenceTests: XCTestCase {
 
         XCTAssertEqual(loaded, config)
         XCTAssertEqual(loaded.language, .chinese)
+        XCTAssertEqual(loaded.autoSwitchSnoozedAccountID, config.autoSwitchSnoozedAccountID)
+        XCTAssertEqual(loaded.autoSwitchSnoozedUntil, config.autoSwitchSnoozedUntil)
         XCTAssertTrue(FileManager.default.fileExists(atPath: paths.configJSON.path))
     }
 

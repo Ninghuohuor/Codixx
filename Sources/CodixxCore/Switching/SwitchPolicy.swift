@@ -50,13 +50,11 @@ public struct SwitchPolicy: Sendable {
               currentAccount.quota.confidence == .fresh || currentAccount.quota.confidence == .recent,
               currentAccount.quota.primaryUsedPercent != nil || currentAccount.quota.secondaryUsedPercent != nil
         else { return false }
+        guard isSafeToAutoSwitch(context: context) else { return false }
         if isDepleted(currentAccount) {
             let others = allAccounts.filter { $0.id != currentAccount.id }
             let hasAvailable = !orderedCandidates(from: others) { _ in true }.isEmpty
             return hasAvailable
-        }
-        guard isSafeToAutoSwitch(context: context) else {
-            return false
         }
         return currentAccount.quota.reachesThreshold(short: primaryThresholdPercent, weekly: secondaryThresholdPercent)
     }

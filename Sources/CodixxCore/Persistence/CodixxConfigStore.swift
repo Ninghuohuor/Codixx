@@ -26,6 +26,8 @@ public enum APISwitchThreadSyncScope: String, Codable, CaseIterable, Identifiabl
 public struct CodixxConfig: Codable, Equatable, Sendable {
     public var codexDirectoryPath: String
     public var autoSwitchEnabled: Bool
+    public var autoSwitchSnoozedAccountID: UUID?
+    public var autoSwitchSnoozedUntil: Date?
     public var primaryThresholdPercent: Double
     public var secondaryThresholdPercent: Double
     public var notificationsEnabled: Bool
@@ -39,6 +41,8 @@ public struct CodixxConfig: Codable, Equatable, Sendable {
     public init(
         codexDirectoryPath: String,
         autoSwitchEnabled: Bool = true,
+        autoSwitchSnoozedAccountID: UUID? = nil,
+        autoSwitchSnoozedUntil: Date? = nil,
         primaryThresholdPercent: Double = 93,
         secondaryThresholdPercent: Double = 90,
         notificationsEnabled: Bool = true,
@@ -51,6 +55,8 @@ public struct CodixxConfig: Codable, Equatable, Sendable {
     ) {
         self.codexDirectoryPath = codexDirectoryPath
         self.autoSwitchEnabled = autoSwitchEnabled
+        self.autoSwitchSnoozedAccountID = autoSwitchSnoozedAccountID
+        self.autoSwitchSnoozedUntil = autoSwitchSnoozedUntil
         self.primaryThresholdPercent = primaryThresholdPercent
         self.secondaryThresholdPercent = secondaryThresholdPercent
         self.notificationsEnabled = notificationsEnabled
@@ -69,6 +75,8 @@ public struct CodixxConfig: Codable, Equatable, Sendable {
     private enum CodingKeys: String, CodingKey {
         case codexDirectoryPath
         case autoSwitchEnabled
+        case autoSwitchSnoozedAccountID
+        case autoSwitchSnoozedUntil
         case primaryThresholdPercent
         case secondaryThresholdPercent
         case notificationsEnabled
@@ -84,6 +92,8 @@ public struct CodixxConfig: Codable, Equatable, Sendable {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         self.codexDirectoryPath = try container.decode(String.self, forKey: .codexDirectoryPath)
         self.autoSwitchEnabled = try container.decode(Bool.self, forKey: .autoSwitchEnabled)
+        self.autoSwitchSnoozedAccountID = try container.decodeIfPresent(UUID.self, forKey: .autoSwitchSnoozedAccountID)
+        self.autoSwitchSnoozedUntil = try container.decodeIfPresent(Date.self, forKey: .autoSwitchSnoozedUntil)
         self.primaryThresholdPercent = try container.decode(Double.self, forKey: .primaryThresholdPercent)
         self.secondaryThresholdPercent = try container.decodeIfPresent(Double.self, forKey: .secondaryThresholdPercent) ?? 90
         self.notificationsEnabled = try container.decode(Bool.self, forKey: .notificationsEnabled)
