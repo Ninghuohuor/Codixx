@@ -758,6 +758,15 @@ final class AppState: ObservableObject, LifecycleStateManaging {
             guard timestamp >= autoSwitchSuppressedUntil else { return }
             self.autoSwitchSuppressedUntil = nil
         }
+        // A user's explicit account choice wins over the configured early-warning
+        // threshold. Keep it across Codex and Codixx restarts by reading the
+        // persisted switch audit; switch away only when that account is exhausted.
+        if Self.manualSelectionBlocksEarlyAutoSwitch(
+            currentAccount: currentAccount,
+            latestSuccessfulSwitch: switchEvents.first { $0.result == .success }
+        ) {
+            return
+        }
         let policy = SwitchPolicy(
             primaryThresholdPercent: config.primaryThresholdPercent,
             secondaryThresholdPercent: config.secondaryThresholdPercent
@@ -819,6 +828,22 @@ final class AppState: ObservableObject, LifecycleStateManaging {
                 refreshUsageIfEmpty: false
             )
         }
+    }
+
+    static func manualSelectionBlocksEarlyAutoSwitch(
+        currentAccount: CodixxAccount?,
+        latestSuccessfulSwitch: SwitchAuditEvent?
+    ) -> Bool {
+        guard let currentAccount,
+              let latestSuccessfulSwitch,
+              latestSuccessfulSwitch.trigger == .manual,
+              latestSuccessfulSwitch.targetAccountId == currentAccount.id
+        else { return false }
+        if currentAccount.isAPIProvider {
+            return !currentAccount.isAPIBalanceDepleted
+        }
+        return currentAccount.quota.primaryUsedPercent.map { $0 < 100 } ?? true
+            && (currentAccount.quota.secondaryUsedPercent.map { $0 < 100 } ?? true)
     }
 
     func saveCurrentAccount(alias: String) {

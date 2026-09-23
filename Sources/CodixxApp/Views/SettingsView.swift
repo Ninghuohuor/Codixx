@@ -40,6 +40,11 @@ struct SettingsView: View {
                     ))
                     .disabled(!state.canEnableAutoSwitch)
 
+                    Text(state.strings.manualSelectionHoldHint)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+
                     if !state.canEnableAutoSwitch {
                         Label(state.strings.autoSwitchNeedsTwoAccounts, systemImage: "person.crop.circle.badge.plus")
                             .font(.caption)
