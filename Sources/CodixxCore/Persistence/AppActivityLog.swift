@@ -80,7 +80,10 @@ public struct AppActivityLog {
 
     public func append(_ event: AppLogEvent) throws {
         try paths.createApplicationSupportDirectories(fileManager: fileManager)
-        try prune(existingEvents: loadEventsWithoutPruning() + [event])
+        let lockURL = paths.applicationSupport.appendingPathComponent("app_activity.jsonl.lock")
+        try FileLock(url: lockURL).withExclusiveLock {
+            try prune(existingEvents: loadEventsWithoutPruning() + [event])
+        }
     }
 
     public func loadEvents() throws -> [AppLogEvent] {
@@ -134,7 +137,7 @@ public struct AppActivityLog {
             return
         }
 
-        let chunks = Array(chunksWithinMaximumSize(for: retained).suffix(4))
+        let chunks = Array(try chunksWithinMaximumSize(for: retained).suffix(4))
         let chunksForURLs = Array(chunks.reversed())
         let urls = logURLsForWriting()
 
@@ -148,17 +151,20 @@ public struct AppActivityLog {
         }
     }
 
-    private func chunksWithinMaximumSize(for events: [AppLogEvent]) -> [[AppLogEvent]] {
+    private func chunksWithinMaximumSize(for events: [AppLogEvent]) throws -> [[AppLogEvent]] {
         var chunks: [[AppLogEvent]] = []
         var currentChunk: [AppLogEvent] = []
+        var currentBytes = 0
 
         for event in events {
-            let candidate = currentChunk + [event]
-            if !currentChunk.isEmpty, encodedByteCount(for: candidate) > retention.maximumBytes {
+            let eventBytes = try encoder.encode(event).count + 1 // JSONL newline
+            if !currentChunk.isEmpty, currentBytes + eventBytes > retention.maximumBytes {
                 chunks.append(currentChunk)
                 currentChunk = [event]
+                currentBytes = eventBytes
             } else {
-                currentChunk = candidate
+                currentChunk.append(event)
+                currentBytes += eventBytes
             }
         }
 
@@ -167,10 +173,6 @@ public struct AppActivityLog {
         }
 
         return chunks
-    }
-
-    private func encodedByteCount(for events: [AppLogEvent]) -> Int {
-        (try? encodedData(for: events).count) ?? Int.max
     }
 
     private func encodedData(for events: [AppLogEvent]) throws -> Data {

@@ -1806,6 +1806,22 @@ final class AppState: ObservableObject, LifecycleStateManaging {
             secondaryAlias: secondaryAlias,
             detail: detail
         )
+        if kind == .apiBalanceRefreshed || kind == .apiBalanceRefreshFailed {
+            appLogEvents.insert(event, at: 0)
+            let paths = paths
+            let clock = now
+            Task.detached(priority: .utility) { [weak self] in
+                do {
+                    try AppActivityLog(paths: paths, retention: .init(now: clock)).append(event)
+                } catch {
+                    let message = error.localizedDescription
+                    await MainActor.run { [weak self] in
+                        self?.errorMessage = message
+                    }
+                }
+            }
+            return
+        }
         do {
             try appActivityLog.append(event)
             appLogEvents = try appActivityLog.loadEvents().sorted { $0.timestamp > $1.timestamp }
