@@ -142,6 +142,12 @@ public struct CodixxStrings: Sendable {
     public var neverExpires: String { text(en: "Expiration unavailable locally", zh: "到期时间未知") }
     public var enabled: String { text(en: "Enabled", zh: "启用") }
     public var autoSwitch: String { text(en: "Auto switch", zh: "自动切换") }
+    public var manualSelectionHoldHint: String {
+        text(
+            en: "An account selected manually in Codixx stays active until its quota or balance is exhausted, including after Codex restarts.",
+            zh: "在 Codixx 手动选定的账号会保留到额度或余额耗尽；重启 Codex 不会覆盖这个选择。"
+        )
+    }
     public var autoSwitchNeedsTwoAccounts: String {
         text(
             en: "Enable at least two accounts that can switch. API accounts need an available balance.",

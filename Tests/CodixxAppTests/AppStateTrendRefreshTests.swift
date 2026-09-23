@@ -5,6 +5,54 @@ import SQLite3
 
 @MainActor
 final class AppStateTrendRefreshTests: XCTestCase {
+    func testManualProSelectionSurvivesEarlyThresholdUntilQuotaIsExhausted() {
+        let now = Date(timeIntervalSince1970: 1_778_300_000)
+        var pro = displayOrderAccount(alias: "Pro", priority: 2, now: now)
+        pro.quota = AccountQuotaState(
+            accountId: pro.id.uuidString,
+            alias: pro.alias,
+            primaryUsedPercent: 99,
+            primaryWindowMinutes: 10_080,
+            primaryResetsAt: now.addingTimeInterval(86_400),
+            secondaryUsedPercent: nil,
+            secondaryWindowMinutes: nil,
+            secondaryResetsAt: nil,
+            lastObservedAt: now,
+            confidence: .fresh
+        )
+        let manualSwitch = SwitchAuditEvent(
+            timestamp: now,
+            trigger: .manual,
+            sourceAccountId: UUID(),
+            sourceAlias: "OpenLux",
+            targetAccountId: pro.id,
+            targetAlias: pro.alias,
+            sourcePrimaryUsedPercent: nil,
+            sourceSecondaryUsedPercent: nil,
+            threshold: nil,
+            result: .success,
+            errorSummary: nil,
+            backupPath: nil
+        )
+
+        XCTAssertTrue(AppState.manualSelectionBlocksEarlyAutoSwitch(
+            currentAccount: pro,
+            latestSuccessfulSwitch: manualSwitch
+        ))
+        pro.quota.primaryUsedPercent = 100
+        XCTAssertFalse(AppState.manualSelectionBlocksEarlyAutoSwitch(
+            currentAccount: pro,
+            latestSuccessfulSwitch: manualSwitch
+        ))
+        pro.quota.primaryUsedPercent = 99
+        var automaticSwitch = manualSwitch
+        automaticSwitch.trigger = .autoPrimaryThreshold
+        XCTAssertFalse(AppState.manualSelectionBlocksEarlyAutoSwitch(
+            currentAccount: pro,
+            latestSuccessfulSwitch: automaticSwitch
+        ))
+    }
+
     func testSlowSavedCredentialLookupDoesNotBlockMenuThread() async throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
         defer { try? FileManager.default.removeItem(at: directory) }
