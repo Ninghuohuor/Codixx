@@ -458,6 +458,83 @@ final class AppStateTrendRefreshTests: XCTestCase {
         XCTAssertEqual(codexDesktopManager.restartCallCount, 1)
     }
 
+    func testSwitchToAPIProviderRestartsRunningCodexForManualAndAutomaticSwitches() throws {
+        for automatic in [false, true] {
+            let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+            defer { try? FileManager.default.removeItem(at: directory) }
+            let paths = CodixxPaths(home: directory)
+            try FileManager.default.createDirectory(at: paths.codexHome, withIntermediateDirectories: true)
+
+            let now = Date(timeIntervalSince1970: 1_778_300_000)
+            let chatGPTAuth = try AuthSnapshot(jsonData: Data(#"{"account_id":"plus","access_token":"plus-secret"}"#.utf8))
+            try chatGPTAuth.jsonData.write(to: paths.authJSON)
+            let chatGPTFingerprint = try AccountFingerprint.generate(from: chatGPTAuth)
+            let chatGPT = CodixxAccount(
+                id: UUID(), alias: "Plus", fingerprint: chatGPTFingerprint,
+                createdAt: now, updatedAt: now, lastUsedAt: now,
+                quota: AccountQuotaState(
+                    accountId: "plus", alias: "Plus", primaryUsedPercent: 100,
+                    primaryWindowMinutes: 300, primaryResetsAt: now.addingTimeInterval(3_600),
+                    secondaryUsedPercent: 20, secondaryWindowMinutes: 10_080,
+                    secondaryResetsAt: now.addingTimeInterval(86_400),
+                    lastObservedAt: now, confidence: .fresh
+                ),
+                isEnabled: true, priority: 0
+            )
+            let apiFingerprint = try AccountFingerprint.generate(from: AuthSnapshot.apiKey("sk-relay"))
+            let api = CodixxAccount(
+                id: UUID(), alias: "OpenLux", fingerprint: apiFingerprint,
+                credentialKind: .apiProvider,
+                apiProvider: APIProviderAccount(
+                    providerName: "OpenLux",
+                    baseURL: URL(string: "https://relay.example.com/v1")!,
+                    defaultModel: nil,
+                    keyFingerprint: apiFingerprint,
+                    balanceQuery: APIBalanceQueryConfig(
+                        isEnabled: true, lastBalanceText: "1.00", lastRefreshedAt: now
+                    )
+                ),
+                createdAt: now, updatedAt: now, lastUsedAt: nil,
+                quota: .unknown(accountId: apiFingerprint, alias: "OpenLux"),
+                isEnabled: true, priority: 0
+            )
+            let apiKeyVault = InMemoryAPIKeyVault()
+            try apiKeyVault.save(apiKey: "sk-relay", fingerprint: api.fingerprint)
+            try AccountMetadataStore(paths: paths).save(AccountMetadataList(accounts: [chatGPT, api]))
+            var config = CodixxConfig.default(paths: paths)
+            config.autoSwitchEnabled = automatic
+            try CodixxConfigStore(paths: paths).save(config)
+
+            let codexDesktopManager = CodexDesktopManagerSpy()
+            codexDesktopManager.isRunning = true
+            codexDesktopManager.onQuit = {
+                XCTAssertEqual(try? Data(contentsOf: paths.authJSON), chatGPTAuth.jsonData)
+            }
+            codexDesktopManager.onRestart = {
+                let snapshot = try? AuthSnapshot(jsonData: Data(contentsOf: paths.authJSON))
+                XCTAssertEqual(snapshot?.stringValue(for: "auth_mode"), "apikey")
+            }
+            let state = AppState(
+                paths: paths, vault: InMemoryVault(), apiKeyVault: apiKeyVault,
+                codexDesktopState: NoopCodexDesktopStateCleaner(),
+                codexDesktopManager: codexDesktopManager, now: { now }
+            )
+            if automatic {
+                state.refreshQuotaNow()
+            } else {
+                state.switchToAccount(api)
+            }
+
+            XCTAssertEqual(state.pendingAccountID, api.id, "automatic: \(automatic)")
+            XCTAssertEqual(codexDesktopManager.quitForCleanSwitchCallCount, 1, "automatic: \(automatic)")
+            XCTAssertEqual(codexDesktopManager.restartCallCount, 1, "automatic: \(automatic)")
+            XCTAssertNil(state.postSwitchRestartMessage)
+            codexDesktopManager.identity = "restarted-process"
+            state.refreshQuotaNow()
+            XCTAssertEqual(state.currentAccount?.id, api.id, "automatic: \(automatic)")
+        }
+    }
+
     func testAppStateCanSaveAPIProviderAccount() throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
         defer { try? FileManager.default.removeItem(at: directory) }
@@ -1698,6 +1775,8 @@ private final class CodexDesktopManagerSpy: CodexDesktopManaging {
     var quitForCleanSwitchCallCount = 0
     var restartCallCount = 0
     var restoreActivationCallCount = 0
+    var onQuit: (() -> Void)?
+    var onRestart: (() -> Void)?
 
     func currentActivation() -> CodexActivation {
         CodexActivation(activeProcessIdentifier: nil)
@@ -1709,10 +1788,12 @@ private final class CodexDesktopManagerSpy: CodexDesktopManaging {
 
     func quitForCleanSwitch() {
         quitForCleanSwitchCallCount += 1
+        onQuit?()
     }
 
     func restart() throws {
         restartCallCount += 1
+        onRestart?()
     }
 }
 
