@@ -49,8 +49,12 @@ final class ResetForecastStore: ObservableObject {
                 request.setValue("application/json", forHTTPHeaderField: "Accept")
                 let (data, response) = try await URLSession.shared.data(for: request)
                 guard let http = response as? HTTPURLResponse, http.statusCode == 200, data.count <= 8_000_000 else { throw CocoaError(.fileReadCorruptFile) }
-                let latest = try ResetFeed.decode(data)
-                try cache.save(latest)
+                let cache = cache
+                let latest = try await Task.detached(priority: .utility) {
+                    let latest = try ResetFeed.decode(data)
+                    try cache.save(latest)
+                    return latest
+                }.value
                 feed = latest
                 error = nil
                 await notifyChanges(latest)

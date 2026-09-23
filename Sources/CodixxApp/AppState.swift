@@ -18,12 +18,60 @@ protocol LifecycleStateManaging: AnyObject {
 
     func refreshNow()
     func refreshQuotaNow()
+    func refreshQuotaInBackground()
     func refreshUsageNow()
     func refreshAPIBalancesNow()
 }
 
+private struct ChatGPTQuotaWorker: @unchecked Sendable {
+    let paths: CodixxPaths
+    let vault: AuthSnapshotVault
+    let credentialRefresher: ChatGPTCredentialRefreshing
+
+    func query(for account: CodixxAccount) async throws -> AccountQuotaState {
+        let snapshot: AuthSnapshot
+        let isLiveSnapshot: Bool
+        if let data = try? Data(contentsOf: paths.authJSON),
+           let live = try? AuthSnapshot(jsonData: data),
+           (try? AccountFingerprint.generate(from: live)) == account.fingerprint {
+            snapshot = live
+            isLiveSnapshot = true
+        } else {
+            snapshot = try vault.load(fingerprint: account.fingerprint)
+            isLiveSnapshot = false
+        }
+
+        do {
+            return try await ChatGPTQuotaClient().query(
+                snapshot: snapshot,
+                accountID: account.id.uuidString,
+                alias: account.alias
+            )
+        } catch ChatGPTQuotaClient.QueryError.expiredLogin {
+            let refreshed = try await credentialRefresher.refresh(snapshot: snapshot)
+            if isLiveSnapshot,
+               let currentData = try? Data(contentsOf: paths.authJSON),
+               currentData == snapshot.jsonData {
+                try AtomicFileWriter().write(refreshed.jsonData, to: paths.authJSON)
+            }
+            try vault.save(snapshot: refreshed, fingerprint: account.fingerprint)
+            return try await ChatGPTQuotaClient().query(
+                snapshot: refreshed,
+                accountID: account.id.uuidString,
+                alias: account.alias
+            )
+        }
+    }
+}
+
 @MainActor
 final class AppState: ObservableObject, LifecycleStateManaging {
+    private enum RateLimitPrefetch: Sendable {
+        case skipped
+        case loaded([RateLimitObservation])
+        case failed(String)
+    }
+
     @Published private(set) var config: CodixxConfig
     @Published private(set) var accounts: [CodixxAccount] = []
     @Published private(set) var currentAccount: CodixxAccount?
@@ -210,47 +258,42 @@ final class AppState: ObservableObject, LifecycleStateManaging {
         lastQuotaQueries[account.id] = now()
         queryingQuotaAccounts.insert(account.id)
         quotaQueryErrors[account.id] = nil
-        Task {
-            defer { queryingQuotaAccounts.remove(account.id) }
+        let worker = ChatGPTQuotaWorker(
+            paths: paths,
+            vault: vault,
+            credentialRefresher: chatGPTCredentialRefresher
+        )
+        Task.detached(priority: .utility) { [weak self] in
             do {
-                let snapshot: AuthSnapshot
-                let isLiveSnapshot: Bool
-                if let data = try? Data(contentsOf: paths.authJSON),
-                   let live = try? AuthSnapshot(jsonData: data),
-                   (try? AccountFingerprint.generate(from: live)) == account.fingerprint {
-                    snapshot = live
-                    isLiveSnapshot = true
-                } else {
-                    snapshot = try vault.load(fingerprint: account.fingerprint)
-                    isLiveSnapshot = false
-                }
-                let quota: AccountQuotaState
-                do {
-                    quota = try await ChatGPTQuotaClient().query(snapshot: snapshot, accountID: account.id.uuidString, alias: account.alias)
-                } catch ChatGPTQuotaClient.QueryError.expiredLogin {
-                    let refreshed = try await chatGPTCredentialRefresher.refresh(snapshot: snapshot)
-                    if isLiveSnapshot,
-                       let currentData = try? Data(contentsOf: paths.authJSON),
-                       currentData == snapshot.jsonData {
-                        try AtomicFileWriter().write(refreshed.jsonData, to: paths.authJSON)
-                    }
-                    try vault.save(snapshot: refreshed, fingerprint: account.fingerprint)
-                    quota = try await ChatGPTQuotaClient().query(snapshot: refreshed, accountID: account.id.uuidString, alias: account.alias)
-                }
-                var latest = try metadataStore.load().accounts
-                guard let index = latest.firstIndex(where: { $0.id == account.id && $0.fingerprint == account.fingerprint }) else { return }
-                var updatedQuota = quota
-                updatedQuota.alias = latest[index].alias
-                updatedQuota.planType = quota.planType ?? latest[index].quota.planType
-                latest[index].quota = updatedQuota
-                latest[index].updatedAt = now()
-                try metadataStore.save(AccountMetadataList(accounts: latest))
-                accounts = latest
-                if currentAccount?.id == account.id { currentAccount = latest[index] }
+                let quota = try await worker.query(for: account)
+                await self?.completeChatGPTQuota(quota, for: account)
             } catch {
-                quotaQueryErrors[account.id] = strings.quotaQueryFailure(error)
+                await self?.failChatGPTQuota(error, for: account)
             }
         }
+    }
+
+    private func completeChatGPTQuota(_ quota: AccountQuotaState, for account: CodixxAccount) {
+        defer { queryingQuotaAccounts.remove(account.id) }
+        do {
+            var latest = try metadataStore.load().accounts
+            guard let index = latest.firstIndex(where: { $0.id == account.id && $0.fingerprint == account.fingerprint }) else { return }
+            var updatedQuota = quota
+            updatedQuota.alias = latest[index].alias
+            updatedQuota.planType = quota.planType ?? latest[index].quota.planType
+            latest[index].quota = updatedQuota
+            latest[index].updatedAt = now()
+            try metadataStore.save(AccountMetadataList(accounts: latest))
+            accounts = latest
+            if currentAccount?.id == account.id { currentAccount = latest[index] }
+        } catch {
+            quotaQueryErrors[account.id] = strings.quotaQueryFailure(error)
+        }
+    }
+
+    private func failChatGPTQuota(_ error: Error, for account: CodixxAccount) {
+        queryingQuotaAccounts.remove(account.id)
+        quotaQueryErrors[account.id] = strings.quotaQueryFailure(error)
     }
 
     private func refreshDueChatGPTQuotas(force: Bool = false) {
@@ -277,6 +320,39 @@ final class AppState: ObservableObject, LifecycleStateManaging {
             preservingError: nil,
             refreshUsageActivityOnly: true
         )
+    }
+
+    func refreshQuotaInBackground() {
+        guard !isQuotaRefreshInProgress else { return }
+        isQuotaRefreshInProgress = true
+        isRefreshing = true
+        resetForecastStore.refresh()
+        let paths = paths
+        let checkAuthHealth = lastAuthHealthCheckAt.map { now().timeIntervalSince($0) >= authHealthCheckInterval } ?? true
+        Task.detached(priority: .utility) { [weak self] in
+            let prefetch: RateLimitPrefetch
+            let auth = try? Data(contentsOf: paths.authJSON)
+            let authMode = auth.flatMap { try? AuthSnapshot(jsonData: $0).stringValue(for: "auth_mode") }
+            if auth == nil || authMode == "apikey" {
+                prefetch = .skipped
+            } else {
+                do {
+                    prefetch = .loaded(try RateLimitReader(paths: paths).readNewObservations())
+                } catch {
+                    prefetch = .failed(error.localizedDescription)
+                }
+            }
+            let health = checkAuthHealth ? CodexAuthHealthInspector(paths: paths).inspect() : nil
+            await self?.refreshQuotaPipeline(
+                allowAutoSwitch: true,
+                preservingError: nil,
+                refreshUsageActivityOnly: true,
+                backgroundActivityRead: true,
+                reservedForBackgroundRefresh: true,
+                rateLimitPrefetch: prefetch,
+                authHealthPrefetch: health
+            )
+        }
     }
 
     func refreshUsageNow() {
@@ -309,9 +385,13 @@ final class AppState: ObservableObject, LifecycleStateManaging {
     private func refreshQuotaPipeline(
         allowAutoSwitch: Bool,
         preservingError preservedError: String?,
-        refreshUsageActivityOnly: Bool = false
+        refreshUsageActivityOnly: Bool = false,
+        backgroundActivityRead: Bool = false,
+        reservedForBackgroundRefresh: Bool = false,
+        rateLimitPrefetch: RateLimitPrefetch? = nil,
+        authHealthPrefetch: CodexAuthHealth? = nil
     ) {
-        guard !isQuotaRefreshInProgress else { return }
+        guard reservedForBackgroundRefresh || !isQuotaRefreshInProgress else { return }
         isQuotaRefreshInProgress = true
         isRefreshing = true
 
@@ -330,16 +410,40 @@ final class AppState: ObservableObject, LifecycleStateManaging {
             refreshErrors.append(error.localizedDescription)
         }
 
-        do {
-            try applyLatestRateLimitObservation(to: &loadedAccounts)
-        } catch {
-            refreshErrors.append(error.localizedDescription)
+        if case .failed(let message) = rateLimitPrefetch {
+            refreshErrors.append(message)
+            if refreshQuotaConfidence(in: &loadedAccounts, timestamp: refreshStartedAt) {
+                do {
+                    try metadataStore.save(AccountMetadataList(accounts: loadedAccounts))
+                } catch {
+                    refreshErrors.append(error.localizedDescription)
+                }
+            }
+        } else {
+            do {
+                let observations: [RateLimitObservation]?
+                if case .loaded(let prefetched) = rateLimitPrefetch {
+                    observations = prefetched
+                } else if case .skipped = rateLimitPrefetch {
+                    observations = []
+                } else {
+                    observations = nil
+                }
+                try applyLatestRateLimitObservation(to: &loadedAccounts, observations: observations)
+            } catch {
+                refreshErrors.append(error.localizedDescription)
+            }
         }
 
         accounts = loadedAccounts
         currentAccount = currentAccount(in: loadedAccounts)
         refreshDueChatGPTQuotas()
-        refreshAuthHealthIfNeeded()
+        if let authHealthPrefetch {
+            authHealth = authHealthPrefetch
+            lastAuthHealthCheckAt = refreshStartedAt
+        } else if !reservedForBackgroundRefresh {
+            refreshAuthHealthIfNeeded()
+        }
         do {
             switchEvents = try auditLog.loadEvents().sorted { $0.timestamp > $1.timestamp }
         } catch {
@@ -349,6 +453,23 @@ final class AppState: ObservableObject, LifecycleStateManaging {
             appLogEvents = try appActivityLog.loadEvents().sorted { $0.timestamp > $1.timestamp }
         } catch {
             refreshErrors.append(error.localizedDescription)
+        }
+
+        if refreshUsageActivityOnly && backgroundActivityRead {
+            let usageReader = threadUsageReader
+            Task.detached(priority: .utility) { [weak self] in
+                let latestUsageSnapshot = usageReader.readActivitySnapshot(
+                    now: refreshStartedAt,
+                    includeEffectiveTokenCounts: false
+                )
+                await self?.completeBackgroundQuotaRefresh(
+                    latestUsageSnapshot,
+                    errors: refreshErrors,
+                    preservedError: preservedError,
+                    allowAutoSwitch: allowAutoSwitch
+                )
+            }
+            return
         }
 
         if refreshUsageActivityOnly {
@@ -367,6 +488,26 @@ final class AppState: ObservableObject, LifecycleStateManaging {
             errors: refreshErrors,
             preservedError: preservedError,
             allowAutoSwitch: allowAutoSwitch
+        )
+    }
+
+    private func completeBackgroundQuotaRefresh(
+        _ snapshot: ThreadUsageSnapshot,
+        errors: [String],
+        preservedError: String?,
+        allowAutoSwitch: Bool
+    ) {
+        var errors = errors
+        if snapshot.isDegraded, !usageSnapshot.threads.isEmpty {
+            errors.append(snapshot.errorSummary ?? strings.usageReadFailed)
+        } else {
+            applyUsageSnapshot(snapshot, preservingTokenBuckets: true)
+        }
+        finishQuotaRefresh(
+            errors: errors,
+            preservedError: preservedError,
+            allowAutoSwitch: allowAutoSwitch && !snapshot.isDegraded,
+            activitySnapshotIsFresh: true
         )
     }
 
@@ -471,7 +612,8 @@ final class AppState: ObservableObject, LifecycleStateManaging {
                     self.finishRefresh(
                         errors: finalErrors,
                         preservedError: preservedError,
-                        allowAutoSwitch: allowAutoSwitch
+                        allowAutoSwitch: allowAutoSwitch && !latestUsageSnapshot.isDegraded,
+                        activitySnapshotIsFresh: !latestUsageSnapshot.isDegraded
                     )
                 }
             }
@@ -506,7 +648,8 @@ final class AppState: ObservableObject, LifecycleStateManaging {
     private func finishRefresh(
         errors refreshErrors: [String],
         preservedError: String?,
-        allowAutoSwitch: Bool
+        allowAutoSwitch: Bool,
+        activitySnapshotIsFresh: Bool = false
     ) {
         var refreshErrors = refreshErrors
         if let preservedError {
@@ -528,14 +671,15 @@ final class AppState: ObservableObject, LifecycleStateManaging {
         isRefreshInProgress = false
 
         if allowAutoSwitch {
-            attemptAutoSwitchIfNeeded()
+            attemptAutoSwitchIfNeeded(activitySnapshotIsFresh: activitySnapshotIsFresh)
         }
     }
 
     private func finishQuotaRefresh(
         errors refreshErrors: [String],
         preservedError: String?,
-        allowAutoSwitch: Bool
+        allowAutoSwitch: Bool,
+        activitySnapshotIsFresh: Bool = false
     ) {
         var refreshErrors = refreshErrors
         if let preservedError {
@@ -559,7 +703,7 @@ final class AppState: ObservableObject, LifecycleStateManaging {
         }
 
         if allowAutoSwitch {
-            attemptAutoSwitchIfNeeded()
+            attemptAutoSwitchIfNeeded(activitySnapshotIsFresh: activitySnapshotIsFresh)
         }
     }
 
@@ -607,7 +751,7 @@ final class AppState: ObservableObject, LifecycleStateManaging {
         isLoadingFullUsageSnapshot = false
     }
 
-    func attemptAutoSwitchIfNeeded() {
+    func attemptAutoSwitchIfNeeded(activitySnapshotIsFresh: Bool = false) {
         guard config.autoSwitchEnabled, !isSwitchInProgress, pendingAccountID == nil else { return }
         let timestamp = now()
         if let autoSwitchSuppressedUntil {
@@ -618,7 +762,7 @@ final class AppState: ObservableObject, LifecycleStateManaging {
             primaryThresholdPercent: config.primaryThresholdPercent,
             secondaryThresholdPercent: config.secondaryThresholdPercent
         )
-        if currentAccount?.isAPIProvider == true {
+        if currentAccount?.isAPIProvider == true && !activitySnapshotIsFresh {
             let latestUsageSnapshot = threadUsageReader.readActivitySnapshot(
                 now: timestamp,
                 includeEffectiveTokenCounts: false
@@ -991,7 +1135,23 @@ final class AppState: ObservableObject, LifecycleStateManaging {
             didRefresh = didRefresh || result.isSuccess
         }
         if didRefresh {
-            attemptAutoSwitchIfNeeded()
+            if currentAccount?.isAPIProvider == true {
+                let accountID = currentAccount?.id
+                let reader = threadUsageReader
+                let timestamp = now()
+                let snapshot = await Task.detached(priority: .utility) {
+                    reader.readActivitySnapshot(now: timestamp, includeEffectiveTokenCounts: false)
+                }.value
+                guard currentAccount?.id == accountID else { return }
+                if snapshot.isDegraded {
+                    errorMessage = snapshot.errorSummary ?? strings.usageReadFailed
+                    return
+                }
+                applyUsageSnapshot(snapshot, preservingTokenBuckets: true)
+                attemptAutoSwitchIfNeeded(activitySnapshotIsFresh: true)
+            } else {
+                attemptAutoSwitchIfNeeded()
+            }
         }
     }
 
@@ -1629,7 +1789,10 @@ final class AppState: ObservableObject, LifecycleStateManaging {
         }
     }
 
-    private func applyLatestRateLimitObservation(to accounts: inout [CodixxAccount]) throws {
+    private func applyLatestRateLimitObservation(
+        to accounts: inout [CodixxAccount],
+        observations prefetchedObservations: [RateLimitObservation]? = nil
+    ) throws {
         let timestamp = now()
         let didRefreshCachedQuota = refreshQuotaConfidence(in: &accounts, timestamp: timestamp)
 
@@ -1646,7 +1809,13 @@ final class AppState: ObservableObject, LifecycleStateManaging {
               let auth = try? AuthSnapshot(jsonData: authData),
               (try? AccountFingerprint.generate(from: auth)) == current.fingerprint else { return }
         let minimumObservedAt = max(current.lastUsedAt ?? .distantPast, current.quota.lastObservedAt ?? .distantPast)
-        let observations = try rateLimitReader.readNewObservations().filter { observation in
+        let rawObservations: [RateLimitObservation]
+        if let prefetchedObservations {
+            rawObservations = prefetchedObservations
+        } else {
+            rawObservations = try rateLimitReader.readNewObservations()
+        }
+        let observations = rawObservations.filter { observation in
             return observation.observedAt >= minimumObservedAt
         }
         guard let observation = Self.preferredRateLimitObservation(in: observations) else {

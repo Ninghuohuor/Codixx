@@ -1,9 +1,62 @@
 import XCTest
 @testable import CodixxApp
 import CodixxCore
+import SQLite3
 
 @MainActor
 final class AppStateTrendRefreshTests: XCTestCase {
+    func testSlowSavedCredentialLookupDoesNotBlockMenuThread() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let paths = CodixxPaths(home: directory)
+        let account = displayOrderAccount(alias: "Saved Pro", priority: 0, now: Date())
+        let state = AppState(
+            paths: paths,
+            vault: DelayedFailingVault(),
+            apiKeyVault: InMemoryAPIKeyVault(),
+            codexDesktopState: NoopCodexDesktopStateCleaner(),
+            codexDesktopManager: CodexDesktopManagerSpy()
+        )
+
+        let started = Date()
+        state.refreshChatGPTQuota(for: account)
+        XCTAssertLessThan(Date().timeIntervalSince(started), 0.5)
+        XCTAssertTrue(state.queryingQuotaAccounts.contains(account.id))
+        try await waitUntil { !state.queryingQuotaAccounts.contains(account.id) }
+        XCTAssertNotNil(state.quotaQueryErrors[account.id])
+    }
+
+    func testScheduledQuotaRefreshDoesNotBlockMenuWhenThreadsDatabaseIsLocked() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let paths = CodixxPaths(home: directory)
+        let databaseURL = paths.latestStateDatabaseURL()
+        try FileManager.default.createDirectory(at: databaseURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+        var database: OpaquePointer?
+        XCTAssertEqual(sqlite3_open(databaseURL.path, &database), SQLITE_OK)
+        defer { sqlite3_close(database) }
+        XCTAssertEqual(sqlite3_exec(database, "CREATE TABLE threads(id TEXT PRIMARY KEY)", nil, nil, nil), SQLITE_OK)
+        XCTAssertEqual(sqlite3_exec(database, "BEGIN EXCLUSIVE", nil, nil, nil), SQLITE_OK)
+
+        let state = AppState(
+            paths: paths,
+            vault: InMemoryVault(),
+            apiKeyVault: InMemoryAPIKeyVault(),
+            codexDesktopState: NoopCodexDesktopStateCleaner(),
+            codexDesktopManager: CodexDesktopManagerSpy()
+        )
+        let started = Date()
+        state.refreshQuotaInBackground()
+        XCTAssertLessThan(Date().timeIntervalSince(started), 0.5)
+        XCTAssertTrue(state.isRefreshing)
+
+        try await Task.sleep(nanoseconds: 100_000_000)
+        XCTAssertTrue(state.isRefreshing)
+
+        XCTAssertEqual(sqlite3_exec(database, "ROLLBACK", nil, nil, nil), SQLITE_OK)
+        try await waitUntil { state.lastUpdatedAt != nil && !state.isRefreshing }
+    }
+
     func testReorderAccountsPersistsDisplayOrderWithoutChangingPriorities() throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
         defer { try? FileManager.default.removeItem(at: directory) }
@@ -760,6 +813,11 @@ final class AppStateTrendRefreshTests: XCTestCase {
             priority: 0
         )
         try AccountMetadataStore(paths: paths).save(AccountMetadataList(accounts: [api, chatGPT]))
+        try writeThreadsDatabase(
+            at: paths.latestStateDatabaseURL(),
+            now: now,
+            threadUpdatedAt: now.addingTimeInterval(-600)
+        )
         let codexDesktopManager = CodexDesktopManagerSpy()
         let state = AppState(
             paths: paths,
@@ -915,6 +973,16 @@ final class AppStateTrendRefreshTests: XCTestCase {
         XCTAssertEqual(state.currentAccount?.quota.primaryResetsAt, observedReset)
         XCTAssertFalse(state.isLoadingFullUsageSnapshot)
         XCTAssertFalse(state.hasLoadedFullUsageSnapshot)
+
+        let nextObservation = observationLine
+            .replacingOccurrences(of: "2026-05-08T01:00:00Z", with: "2026-05-08T01:00:01Z")
+            .replacingOccurrences(of: "62.0", with: "63.0")
+        let handle = try FileHandle(forWritingTo: sessionFile)
+        try handle.seekToEnd()
+        try handle.write(contentsOf: Data((nextObservation + "\n").utf8))
+        try handle.close()
+        state.refreshQuotaInBackground()
+        try await waitUntil { state.currentAccount?.quota.primaryUsedPercent == 63 && !state.isRefreshing }
     }
 
     func testQuotaRefreshPreservesEffectiveTokenTotalsFromFullTrendSnapshot() async throws {
@@ -1538,6 +1606,17 @@ final class AppStateTrendRefreshTests: XCTestCase {
         }
         try lines.joined(separator: "\n").data(using: .utf8)?.write(to: url)
     }
+}
+
+private struct DelayedFailingVault: AuthSnapshotVault {
+    func save(snapshot: AuthSnapshot, fingerprint: String) throws {}
+
+    func load(fingerprint: String) throws -> AuthSnapshot {
+        Thread.sleep(forTimeInterval: 0.8)
+        throw InMemoryVaultError.missingSnapshot
+    }
+
+    func delete(fingerprint: String) throws {}
 }
 
 private final class InMemoryVault: AuthSnapshotVault {
