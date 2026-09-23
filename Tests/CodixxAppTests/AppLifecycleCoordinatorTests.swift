@@ -16,11 +16,11 @@ final class AppLifecycleCoordinatorTests: XCTestCase {
         coordinator.start()
 
         XCTAssertEqual(state.refreshNowCallCount, 0)
-        XCTAssertEqual(state.refreshQuotaNowCallCount, 0)
+        XCTAssertEqual(state.refreshQuotaInBackgroundCallCount, 0)
 
         try await Task.sleep(nanoseconds: 90_000_000)
         XCTAssertEqual(state.refreshNowCallCount, 0)
-        XCTAssertEqual(state.refreshQuotaNowCallCount, 1)
+        XCTAssertEqual(state.refreshQuotaInBackgroundCallCount, 1)
     }
 }
 
@@ -33,6 +33,7 @@ private final class LifecycleStateSpy: LifecycleStateManaging {
     var onNotificationsEnabled: (() -> Void)?
     var refreshNowCallCount = 0
     var refreshQuotaNowCallCount = 0
+    var refreshQuotaInBackgroundCallCount = 0
     var refreshAPIBalancesNowCallCount = 0
 
     init() {
@@ -48,6 +49,10 @@ private final class LifecycleStateSpy: LifecycleStateManaging {
 
     func refreshQuotaNow() {
         refreshQuotaNowCallCount += 1
+    }
+
+    func refreshQuotaInBackground() {
+        refreshQuotaInBackgroundCallCount += 1
     }
 
     func refreshUsageNow() {}

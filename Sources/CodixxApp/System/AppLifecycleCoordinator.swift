@@ -192,7 +192,7 @@ final class AppLifecycleCoordinator: ObservableObject {
     }
 
     private func refreshQuotaAndNotify() {
-        state.refreshQuotaNow()
+        state.refreshQuotaInBackground()
         evaluateNotificationsIfPossible()
     }
 
