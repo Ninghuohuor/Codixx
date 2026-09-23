@@ -14,7 +14,7 @@ protocol CodexDesktopManaging: AnyObject {
 
     func currentActivation() -> CodexActivation
     func restoreActivationIfNeeded(_ activation: CodexActivation)
-    func quitForCleanSwitch()
+    func quitForCleanSwitch() throws
     func restart() throws
 }
 
@@ -55,7 +55,7 @@ final class SystemCodexDesktopManager: CodexDesktopManaging {
         }
     }
 
-    func quitForCleanSwitch() {
+    func quitForCleanSwitch() throws {
         var runningApplications = NSRunningApplication.runningApplications(
             withBundleIdentifier: CodexActivation.bundleIdentifier
         )
@@ -63,16 +63,14 @@ final class SystemCodexDesktopManager: CodexDesktopManaging {
             application.terminate()
         }
 
-        for attempt in 0..<25 {
+        for _ in 0..<25 {
             runningApplications = NSRunningApplication.runningApplications(
                 withBundleIdentifier: CodexActivation.bundleIdentifier
             )
             guard !runningApplications.isEmpty else { return }
-            if attempt == 15 {
-                runningApplications.forEach { $0.forceTerminate() }
-            }
             RunLoop.current.run(until: Date().addingTimeInterval(0.2))
         }
+        throw CodexDesktopShutdownError.timedOut
     }
 
     func restart() throws {
@@ -101,13 +99,13 @@ final class SystemCodexDesktopManager: CodexDesktopManaging {
             let runningApplications = NSRunningApplication.runningApplications(
                 withBundleIdentifier: CodexActivation.bundleIdentifier
             )
-            guard !runningApplications.isEmpty, remainingAttempts > 0 else {
+            guard !runningApplications.isEmpty else {
                 self.openCodexDesktop(at: applicationURL)
                 return
             }
-
-            if remainingAttempts == 15 {
-                runningApplications.forEach { $0.forceTerminate() }
+            guard remainingAttempts > 0 else {
+                NSLog("Codex did not exit after a restart request; leaving it running to preserve active conversations")
+                return
             }
 
             self.waitForCodexExitThenOpen(
@@ -161,5 +159,16 @@ final class SystemCodexDesktopManager: CodexDesktopManaging {
                 NSLog("Could not restart Codex: \(original)\(error.localizedDescription)")
             }
         }
+    }
+}
+
+private enum CodexDesktopShutdownError: LocalizedError {
+    case timedOut
+
+    var errorDescription: String? {
+        if Locale.current.language.languageCode?.identifier == "zh" {
+            return "Codex 未能正常退出，已取消账号切换，以保护当前对话。"
+        }
+        return "Codex did not quit in time. The account switch was canceled to protect the active conversation."
     }
 }
