@@ -453,6 +453,9 @@ final class AppStateTrendRefreshTests: XCTestCase {
 
         state.refreshQuotaNow()
 
+        XCTAssertEqual(state.pendingAutoSwitch?.targetID, chatGPT.id)
+        XCTAssertEqual(state.currentAccount?.id, api.id)
+        state.confirmPendingAutoSwitch()
         XCTAssertEqual(state.currentAccount?.id, chatGPT.id)
         XCTAssertEqual(codexDesktopManager.quitForCleanSwitchCallCount, 1)
         XCTAssertEqual(codexDesktopManager.restartCallCount, 1)
@@ -521,6 +524,9 @@ final class AppStateTrendRefreshTests: XCTestCase {
             )
             if automatic {
                 state.refreshQuotaNow()
+                XCTAssertEqual(state.pendingAutoSwitch?.targetID, api.id)
+                XCTAssertEqual(codexDesktopManager.restartCallCount, 0)
+                state.confirmPendingAutoSwitch()
             } else {
                 state.switchToAccount(api)
             }
@@ -958,6 +964,9 @@ final class AppStateTrendRefreshTests: XCTestCase {
 
         await state.refreshDueAPIBalances(force: true)
 
+        XCTAssertEqual(state.pendingAutoSwitch?.targetID, chatGPT.id)
+        XCTAssertEqual(state.currentAccount?.id, api.id)
+        state.confirmPendingAutoSwitch()
         XCTAssertEqual(state.currentAccount?.id, chatGPT.id)
         XCTAssertEqual(codexDesktopManager.quitForCleanSwitchCallCount, 1)
         XCTAssertEqual(codexDesktopManager.restartCallCount, 1)
@@ -1195,7 +1204,7 @@ final class AppStateTrendRefreshTests: XCTestCase {
         XCTAssertEqual(state.usageSnapshot.activeThread?.id, "cached-heavy")
     }
 
-    func testMenuOpenRefreshAutoSwitchesWhenLatestObservationShowsCurrentQuotaDepleted() throws {
+    func testMenuOpenRefreshRequestsConfirmationAndRespectsSnooze() async throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
         defer { try? FileManager.default.removeItem(at: directory) }
         let paths = CodixxPaths(home: directory)
@@ -1275,6 +1284,31 @@ final class AppStateTrendRefreshTests: XCTestCase {
 
         state.refreshFromMenuOpen()
 
+        XCTAssertEqual(state.pendingAutoSwitch?.targetID, target.id)
+        XCTAssertEqual(state.currentAccount?.id, current.id)
+        state.snoozePendingAutoSwitch()
+        XCTAssertNil(state.pendingAutoSwitch)
+        XCTAssertEqual(state.config.autoSwitchSnoozedAccountID, current.id)
+        XCTAssertNotNil(state.config.autoSwitchSnoozedUntil)
+        try await waitUntil {
+            (try? CodixxConfigStore(paths: paths).load().autoSwitchSnoozedAccountID) == current.id
+        }
+        let reopened = AppState(
+            paths: paths,
+            vault: vault,
+            codexDesktopState: NoopCodexDesktopStateCleaner(),
+            codexDesktopManager: CodexDesktopManagerSpy(),
+            now: { now }
+        )
+        reopened.refreshQuotaNow()
+        XCTAssertNil(reopened.pendingAutoSwitch)
+        state.refreshQuotaNow()
+        XCTAssertNil(state.pendingAutoSwitch)
+        XCTAssertEqual(state.currentAccount?.id, current.id)
+        state.setAutoSwitchEnabled(true)
+        state.refreshQuotaNow()
+        XCTAssertEqual(state.pendingAutoSwitch?.targetID, target.id)
+        state.confirmPendingAutoSwitch()
         XCTAssertEqual(state.currentAccount?.id, target.id)
         XCTAssertEqual(codexDesktopManager.quitForCleanSwitchCallCount, 1)
         XCTAssertEqual(codexDesktopManager.restartCallCount, 1)

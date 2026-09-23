@@ -133,7 +133,7 @@ final class SwitchPolicyTests: XCTestCase {
         ))
     }
 
-    func testDepletedFiveHourQuotaBypassesActiveThreadAndCooldownSafety() {
+    func testDepletedFiveHourQuotaRespectsActiveThreadAndCooldownSafety() {
         let now = Date(timeIntervalSince1970: 1_000)
         let policy = SwitchPolicy(
             primaryThresholdPercent: 93,
@@ -144,7 +144,7 @@ final class SwitchPolicyTests: XCTestCase {
         let current = account(alias: "Main", primary: 100, secondary: 20, confidence: .fresh, now: now)
         let available = account(alias: "Spare", primary: 10, secondary: 10, confidence: .fresh, now: now)
 
-        XCTAssertTrue(policy.shouldAutoSwitch(
+        XCTAssertFalse(policy.shouldAutoSwitch(
             currentAccount: current,
             allAccounts: [current, available],
             context: SwitchSafetyContext(
@@ -153,9 +153,10 @@ final class SwitchPolicyTests: XCTestCase {
                 lastSwitchAt: now
             )
         ))
+        XCTAssertTrue(policy.shouldAutoSwitch(currentAccount: current, allAccounts: [current, available], context: .idle(now: now)))
     }
 
-    func testDepletedWeeklyQuotaBypassesActiveThreadAndCooldownSafety() {
+    func testDepletedWeeklyQuotaRespectsActiveThreadAndCooldownSafety() {
         let now = Date(timeIntervalSince1970: 1_000)
         let policy = SwitchPolicy(
             primaryThresholdPercent: 93,
@@ -166,7 +167,7 @@ final class SwitchPolicyTests: XCTestCase {
         let current = account(alias: "Main", primary: 20, secondary: 100, confidence: .recent, now: now)
         let available = account(alias: "Spare", primary: 10, secondary: 10, confidence: .fresh, now: now)
 
-        XCTAssertTrue(policy.shouldAutoSwitch(
+        XCTAssertFalse(policy.shouldAutoSwitch(
             currentAccount: current,
             allAccounts: [current, available],
             context: SwitchSafetyContext(
@@ -175,6 +176,7 @@ final class SwitchPolicyTests: XCTestCase {
                 lastSwitchAt: now
             )
         ))
+        XCTAssertTrue(policy.shouldAutoSwitch(currentAccount: current, allAccounts: [current, available], context: .idle(now: now)))
     }
 
     func testDepletedAccountSkipsAutoSwitchWhenAllAlternativesAlsoDepleted() {

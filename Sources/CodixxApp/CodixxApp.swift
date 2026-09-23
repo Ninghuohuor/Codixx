@@ -77,6 +77,12 @@ private final class StatusItemController: NSObject, NSPopoverDelegate {
                 }
             }
             .store(in: &cancellables)
+        state.$pendingAutoSwitch
+            .compactMap { $0 }
+            .sink { [weak self] _ in
+                DispatchQueue.main.async { self?.showAutoSwitchPrompt() }
+            }
+            .store(in: &cancellables)
     }
 
     @objc
@@ -89,6 +95,16 @@ private final class StatusItemController: NSObject, NSPopoverDelegate {
         popover.show(relativeTo: sender.bounds, of: sender, preferredEdge: .minY)
         popover.contentViewController?.view.window?.makeKey()
         startOutsideClickMonitors(statusButton: sender)
+    }
+
+    private func showAutoSwitchPrompt() {
+        guard let button = statusItem.button else { return }
+        if !popover.isShown {
+            popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
+            startOutsideClickMonitors(statusButton: button)
+        }
+        popover.contentViewController?.view.window?.makeKeyAndOrderFront(nil)
+        NSApplication.shared.activate(ignoringOtherApps: true)
     }
 
     func popoverDidClose(_ notification: Notification) {

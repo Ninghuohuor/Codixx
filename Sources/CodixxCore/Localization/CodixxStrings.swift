@@ -142,6 +142,20 @@ public struct CodixxStrings: Sendable {
     public var neverExpires: String { text(en: "Expiration unavailable locally", zh: "到期时间未知") }
     public var enabled: String { text(en: "Enabled", zh: "启用") }
     public var autoSwitch: String { text(en: "Auto switch", zh: "自动切换") }
+    public var autoSwitchConfirmTitle: String { text(en: "Switch accounts?", zh: "要切换账号吗？") }
+    public func autoSwitchConfirmMessage(current: String, target: String) -> String {
+        text(
+            en: "\(current) has reached the switch threshold. Switch to \(target)? Your current conversation will stay on \(current) until you confirm.",
+            zh: "\(current) 已达到切换阈值。要切换到 \(target) 吗？确认前不会更改当前账号。"
+        )
+    }
+    public var confirmAutoSwitch: String { text(en: "Switch now", zh: "现在切换") }
+    public var snoozeAutoSwitch: String { text(en: "Not this quota cycle", zh: "本轮暂不切换") }
+    public var disableAutoSwitch: String { text(en: "Turn off auto switch", zh: "关闭自动切换") }
+    public var autoSwitchSnoozedHint: String {
+        text(en: "No further prompts for this account until its next reset (or 24 hours if unknown).", zh: "这个账号在下次额度重置前不再提示；重置时间未知时暂停 24 小时。")
+    }
+    public var resumeAutoSwitch: String { text(en: "Resume now", zh: "现在恢复") }
     public var manualSelectionHoldHint: String {
         text(
             en: "An account selected manually in Codixx stays active until its quota or balance is exhausted, including after Codex restarts.",

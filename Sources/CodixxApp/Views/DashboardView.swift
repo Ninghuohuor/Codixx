@@ -29,6 +29,7 @@ enum DashboardLayout {
 struct DashboardView: View {
     @ObservedObject var state: AppState
     @State private var selectedTab = 0
+    @State private var isAutoSwitchPromptVisible = false
     @State private var trendRefreshTask: Task<Void, Never>?
 
     var body: some View {
@@ -60,8 +61,32 @@ struct DashboardView: View {
             scheduleTrendRefresh()
         }
         .onAppear {
+            isAutoSwitchPromptVisible = state.pendingAutoSwitch != nil
             if selectedTab == 2 {
                 scheduleTrendRefresh()
+            }
+        }
+        .onChange(of: state.pendingAutoSwitch) { proposal in
+            isAutoSwitchPromptVisible = proposal != nil
+        }
+        .onChange(of: isAutoSwitchPromptVisible) { visible in
+            if !visible, state.pendingAutoSwitch != nil {
+                state.snoozePendingAutoSwitch()
+            }
+        }
+        .alert(
+            state.strings.autoSwitchConfirmTitle,
+            isPresented: $isAutoSwitchPromptVisible
+        ) {
+            Button(state.strings.confirmAutoSwitch) { state.confirmPendingAutoSwitch() }
+            Button(state.strings.snoozeAutoSwitch, role: .cancel) { state.snoozePendingAutoSwitch() }
+            Button(state.strings.disableAutoSwitch, role: .destructive) { state.disablePendingAutoSwitch() }
+        } message: {
+            if let proposal = state.pendingAutoSwitch {
+                Text(state.strings.autoSwitchConfirmMessage(
+                    current: proposal.sourceAlias,
+                    target: proposal.targetAlias
+                ))
             }
         }
         // Codixx 只做亮色，理由见 AppAppearancePolicy。
