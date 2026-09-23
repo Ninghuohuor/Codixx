@@ -41,23 +41,14 @@ public final class FileSystemCodexDesktopStateCleaner: CodexDesktopStateCleaning
         }
     }
 
+    // Account switching replaces auth.json after Codex exits. Keep browser
+    // session, cookies, and network state: they may contain UI preferences and
+    // are not disposable rendering caches.
     private static let volatileRelativePaths = [
-        "Session Storage",
-        "Cookies",
-        "Cookies-journal",
         "Cache",
         "Code Cache",
         "GPUCache",
         "DawnGraphiteCache",
-        "DawnWebGPUCache",
-        "blob_storage",
-        "shared_proto_db",
-        "Partitions",
-        "DIPS",
-        "DIPS-wal",
-        "Network Persistent State",
-        "TransportSecurity",
-        "Trust Tokens",
-        "Trust Tokens-journal"
+        "DawnWebGPUCache"
     ]
 }

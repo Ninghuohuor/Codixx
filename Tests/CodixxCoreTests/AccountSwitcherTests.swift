@@ -87,6 +87,7 @@ final class AccountSwitcherTests: XCTestCase {
         let localStorage = appSupport.appendingPathComponent("Local Storage", isDirectory: true)
         let sessionStorage = appSupport.appendingPathComponent("Session Storage", isDirectory: true)
         let cookies = appSupport.appendingPathComponent("Cookies")
+        let cache = appSupport.appendingPathComponent("Cache", isDirectory: true)
         let sharedStorage = appSupport.appendingPathComponent("SharedStorage")
         let crashpad = appSupport.appendingPathComponent("Crashpad", isDirectory: true)
         try FileManager.default.createDirectory(
@@ -101,18 +102,24 @@ final class AccountSwitcherTests: XCTestCase {
             at: crashpad,
             withIntermediateDirectories: true
         )
+        try FileManager.default.createDirectory(
+            at: cache,
+            withIntermediateDirectories: true
+        )
         try Data("token-cache".utf8).write(to: localStorage.appendingPathComponent("leveldb"))
         try Data("session-cache".utf8).write(to: sessionStorage.appendingPathComponent("000003.log"))
         try Data("cookie-cache".utf8).write(to: cookies)
         try Data("shared-cache".utf8).write(to: sharedStorage)
         try Data("keep".utf8).write(to: crashpad.appendingPathComponent("metadata"))
+        try Data("cache".utf8).write(to: cache.appendingPathComponent("entry"))
         let cleaner = FileSystemCodexDesktopStateCleaner(paths: fixture.paths, isRunning: { false })
 
         try cleaner.clearState()
 
         XCTAssertTrue(FileManager.default.fileExists(atPath: localStorage.appendingPathComponent("leveldb").path))
-        XCTAssertFalse(FileManager.default.fileExists(atPath: sessionStorage.path))
-        XCTAssertFalse(FileManager.default.fileExists(atPath: cookies.path))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: sessionStorage.appendingPathComponent("000003.log").path))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: cookies.path))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: cache.path))
         XCTAssertTrue(FileManager.default.fileExists(atPath: sharedStorage.path))
         XCTAssertTrue(FileManager.default.fileExists(atPath: crashpad.appendingPathComponent("metadata").path))
     }
