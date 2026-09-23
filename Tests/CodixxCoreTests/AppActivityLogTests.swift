@@ -38,4 +38,26 @@ final class AppActivityLogTests: XCTestCase {
 
         XCTAssertEqual(try log.loadEvents().map(\.accountAlias), ["Plus", "Pro"])
     }
+
+    func testAppendRotatesAndRetainsOnlyRecentEvents() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let paths = CodixxPaths(home: directory)
+        let now = Date(timeIntervalSince1970: 1_778_000_000)
+        let log = AppActivityLog(
+            paths: paths,
+            retention: .init(maximumAge: 86_400, maximumBytes: 300, now: { now })
+        )
+
+        try log.append(AppLogEvent(timestamp: now.addingTimeInterval(-90_000), kind: .accountSaved, accountAlias: "Expired"))
+        for index in 0..<20 {
+            try log.append(AppLogEvent(timestamp: now.addingTimeInterval(Double(index)), kind: .apiBalanceRefreshed, accountAlias: "Account \(index)"))
+        }
+
+        let events = try log.loadEvents()
+        XCTAssertFalse(events.contains { $0.accountAlias == "Expired" })
+        XCTAssertEqual(events.last?.accountAlias, "Account 19")
+        XCTAssertLessThan(events.count, 20)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: paths.applicationSupport.appendingPathComponent("app_activity.1.jsonl").path))
+    }
 }
