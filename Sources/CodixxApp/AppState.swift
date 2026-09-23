@@ -798,7 +798,10 @@ final class AppState: ObservableObject, LifecycleStateManaging {
         accountSaveStatus = nil
 
         do {
-            if target.isChatGPT {
+            // Codex keeps the previous account in memory. Every switch that
+            // changes auth.json must restart a running desktop process.
+            let shouldRestartCodex = target.isChatGPT || codexDesktopManager.isRunning
+            if shouldRestartCodex {
                 try codexDesktopManager.quitForCleanSwitch()
             }
             _ = try switcher.switchToAccount(target.id, trigger: .autoPrimaryThreshold)
@@ -811,7 +814,7 @@ final class AppState: ObservableObject, LifecycleStateManaging {
                 refreshUsage: false,
                 refreshUsageIfEmpty: false
             )
-            if target.isChatGPT {
+            if shouldRestartCodex {
                 postSwitchRestartMessage = nil
                 try codexDesktopManager.restart()
             } else {
@@ -1190,7 +1193,6 @@ final class AppState: ObservableObject, LifecycleStateManaging {
         isSwitchInProgress = true
         defer { isSwitchInProgress = false }
 
-        let codexActivation = codexDesktopManager.currentActivation()
         refresh(
             applyRateLimitObservations: true,
             allowAutoSwitch: false,
@@ -1201,6 +1203,10 @@ final class AppState: ObservableObject, LifecycleStateManaging {
         )
 
         do {
+            let codexWasRunning = codexDesktopManager.isRunning
+            if codexWasRunning {
+                try codexDesktopManager.quitForCleanSwitch()
+            }
             _ = try switcher.switchToAccount(account.id, trigger: .manual)
             markFullUsageSnapshotNeedsReload()
             suppressAutoSwitchAfterManualSwitch()
@@ -1212,8 +1218,12 @@ final class AppState: ObservableObject, LifecycleStateManaging {
                 refreshUsage: false,
                 refreshUsageIfEmpty: false
             )
-            handlePostSwitchAction()
-            codexDesktopManager.restoreActivationIfNeeded(codexActivation)
+            if codexWasRunning {
+                postSwitchRestartMessage = nil
+                try codexDesktopManager.restart()
+            } else {
+                handlePostSwitchAction()
+            }
         } catch {
             let preservedError = pauseAutoSwitchIfRollbackFailed(error)
             refresh(
