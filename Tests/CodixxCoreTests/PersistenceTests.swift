@@ -76,12 +76,27 @@ final class PersistenceTests: XCTestCase {
             """
         )
         let sync = SQLiteCodexThreadProviderSync(paths: paths)
+        // Codex can keep this handle open while Codixx switches providers. Replacing
+        // the rollout atomically would orphan subsequent writes on the old inode.
+        let activeWriter = try FileHandle(forWritingTo: sessionURL)
+        defer { try? activeWriter.close() }
+        try activeWriter.seekToEnd()
+        let originalFileNumber = try XCTUnwrap(
+            FileManager.default.attributesOfItem(atPath: sessionURL.path)[.systemFileNumber] as? NSNumber
+        )
 
         let changedRows = try sync.syncProvider(from: "openai", to: "openai-custom")
+        try activeWriter.write(contentsOf: Data("{\"type\":\"event_msg\",\"payload\":{\"type\":\"user_message\",\"message\":\"after switch\"}}\n".utf8))
 
         XCTAssertEqual(changedRows, 1)
         XCTAssertEqual(try sqliteScalar(databaseURL, sql: "SELECT model_provider FROM threads WHERE id = 'thread-1'"), "openai-custom")
-        XCTAssertTrue(try String(contentsOf: sessionURL, encoding: .utf8).contains(#""model_provider":"openai""#))
+        let sessionText = try String(contentsOf: sessionURL, encoding: .utf8)
+        XCTAssertTrue(sessionText.contains(#""model_provider":"openai""#))
+        XCTAssertTrue(sessionText.contains(#""message":"after switch""#))
+        XCTAssertEqual(
+            try FileManager.default.attributesOfItem(atPath: sessionURL.path)[.systemFileNumber] as? NSNumber,
+            originalFileNumber
+        )
         let backups = try FileManager.default.contentsOfDirectory(atPath: paths.backups.path)
         XCTAssertFalse(backups.contains { $0.hasPrefix("rollout-test.jsonl.provider-sync-") })
     }

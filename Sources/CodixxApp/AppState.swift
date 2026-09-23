@@ -646,7 +646,7 @@ final class AppState: ObservableObject, LifecycleStateManaging {
 
         do {
             if target.isChatGPT {
-                codexDesktopManager.quitForCleanSwitch()
+                try codexDesktopManager.quitForCleanSwitch()
             }
             _ = try switcher.switchToAccount(target.id, trigger: .autoPrimaryThreshold)
             markFullUsageSnapshotNeedsReload()
@@ -1058,7 +1058,7 @@ final class AppState: ObservableObject, LifecycleStateManaging {
         )
 
         do {
-            codexDesktopManager.quitForCleanSwitch()
+            try codexDesktopManager.quitForCleanSwitch()
             _ = try switcher.switchToAccount(account.id, trigger: .manual)
             markFullUsageSnapshotNeedsReload()
             suppressAutoSwitchAfterManualSwitch()
@@ -1162,7 +1162,7 @@ final class AppState: ObservableObject, LifecycleStateManaging {
         )
 
         do {
-            codexDesktopManager.quitForCleanSwitch()
+            try codexDesktopManager.quitForCleanSwitch()
             let result = try switcher.signOutAPIProvider(trigger: .manual)
             markFullUsageSnapshotNeedsReload()
             suppressAutoSwitchAfterManualSwitch()
