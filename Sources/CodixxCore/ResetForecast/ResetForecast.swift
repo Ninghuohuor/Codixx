@@ -71,8 +71,9 @@ public struct ResetReply: Codable, Equatable, Sendable {
     }
 }
 
-/// Ported from codexreset/lib/reset-estimate.ts. Forecasts public announcements,
-/// never the logged-in account's quota reset. All day buckets use Beijing time.
+/// Mirrors codexreset/lib/reset-estimate.ts `displayResetEstimate`.
+/// Forecasts public announcements, never the logged-in account's quota reset.
+/// All day buckets use Beijing time.
 public struct ResetEstimate: Equatable, Sendable {
     public var day: Date
     public var probability: Double
@@ -94,35 +95,34 @@ public struct ResetEstimate: Equatable, Sendable {
             return urls.insert(key).inserted
         }.map { $0.announcedAt.timeIntervalSince1970 }
         let unique = Set(times).sorted()
-        let gaps = zip(unique.dropFirst(), unique).map(-).filter { $0 > 0 }.sorted()
+        let gaps = zip(unique.dropFirst(), unique).map(-).filter { $0 > 0 }
         let average = gaps.isEmpty ? nil : gaps.reduce(0, +) / Double(gaps.count)
         let latest = unique.last
         let current = now.timeIntervalSince1970
-        if let latest, gaps.count >= 12 {
-            var threshold = 0.0
-            for _ in 0...gaps.count {
-                let candidates = gaps.filter { $0 > threshold }
-                if candidates.count < 12 { break }
-                let days = Dictionary(grouping: candidates, by: { dayStart(latest + $0) })
-                let start = days.keys.sorted { a, b in
-                    let ac = days[a]!.count, bc = days[b]!.count
-                    return ac == bc ? a < b : ac > bc
-                }[0]
-                let deadline = start + daySeconds - 0.001
-                if current > deadline { threshold = deadline - latest; continue }
-                let remaining = gaps.filter { $0 > max(0, current - latest) }
-                if remaining.count < 12 { break }
-                let hits = remaining.filter { latest + $0 >= start && latest + $0 <= deadline }.count
-                return Self(day: Date(timeIntervalSince1970: start), probability: Double(hits) / Double(remaining.count), basis: "empirical", averageDays: average.map { $0 / daySeconds }, sampleCount: gaps.count, latestAt: Date(timeIntervalSince1970: latest))
-            }
-        }
         let interval = max(daySeconds, average ?? 7 * daySeconds)
-        let today = dayStart(current)
-        func probability(_ start: Double) -> Double {
-            exp(-max(0, start - current) / interval) * -expm1(-(start + daySeconds - max(start, current)) / interval)
+        let elapsed = latest.map { max(0, current - $0) } ?? 0
+        let remaining = gaps.filter { $0 > elapsed }.map { $0 - elapsed }
+        let empiricalWeight = Double(remaining.count) / Double(remaining.count + 12)
+        func cumulativeProbability(through end: Double) -> Double {
+            let wait = max(0, end - current)
+            let empirical = remaining.isEmpty ? 0 :
+                Double(remaining.filter { $0 <= wait }.count) / Double(remaining.count)
+            return empiricalWeight * empirical
+                + (1 - empiricalWeight) * -expm1(-wait / interval)
         }
-        let start = probability(today) >= probability(today + daySeconds) ? today : today + daySeconds
-        return Self(day: Date(timeIntervalSince1970: start), probability: probability(start), basis: gaps.isEmpty ? "default" : "average", averageDays: average.map { $0 / daySeconds }, sampleCount: gaps.count, latestAt: latest.map { Date(timeIntervalSince1970: $0) })
+        let today = dayStart(current)
+        var start = today
+        while cumulativeProbability(through: start + daySeconds) < 0.5 {
+            start += daySeconds
+        }
+        return Self(
+            day: Date(timeIntervalSince1970: start),
+            probability: cumulativeProbability(through: start + daySeconds),
+            basis: gaps.isEmpty ? "default" : "average",
+            averageDays: average.map { $0 / daySeconds },
+            sampleCount: gaps.count,
+            latestAt: latest.map { Date(timeIntervalSince1970: $0) }
+        )
     }
 }
 
