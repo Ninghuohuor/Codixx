@@ -6,6 +6,7 @@ public struct ResetFeed: Codable, Equatable, Sendable {
     public var syncIssue: String
     public var announcements: [ResetAnnouncement]
     public var replyLeads: [ResetReply]?
+    public var forecast: ResetEstimate? = nil
 
     public static func decode(_ data: Data) throws -> Self {
         let decoder = JSONDecoder()
@@ -20,6 +21,12 @@ public struct ResetFeed: Codable, Equatable, Sendable {
         }
         let feed = try decoder.decode(Self.self, from: data)
         guard feed.schemaVersion == 1, feed.announcements.count <= 5000 else { throw CocoaError(.coderReadCorrupt) }
+        if let forecast = feed.forecast {
+            guard forecast.zone == "Asia/Shanghai", forecast.probability.isFinite,
+                  (0...1).contains(forecast.probability), forecast.sampleCount >= 0,
+                  forecast.averageDays.map({ $0.isFinite && $0 > 0 }) ?? true,
+                  forecast.computedAt <= Date().addingTimeInterval(300) else { throw CocoaError(.coderReadCorrupt) }
+        }
         return feed
     }
 
@@ -71,59 +78,17 @@ public struct ResetReply: Codable, Equatable, Sendable {
     }
 }
 
-/// Mirrors codexreset/lib/reset-estimate.ts `displayResetEstimate`.
-/// Forecasts public announcements, never the logged-in account's quota reset.
-/// All day buckets use Beijing time.
-public struct ResetEstimate: Equatable, Sendable {
+/// Forecast calculated by codexreset.club and delivered in /api/feed.
+/// This predicts public announcements, never an account's quota reset.
+public struct ResetEstimate: Codable, Equatable, Sendable {
     public var day: Date
     public var probability: Double
     public var basis: String
     public var averageDays: Double?
     public var sampleCount: Int
     public var latestAt: Date?
-    private static let daySeconds = 86400.0
-    private static func dayStart(_ time: TimeInterval) -> TimeInterval {
-        floor((time + 28800) / daySeconds) * daySeconds - 28800
-    }
-
-    public static func calculate(feed: ResetFeed, now: Date) -> Self {
-        var urls = Set<String>()
-        let times = feed.announcements.filter { event in
-            guard event.isUsable, event.announcedAt <= now,
-                  event.effects.contains(where: { $0.kind == "automatic_reset" }) else { return false }
-            let key = event.originalUrl.components(separatedBy: CharacterSet(charactersIn: "?#"))[0].trimmingCharacters(in: CharacterSet(charactersIn: "/"))
-            return urls.insert(key).inserted
-        }.map { $0.announcedAt.timeIntervalSince1970 }
-        let unique = Set(times).sorted()
-        let gaps = zip(unique.dropFirst(), unique).map(-).filter { $0 > 0 }
-        let average = gaps.isEmpty ? nil : gaps.reduce(0, +) / Double(gaps.count)
-        let latest = unique.last
-        let current = now.timeIntervalSince1970
-        let interval = max(daySeconds, average ?? 7 * daySeconds)
-        let elapsed = latest.map { max(0, current - $0) } ?? 0
-        let remaining = gaps.filter { $0 > elapsed }.map { $0 - elapsed }
-        let empiricalWeight = Double(remaining.count) / Double(remaining.count + 12)
-        func cumulativeProbability(through end: Double) -> Double {
-            let wait = max(0, end - current)
-            let empirical = remaining.isEmpty ? 0 :
-                Double(remaining.filter { $0 <= wait }.count) / Double(remaining.count)
-            return empiricalWeight * empirical
-                + (1 - empiricalWeight) * -expm1(-wait / interval)
-        }
-        let today = dayStart(current)
-        var start = today
-        while cumulativeProbability(through: start + daySeconds) < 0.5 {
-            start += daySeconds
-        }
-        return Self(
-            day: Date(timeIntervalSince1970: start),
-            probability: cumulativeProbability(through: start + daySeconds),
-            basis: gaps.isEmpty ? "default" : "average",
-            averageDays: average.map { $0 / daySeconds },
-            sampleCount: gaps.count,
-            latestAt: latest.map { Date(timeIntervalSince1970: $0) }
-        )
-    }
+    public var computedAt: Date
+    public var zone: String
 }
 
 public struct ResetCardOutlook: Equatable, Sendable {
