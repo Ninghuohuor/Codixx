@@ -213,7 +213,6 @@ public struct AccountSwitcher {
                 result = .cleanedProviderConfig
             }
 
-            try codexDesktopState.clearState()
             try threadProviderSync.syncProvider(
                 from: CodexProviderConfigStore.managedProviderID,
                 to: "openai",
@@ -407,7 +406,6 @@ public struct AccountSwitcher {
         do {
             try providerConfigStore.clearManagedAPIProvider()
             try writer.write(targetSnapshot.jsonData, to: paths.authJSON, fileManager: .default)
-            try codexDesktopState.clearState()
             try threadProviderSync.syncProvider(from: "openai-custom", to: "openai", scope: apiSwitchThreadSyncScope())
         } catch {
             try? providerConfigStore.restoreConfig(from: configBackup)

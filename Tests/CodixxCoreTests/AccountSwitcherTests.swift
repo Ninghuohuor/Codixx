@@ -39,7 +39,7 @@ final class AccountSwitcherTests: XCTestCase {
         XCTAssertEqual(auditEvents.first?.targetAlias, "Backup")
     }
 
-    func testSwitchToChatGPTClearsCodexDesktopLoginStateAfterWritingTarget() throws {
+    func testSwitchToChatGPTPreservesCodexDesktopCache() throws {
         let fixture = try SwitchFixture()
         defer { fixture.cleanup() }
         let codexDesktopState = RecordingCodexDesktopState()
@@ -47,7 +47,7 @@ final class AccountSwitcherTests: XCTestCase {
 
         _ = try switcher.switchToAccount(fixture.target.id, trigger: .manual)
 
-        XCTAssertEqual(codexDesktopState.clearCallCount, 1)
+        XCTAssertEqual(codexDesktopState.clearCallCount, 0)
     }
 
     func testSwitchToChatGPTRestoresOpenAIThreadProvider() throws {
@@ -575,7 +575,7 @@ final class AccountSwitcherTests: XCTestCase {
         XCTAssertFalse(config.contains("[model_providers.openai-custom]"))
         XCTAssertFalse(config.contains("model_provider = \"openai-custom\""))
 
-        XCTAssertEqual(codexDesktopState.clearCallCount, 1)
+        XCTAssertEqual(codexDesktopState.clearCallCount, 0)
         XCTAssertEqual(threadProviderSync.calls, [
             .init(from: "openai-custom", to: "openai", scope: .visibleDesktopThreads)
         ])
