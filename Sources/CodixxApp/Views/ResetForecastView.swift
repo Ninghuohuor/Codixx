@@ -88,7 +88,7 @@ struct ResetForecastView: View {
                     Text("\(Int((estimate.probability * 100).rounded()))%")
                         .font(.system(size: 26, weight: .semibold, design: .rounded))
                         .foregroundStyle(.blue)
-                    Text(estimate.basis == "empirical" ? "历史概率" : "模型概率")
+                    Text("截至当日累计概率")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
@@ -103,7 +103,7 @@ struct ResetForecastView: View {
             }
             .frame(maxWidth: .infinity)
 
-            Text(estimate.basis == "empirical" ? "根据历史公告间隔推测，日期会随新公告更新。" : estimate.basis == "average" ? "按历史平均间隔估算，样本仍可能变化。" : "样本不足，暂按默认 7 天间隔估算。")
+            Text(estimate.basis == "default" ? "按默认 7 天间隔推算等待时间的中位日期，非官方预告。" : "按历史间隔和当前等待时间推算中位日期，非官方预告。")
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
