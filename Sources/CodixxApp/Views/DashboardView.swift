@@ -29,26 +29,35 @@ enum DashboardLayout {
 struct DashboardView: View {
     @ObservedObject var state: AppState
     @State private var selectedTab = 0
-    @State private var isAutoSwitchPromptVisible = false
     @State private var trendRefreshTask: Task<Void, Never>?
 
     var body: some View {
-        TabView(selection: $selectedTab) {
-            accounts
-                .tabItem { Label(state.strings.accounts, systemImage: "person.2") }
-                .tag(0)
+        ZStack {
+            TabView(selection: $selectedTab) {
+                accounts
+                    .tabItem { Label(state.strings.accounts, systemImage: "person.2") }
+                    .tag(0)
 
-            ResetForecastView(store: state.resetForecastStore)
-                .tabItem { Label("重置预测", systemImage: "calendar.badge.clock") }
-                .tag(1)
+                ResetForecastView(store: state.resetForecastStore)
+                    .tabItem { Label("重置预测", systemImage: "calendar.badge.clock") }
+                    .tag(1)
 
-            trends
-                .tabItem { Label(state.strings.trends, systemImage: "chart.xyaxis.line") }
-                .tag(2)
+                trends
+                    .tabItem { Label(state.strings.trends, systemImage: "chart.xyaxis.line") }
+                    .tag(2)
 
-            settings
-                .tabItem { Label(state.strings.settings, systemImage: "gearshape") }
-                .tag(3)
+                settings
+                    .tabItem { Label(state.strings.settings, systemImage: "gearshape") }
+                    .tag(3)
+            }
+            .allowsHitTesting(state.pendingAutoSwitch == nil)
+
+            if let proposal = state.pendingAutoSwitch {
+                Color.black.opacity(0.16)
+                    .ignoresSafeArea()
+                autoSwitchConfirmation(proposal)
+                    .padding(24)
+            }
         }
         .frame(width: DashboardLayout.width)
         .frame(minHeight: 400, idealHeight: 520, maxHeight: 620)
@@ -61,36 +70,38 @@ struct DashboardView: View {
             scheduleTrendRefresh()
         }
         .onAppear {
-            isAutoSwitchPromptVisible = state.pendingAutoSwitch != nil
             if selectedTab == 2 {
                 scheduleTrendRefresh()
             }
         }
-        .onChange(of: state.pendingAutoSwitch) { proposal in
-            isAutoSwitchPromptVisible = proposal != nil
-        }
-        .onChange(of: isAutoSwitchPromptVisible) { visible in
-            if !visible, state.pendingAutoSwitch != nil {
-                state.snoozePendingAutoSwitch()
-            }
-        }
-        .alert(
-            state.strings.autoSwitchConfirmTitle,
-            isPresented: $isAutoSwitchPromptVisible
-        ) {
-            Button(state.strings.confirmAutoSwitch) { state.confirmPendingAutoSwitch() }
-            Button(state.strings.snoozeAutoSwitch, role: .cancel) { state.snoozePendingAutoSwitch() }
-            Button(state.strings.disableAutoSwitch, role: .destructive) { state.disablePendingAutoSwitch() }
-        } message: {
-            if let proposal = state.pendingAutoSwitch {
-                Text(state.strings.autoSwitchConfirmMessage(
-                    current: proposal.sourceAlias,
-                    target: proposal.targetAlias
-                ))
-            }
-        }
         // Codixx 只做亮色，理由见 AppAppearancePolicy。
         .codixxAppearance()
+    }
+
+    private func autoSwitchConfirmation(_ proposal: AutoSwitchProposal) -> some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Label(state.strings.autoSwitchConfirmTitle, systemImage: "arrow.triangle.2.circlepath")
+                .font(.headline)
+            Text(state.strings.autoSwitchConfirmMessage(
+                current: proposal.sourceAlias,
+                target: proposal.targetAlias
+            ))
+            .foregroundStyle(.secondary)
+            .fixedSize(horizontal: false, vertical: true)
+
+            HStack {
+                Button(state.strings.disableAutoSwitch) { state.disablePendingAutoSwitch() }
+                    .buttonStyle(.borderless)
+                Spacer()
+                Button(state.strings.snoozeAutoSwitch) { state.snoozePendingAutoSwitch() }
+                Button(state.strings.confirmAutoSwitch) { state.confirmPendingAutoSwitch() }
+                    .buttonStyle(.borderedProminent)
+            }
+        }
+        .padding(20)
+        .frame(maxWidth: 440)
+        .background(Color(nsColor: .windowBackgroundColor), in: RoundedRectangle(cornerRadius: 14))
+        .shadow(color: .black.opacity(0.16), radius: 18, y: 8)
     }
 
     private func scheduleTrendRefresh() {

@@ -105,6 +105,34 @@ final class AppStateTrendRefreshTests: XCTestCase {
         try await waitUntil { state.lastUpdatedAt != nil && !state.isRefreshing }
     }
 
+    func testManualQuotaRefreshDoesNotBlockMenuWhenThreadsDatabaseIsLocked() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let paths = CodixxPaths(home: directory)
+        let databaseURL = paths.latestStateDatabaseURL()
+        try FileManager.default.createDirectory(at: databaseURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+        var database: OpaquePointer?
+        XCTAssertEqual(sqlite3_open(databaseURL.path, &database), SQLITE_OK)
+        defer { sqlite3_close(database) }
+        XCTAssertEqual(sqlite3_exec(database, "CREATE TABLE threads(id TEXT PRIMARY KEY)", nil, nil, nil), SQLITE_OK)
+        XCTAssertEqual(sqlite3_exec(database, "BEGIN EXCLUSIVE", nil, nil, nil), SQLITE_OK)
+
+        let state = AppState(
+            paths: paths,
+            vault: InMemoryVault(),
+            apiKeyVault: InMemoryAPIKeyVault(),
+            codexDesktopState: NoopCodexDesktopStateCleaner(),
+            codexDesktopManager: CodexDesktopManagerSpy()
+        )
+        let started = Date()
+        state.refreshQuotaNow()
+        XCTAssertLessThan(Date().timeIntervalSince(started), 0.5)
+        XCTAssertTrue(state.isRefreshing)
+
+        XCTAssertEqual(sqlite3_exec(database, "ROLLBACK", nil, nil, nil), SQLITE_OK)
+        try await waitUntil { state.lastUpdatedAt != nil && !state.isRefreshing }
+    }
+
     func testReorderAccountsPersistsDisplayOrderWithoutChangingPriorities() throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
         defer { try? FileManager.default.removeItem(at: directory) }
@@ -357,7 +385,7 @@ final class AppStateTrendRefreshTests: XCTestCase {
         XCTAssertEqual(events.filter { $0.result == .success }.map(\.targetAlias), ["Depleted"])
     }
 
-    func testAPIProviderAutoSwitchRefreshesActivityBeforeReturningToChatGPT() throws {
+    func testAPIProviderAutoSwitchRefreshesActivityBeforeReturningToChatGPT() async throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
         defer { try? FileManager.default.removeItem(at: directory) }
         let paths = CodixxPaths(home: directory)
@@ -439,6 +467,7 @@ final class AppStateTrendRefreshTests: XCTestCase {
         )
 
         state.refreshQuotaNow()
+        try await waitUntil { state.usageSnapshot.activeThread?.id == "active" }
 
         XCTAssertEqual(state.currentAccount?.id, api.id)
         XCTAssertEqual(state.usageSnapshot.activeThread?.id, "active")
@@ -451,17 +480,40 @@ final class AppStateTrendRefreshTests: XCTestCase {
             threadUpdatedAt: now.addingTimeInterval(-180)
         )
 
+        var lockedDatabase: OpaquePointer?
+        XCTAssertEqual(sqlite3_open(paths.latestStateDatabaseURL().path, &lockedDatabase), SQLITE_OK)
+        XCTAssertEqual(sqlite3_exec(lockedDatabase, "BEGIN EXCLUSIVE", nil, nil, nil), SQLITE_OK)
+        let refreshStartedAt = Date()
         state.refreshQuotaNow()
+        XCTAssertLessThan(Date().timeIntervalSince(refreshStartedAt), 0.5)
+        XCTAssertEqual(sqlite3_exec(lockedDatabase, "COMMIT", nil, nil, nil), SQLITE_OK)
+        XCTAssertEqual(sqlite3_close(lockedDatabase), SQLITE_OK)
 
+        try await waitUntil { state.pendingAutoSwitch?.targetID == chatGPT.id }
         XCTAssertEqual(state.pendingAutoSwitch?.targetID, chatGPT.id)
         XCTAssertEqual(state.currentAccount?.id, api.id)
+        let metadataStore = AccountMetadataStore(paths: paths)
+        var recovered = try metadataStore.load()
+        let apiIndex = try XCTUnwrap(recovered.accounts.firstIndex(where: { $0.id == api.id }))
+        recovered.accounts[apiIndex].apiProvider?.balanceQuery?.lastBalanceText = "10"
+        try metadataStore.save(recovered)
+        state.refreshQuotaNow()
+        try await waitUntil { state.pendingAutoSwitch == nil }
+        XCTAssertNil(state.pendingAutoSwitch, "A recovered balance must dismiss an obsolete switch prompt")
+        XCTAssertEqual(codexDesktopManager.restartCallCount, 0)
+
+        recovered.accounts[apiIndex].apiProvider?.balanceQuery?.lastBalanceText = "0"
+        try metadataStore.save(recovered)
+        state.refreshQuotaNow()
+        try await waitUntil { state.pendingAutoSwitch?.targetID == chatGPT.id }
+        XCTAssertEqual(state.pendingAutoSwitch?.targetID, chatGPT.id)
         state.confirmPendingAutoSwitch()
         XCTAssertEqual(state.currentAccount?.id, chatGPT.id)
         XCTAssertEqual(codexDesktopManager.quitForCleanSwitchCallCount, 1)
         XCTAssertEqual(codexDesktopManager.restartCallCount, 1)
     }
 
-    func testSwitchToAPIProviderRestartsRunningCodexForManualAndAutomaticSwitches() throws {
+    func testSwitchToAPIProviderRestartsRunningCodexForManualAndAutomaticSwitches() async throws {
         for automatic in [false, true] {
             let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
             defer { try? FileManager.default.removeItem(at: directory) }
@@ -524,6 +576,7 @@ final class AppStateTrendRefreshTests: XCTestCase {
             )
             if automatic {
                 state.refreshQuotaNow()
+                try await waitUntil { state.pendingAutoSwitch?.targetID == api.id }
                 XCTAssertEqual(state.pendingAutoSwitch?.targetID, api.id)
                 XCTAssertEqual(codexDesktopManager.restartCallCount, 0)
                 state.confirmPendingAutoSwitch()
@@ -537,6 +590,7 @@ final class AppStateTrendRefreshTests: XCTestCase {
             XCTAssertNil(state.postSwitchRestartMessage)
             codexDesktopManager.identity = "restarted-process"
             state.refreshQuotaNow()
+            try await waitUntil { !state.isRefreshing }
             XCTAssertEqual(state.currentAccount?.id, api.id, "automatic: \(automatic)")
         }
     }
@@ -727,7 +781,7 @@ final class AppStateTrendRefreshTests: XCTestCase {
         XCTAssertEqual(balanceTester.callCount, 1)
     }
 
-    func testCurrentAccountSurvivesConfigSwitchAndCodixxReloadUntilCodexRestarts() throws {
+    func testCurrentAccountSurvivesConfigSwitchAndCodixxReloadUntilCodexRestarts() async throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: directory) }
         let paths = CodixxPaths(home: directory)
@@ -745,17 +799,21 @@ final class AppStateTrendRefreshTests: XCTestCase {
         desktop.isRunning = true
         desktop.identity = "process-one"
         state.refreshQuotaNow()
+        try await waitUntil { !state.isRefreshing }
         XCTAssertEqual(state.currentAccount?.id, first.id)
         try Data(#"{"auth_mode":"apikey","OPENAI_API_KEY":"sk-second"}"#.utf8).write(to: paths.authJSON)
         state.refreshQuotaNow()
+        try await waitUntil { state.pendingAccountID == second.id }
         XCTAssertEqual(state.currentAccount?.id, first.id)
         XCTAssertEqual(state.pendingAccountID, second.id)
         let reopened = AppState(paths: paths, vault: vault, apiKeyVault: keys, codexDesktopState: NoopCodexDesktopStateCleaner(), codexDesktopManager: desktop)
         reopened.refreshQuotaNow()
+        try await waitUntil { !reopened.isRefreshing }
         XCTAssertEqual(reopened.currentAccount?.id, first.id)
         XCTAssertEqual(reopened.pendingAccountID, second.id)
         desktop.identity = "process-two"
         reopened.refreshQuotaNow()
+        try await waitUntil { !reopened.isRefreshing }
         XCTAssertEqual(reopened.currentAccount?.id, second.id)
         XCTAssertNil(reopened.pendingAccountID)
     }
@@ -1157,6 +1215,7 @@ final class AppStateTrendRefreshTests: XCTestCase {
         XCTAssertEqual(state.topThreads.first?.tokensUsed, 2_750)
 
         state.refreshQuotaNow()
+        try await waitUntil { !state.isRefreshing }
 
         XCTAssertEqual(state.usageSnapshot.totalTokens, 2_750)
         XCTAssertEqual(state.usageSnapshot.threads.first?.tokensUsed, 2_750)
@@ -1164,7 +1223,7 @@ final class AppStateTrendRefreshTests: XCTestCase {
         XCTAssertEqual(state.usageSnapshot.activeThread?.tokensUsed, 2_750)
     }
 
-    func testQuotaRefreshDoesNotShowRawTokenTotalsBeforeFullTrendSnapshotLoads() throws {
+    func testQuotaRefreshDoesNotShowRawTokenTotalsBeforeFullTrendSnapshotLoads() async throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
         defer { try? FileManager.default.removeItem(at: directory) }
         let paths = CodixxPaths(home: directory)
@@ -1196,6 +1255,7 @@ final class AppStateTrendRefreshTests: XCTestCase {
         )
 
         state.refreshQuotaNow()
+        try await waitUntil { !state.isRefreshing }
 
         XCTAssertFalse(state.hasLoadedFullUsageSnapshot)
         XCTAssertEqual(state.usageSnapshot.totalTokens, 0)
@@ -1301,12 +1361,15 @@ final class AppStateTrendRefreshTests: XCTestCase {
             now: { now }
         )
         reopened.refreshQuotaNow()
+        try await waitUntil { !reopened.isRefreshing }
         XCTAssertNil(reopened.pendingAutoSwitch)
         state.refreshQuotaNow()
+        try await waitUntil { !state.isRefreshing }
         XCTAssertNil(state.pendingAutoSwitch)
         XCTAssertEqual(state.currentAccount?.id, current.id)
         state.setAutoSwitchEnabled(true)
         state.refreshQuotaNow()
+        try await waitUntil { state.pendingAutoSwitch?.targetID == target.id }
         XCTAssertEqual(state.pendingAutoSwitch?.targetID, target.id)
         state.confirmPendingAutoSwitch()
         XCTAssertEqual(state.currentAccount?.id, target.id)
