@@ -129,8 +129,10 @@ final class AppState: ObservableObject, LifecycleStateManaging {
     private let now: () -> Date
     private var isRefreshInProgress = false
     private var isQuotaRefreshInProgress = false
+    private var queuedQuotaRefresh = false
     private var isSwitchInProgress = false
     private var usageRefreshTask: Task<Void, Never>?
+    private var autoSwitchActivityTask: Task<Void, Never>?
     private var accountOrderPersistenceTask: Task<Void, Never>?
     private var configPersistenceTask: Task<Void, Never>?
     private var configPersistenceRevision = 0
@@ -330,15 +332,23 @@ final class AppState: ObservableObject, LifecycleStateManaging {
 
     func refreshQuotaNow() {
         resetForecastStore.refresh()
+        if isQuotaRefreshInProgress {
+            queuedQuotaRefresh = true
+            return
+        }
         refreshQuotaPipeline(
             allowAutoSwitch: true,
             preservingError: nil,
-            refreshUsageActivityOnly: true
+            refreshUsageActivityOnly: true,
+            backgroundActivityRead: true
         )
     }
 
     func refreshQuotaInBackground() {
-        guard !isQuotaRefreshInProgress else { return }
+        guard !isQuotaRefreshInProgress else {
+            queuedQuotaRefresh = true
+            return
+        }
         isQuotaRefreshInProgress = true
         isRefreshing = true
         resetForecastStore.refresh()
@@ -523,7 +533,7 @@ final class AppState: ObservableObject, LifecycleStateManaging {
         finishQuotaRefresh(
             errors: errors,
             preservedError: preservedError,
-            allowAutoSwitch: allowAutoSwitch && !snapshot.isDegraded,
+            allowAutoSwitch: allowAutoSwitch && (!snapshot.isDegraded || currentAccount?.isChatGPT == true),
             activitySnapshotIsFresh: true
         )
     }
@@ -724,6 +734,10 @@ final class AppState: ObservableObject, LifecycleStateManaging {
         if allowAutoSwitch {
             attemptAutoSwitchIfNeeded(activitySnapshotIsFresh: activitySnapshotIsFresh)
         }
+        if queuedQuotaRefresh {
+            queuedQuotaRefresh = false
+            refreshQuotaInBackground()
+        }
     }
 
     private func applyUsageSnapshot(_ snapshot: ThreadUsageSnapshot, preservingTokenBuckets: Bool = false) {
@@ -771,6 +785,26 @@ final class AppState: ObservableObject, LifecycleStateManaging {
     }
 
     func attemptAutoSwitchIfNeeded(activitySnapshotIsFresh: Bool = false) {
+        if let proposal = pendingAutoSwitch {
+            let policy = SwitchPolicy(
+                primaryThresholdPercent: config.primaryThresholdPercent,
+                secondaryThresholdPercent: config.secondaryThresholdPercent
+            )
+            let stillRelevant = config.autoSwitchEnabled
+                && currentAccount?.id == proposal.sourceID
+                && candidateAccounts.contains(where: { $0.id == proposal.targetID })
+                && policy.shouldAutoSwitch(
+                    currentAccount: currentAccount,
+                    allAccounts: accounts,
+                    context: SwitchSafetyContext(
+                        now: now(),
+                        activeThreadUpdatedAt: usageSnapshot.activeThread?.updatedAt,
+                        lastSwitchAt: lastSuccessfulSwitchAt
+                    )
+                )
+            if stillRelevant { return }
+            pendingAutoSwitch = nil
+        }
         guard config.autoSwitchEnabled, !isSwitchInProgress, pendingAccountID == nil,
               pendingAutoSwitch == nil else { return }
         let timestamp = now()
@@ -793,15 +827,23 @@ final class AppState: ObservableObject, LifecycleStateManaging {
             secondaryThresholdPercent: config.secondaryThresholdPercent
         )
         if currentAccount?.isAPIProvider == true && !activitySnapshotIsFresh {
-            let latestUsageSnapshot = threadUsageReader.readActivitySnapshot(
-                now: timestamp,
-                includeEffectiveTokenCounts: false
-            )
-            if latestUsageSnapshot.isDegraded, !usageSnapshot.threads.isEmpty {
-                errorMessage = latestUsageSnapshot.errorSummary ?? strings.usageReadFailed
-                return
+            guard autoSwitchActivityTask == nil, let accountID = currentAccount?.id else { return }
+            let reader = threadUsageReader
+            autoSwitchActivityTask = Task { [weak self] in
+                let snapshot = await Task.detached(priority: .utility) {
+                    reader.readActivitySnapshot(now: timestamp, includeEffectiveTokenCounts: false)
+                }.value
+                guard let self else { return }
+                self.autoSwitchActivityTask = nil
+                guard self.currentAccount?.id == accountID else { return }
+                if snapshot.isDegraded, !self.usageSnapshot.threads.isEmpty {
+                    self.errorMessage = snapshot.errorSummary ?? self.strings.usageReadFailed
+                    return
+                }
+                self.applyUsageSnapshot(snapshot, preservingTokenBuckets: true)
+                self.attemptAutoSwitchIfNeeded(activitySnapshotIsFresh: true)
             }
-            applyUsageSnapshot(latestUsageSnapshot, preservingTokenBuckets: true)
+            return
         }
         let context = SwitchSafetyContext(
             now: timestamp,
