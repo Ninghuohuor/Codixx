@@ -18,7 +18,7 @@ struct ResetForecastView: View {
                     }
 
                     if let feed = store.feed {
-                        forecastModule(feed, now: context.date)
+                        forecastModule(feed)
                         if let outlook = ResetCardOutlook.calculate(feed: feed, now: context.date) {
                             resetCardModule(outlook)
                         }
@@ -65,48 +65,53 @@ struct ResetForecastView: View {
         }
     }
 
-    private func forecastModule(_ feed: ResetFeed, now: Date) -> some View {
-        let estimate = ResetEstimate.calculate(feed: feed, now: now)
+    private func forecastModule(_ feed: ResetFeed) -> some View {
         return moduleCard(accent: .blue) {
             moduleHeader(
                 title: "预测自动重置",
-                subtitle: "根据公开公告历史估算",
+                subtitle: "来自 codexreset.club 的预测",
                 systemImage: "calendar.badge.clock",
                 accent: .blue
             )
 
-            HStack(alignment: .top, spacing: 12) {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text(date(estimate.day, format: "M 月 d 日"))
-                        .font(.system(size: 28, weight: .semibold, design: .rounded))
-                    Text("北京时间 · 非官方预告")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+            if let estimate = feed.forecast {
+                HStack(alignment: .top, spacing: 12) {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(date(estimate.day, format: "M 月 d 日"))
+                            .font(.system(size: 28, weight: .semibold, design: .rounded))
+                        Text("北京时间 · 非官方预告")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    Spacer(minLength: 8)
+                    VStack(alignment: .trailing, spacing: 3) {
+                        Text("\(Int((estimate.probability * 100).rounded()))%")
+                            .font(.system(size: 26, weight: .semibold, design: .rounded))
+                            .foregroundStyle(.blue)
+                        Text("截至当日累计概率")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
                 }
-                Spacer(minLength: 8)
-                VStack(alignment: .trailing, spacing: 3) {
-                    Text("\(Int((estimate.probability * 100).rounded()))%")
-                        .font(.system(size: 26, weight: .semibold, design: .rounded))
-                        .foregroundStyle(.blue)
-                    Text("截至当日累计概率")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+
+                Divider()
+
+                HStack(spacing: 0) {
+                    metric("历史平均间隔", estimate.averageDays.map { String(format: "%.1f 天", $0) } ?? "暂无样本")
+                    Divider().frame(height: 28)
+                    metric("有效间隔样本", "\(estimate.sampleCount) 个")
                 }
+                .frame(maxWidth: .infinity)
+
+                Text(estimate.basis == "default" ? "按默认 7 天间隔推算等待时间的中位日期，非官方预告。" : "按历史间隔和当前等待时间推算中位日期，非官方预告。")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            } else {
+                Text("网站尚未提供预测结果，请稍后刷新。")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
             }
-
-            Divider()
-
-            HStack(spacing: 0) {
-                metric("历史平均间隔", estimate.averageDays.map { String(format: "%.1f 天", $0) } ?? "暂无样本")
-                Divider().frame(height: 28)
-                metric("有效间隔样本", "\(estimate.sampleCount) 个")
-            }
-            .frame(maxWidth: .infinity)
-
-            Text(estimate.basis == "default" ? "按默认 7 天间隔推算等待时间的中位日期，非官方预告。" : "按历史间隔和当前等待时间推算中位日期，非官方预告。")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
         }
     }
 
