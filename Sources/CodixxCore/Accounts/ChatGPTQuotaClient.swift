@@ -6,11 +6,12 @@ public struct ChatGPTQuotaClient {
     public init() {}
 
     public enum QueryError: LocalizedError {
-        case missingLogin, expiredLogin, http(Int), invalidResponse, noQuota
+        case missingLogin, expiredLogin, activeLoginRefreshPending, http(Int), invalidResponse, noQuota
         public var errorDescription: String? {
             switch self {
             case .missingLogin: return "缺少 ChatGPT 登录凭据，请登录后重新保存账号。"
             case .expiredLogin: return "登录凭据已过期或失效，请在 Codex 登录后重新保存账号。"
+            case .activeLoginRefreshPending: return "当前账号的登录刷新由 Codex 处理，请稍后重试额度查询。"
             case .http(let status): return "额度查询失败（HTTP \(status)），请稍后重试。"
             case .invalidResponse: return "额度接口返回了无法识别的数据。"
             case .noQuota: return "服务端暂未返回可用的额度数据。"

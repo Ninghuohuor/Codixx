@@ -1587,7 +1587,8 @@ private struct AccountRowsView: View {
             }
             .labelStyle(.iconOnly)
             .buttonStyle(.borderless)
-            .disabled(account.id == state.currentAccount?.id && state.pendingAccountID == nil)
+            .disabled(state.credentialRefreshingAccounts.contains(account.id)
+                || (account.id == state.currentAccount?.id && state.pendingAccountID == nil))
             .help(state.strings.switchToThisAccount)
 
             Menu {

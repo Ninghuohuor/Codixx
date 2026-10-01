@@ -30,10 +30,19 @@ protocol LifecycleStateManaging: AnyObject {
     func refreshAPIBalancesNow()
 }
 
-private struct ChatGPTQuotaWorker: @unchecked Sendable {
+struct ChatGPTQuotaWorker: @unchecked Sendable {
     let paths: CodixxPaths
     let vault: AuthSnapshotVault
     let credentialRefresher: ChatGPTCredentialRefreshing
+    var queryQuota: @Sendable (AuthSnapshot, CodixxAccount) async throws -> AccountQuotaState = { snapshot, account in
+        try await ChatGPTQuotaClient().query(
+            snapshot: snapshot,
+            accountID: account.id.uuidString,
+            alias: account.alias
+        )
+    }
+    var beginCredentialRefresh: @Sendable (CodixxAccount) async -> Bool = { _ in true }
+    var endCredentialRefresh: @Sendable (CodixxAccount) async -> Void = { _ in }
 
     func query(for account: CodixxAccount) async throws -> AccountQuotaState {
         let snapshot: AuthSnapshot
@@ -49,24 +58,37 @@ private struct ChatGPTQuotaWorker: @unchecked Sendable {
         }
 
         do {
-            return try await ChatGPTQuotaClient().query(
-                snapshot: snapshot,
-                accountID: account.id.uuidString,
-                alias: account.alias
-            )
+            return try await queryQuota(snapshot, account)
         } catch ChatGPTQuotaClient.QueryError.expiredLogin {
-            let refreshed = try await credentialRefresher.refresh(snapshot: snapshot)
-            if isLiveSnapshot,
-               let currentData = try? Data(contentsOf: paths.authJSON),
-               currentData == snapshot.jsonData {
-                try AtomicFileWriter().write(refreshed.jsonData, to: paths.authJSON)
+            // Codex owns its active OAuth refresh. Rotating that refresh token
+            // here can invalidate the token it still has in memory. Recheck
+            // after the request because an inactive account may have become
+            // active while its quota request was in flight.
+            if FileManager.default.fileExists(atPath: paths.authJSON.path) {
+                let currentData = try Data(contentsOf: paths.authJSON)
+                let current = try AuthSnapshot(jsonData: currentData)
+                let currentFingerprint = try AccountFingerprint.generate(from: current)
+                if currentFingerprint == account.fingerprint {
+                    if currentData != snapshot.jsonData {
+                        return try await queryQuota(current, account)
+                    }
+                    throw ChatGPTQuotaClient.QueryError.activeLoginRefreshPending
+                }
             }
-            try vault.save(snapshot: refreshed, fingerprint: account.fingerprint)
-            return try await ChatGPTQuotaClient().query(
-                snapshot: refreshed,
-                accountID: account.id.uuidString,
-                alias: account.alias
-            )
+            guard !isLiveSnapshot else { throw ChatGPTQuotaClient.QueryError.expiredLogin }
+            guard await beginCredentialRefresh(account) else {
+                throw ChatGPTQuotaClient.QueryError.activeLoginRefreshPending
+            }
+            let refreshed: AuthSnapshot
+            do {
+                refreshed = try await credentialRefresher.refresh(snapshot: snapshot)
+                try vault.save(snapshot: refreshed, fingerprint: account.fingerprint)
+            } catch {
+                await endCredentialRefresh(account)
+                throw error
+            }
+            await endCredentialRefresh(account)
+            return try await queryQuota(refreshed, account)
         }
     }
 }
@@ -86,6 +108,7 @@ final class AppState: ObservableObject, LifecycleStateManaging {
     @Published private(set) var pendingAutoSwitch: AutoSwitchProposal?
     @Published private(set) var quotaQueryErrors: [UUID: String] = [:]
     @Published private(set) var queryingQuotaAccounts: Set<UUID> = []
+    @Published private(set) var credentialRefreshingAccounts: Set<UUID> = []
     private var lastQuotaQueries: [UUID: Date] = [:]
     private var runtimeAccountState: RuntimeAccountState?
     private var loadedRuntimeAccountState = false
@@ -249,7 +272,9 @@ final class AppState: ObservableObject, LifecycleStateManaging {
             primaryThresholdPercent: config.primaryThresholdPercent,
             secondaryThresholdPercent: config.secondaryThresholdPercent
         )
-            .orderedCandidates(from: accounts.filter { $0.id != currentAccount?.id }) { _ in true }
+            .orderedCandidates(from: accounts.filter {
+                $0.id != currentAccount?.id && !credentialRefreshingAccounts.contains($0.id)
+            }) { _ in true }
     }
 
     var canEnableAutoSwitch: Bool {
@@ -270,7 +295,7 @@ final class AppState: ObservableObject, LifecycleStateManaging {
     }
 
     func refreshChatGPTQuota(for account: CodixxAccount, force: Bool = true) {
-        guard account.isChatGPT, !queryingQuotaAccounts.contains(account.id) else { return }
+        guard account.isChatGPT, !isSwitchInProgress, !queryingQuotaAccounts.contains(account.id) else { return }
         if !force, let last = lastQuotaQueries[account.id], now().timeIntervalSince(last) < max(60, config.quotaRefreshIntervalSeconds) { return }
         lastQuotaQueries[account.id] = now()
         queryingQuotaAccounts.insert(account.id)
@@ -278,7 +303,13 @@ final class AppState: ObservableObject, LifecycleStateManaging {
         let worker = ChatGPTQuotaWorker(
             paths: paths,
             vault: vault,
-            credentialRefresher: chatGPTCredentialRefresher
+            credentialRefresher: chatGPTCredentialRefresher,
+            beginCredentialRefresh: { [weak self] account in
+                await self?.beginSavedCredentialRefresh(for: account) ?? false
+            },
+            endCredentialRefresh: { [weak self] account in
+                await self?.endSavedCredentialRefresh(for: account)
+            }
         )
         Task.detached(priority: .utility) { [weak self] in
             do {
@@ -288,6 +319,24 @@ final class AppState: ObservableObject, LifecycleStateManaging {
                 await self?.failChatGPTQuota(error, for: account)
             }
         }
+    }
+
+    private func beginSavedCredentialRefresh(for account: CodixxAccount) -> Bool {
+        guard !isSwitchInProgress, !credentialRefreshingAccounts.contains(account.id) else { return false }
+        if FileManager.default.fileExists(atPath: paths.authJSON.path) {
+            guard let data = try? Data(contentsOf: paths.authJSON),
+                  let snapshot = try? AuthSnapshot(jsonData: data),
+                  let fingerprint = try? AccountFingerprint.generate(from: snapshot),
+                  fingerprint != account.fingerprint else { return false }
+        }
+        // Reserve on the main actor before rotating a saved token. All Codixx
+        // activation paths check this reservation until the vault is updated.
+        credentialRefreshingAccounts.insert(account.id)
+        return true
+    }
+
+    private func endSavedCredentialRefresh(for account: CodixxAccount) {
+        credentialRefreshingAccounts.remove(account.id)
     }
 
     private func completeChatGPTQuota(_ quota: AccountQuotaState, for account: CodixxAccount) {
@@ -785,6 +834,10 @@ final class AppState: ObservableObject, LifecycleStateManaging {
     }
 
     func attemptAutoSwitchIfNeeded(activitySnapshotIsFresh: Bool = false) {
+        // Wait for saved credential renewal before choosing a fallback.
+        // Otherwise a temporarily busy ChatGPT candidate could be skipped in
+        // favor of an API account while its credentials are being renewed.
+        guard credentialRefreshingAccounts.isEmpty else { return }
         if let proposal = pendingAutoSwitch {
             let policy = SwitchPolicy(
                 primaryThresholdPercent: config.primaryThresholdPercent,
@@ -866,7 +919,8 @@ final class AppState: ObservableObject, LifecycleStateManaging {
     }
 
     func confirmPendingAutoSwitch() {
-        guard let proposal = pendingAutoSwitch else { return }
+        guard let proposal = pendingAutoSwitch,
+              credentialRefreshingAccounts.isEmpty else { return }
         pendingAutoSwitch = nil
         guard config.autoSwitchEnabled, currentAccount?.id == proposal.sourceID,
               let target = candidateAccounts.first(where: { $0.id == proposal.targetID })
@@ -1368,7 +1422,9 @@ final class AppState: ObservableObject, LifecycleStateManaging {
 
     func switchToAccountAndRestartCodex(_ account: CodixxAccount) {
         pendingAutoSwitch = nil
-        guard !isSwitchInProgress else { return }
+        // A saved account may be rotating its OAuth token during a quota
+        // query. Do not activate its old snapshot until that query finishes.
+        guard !isSwitchInProgress, !credentialRefreshingAccounts.contains(account.id) else { return }
         isSwitchInProgress = true
         defer { isSwitchInProgress = false }
         accountSaveStatus = nil
@@ -1472,6 +1528,10 @@ final class AppState: ObservableObject, LifecycleStateManaging {
 
     func signOutAPIProvider() {
         guard !isSwitchInProgress else { return }
+        guard credentialRefreshingAccounts.isEmpty else {
+            errorMessage = strings.savedCredentialRefreshInProgress
+            return
+        }
         isSwitchInProgress = true
         defer { isSwitchInProgress = false }
         accountSaveStatus = nil

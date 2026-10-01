@@ -260,6 +260,10 @@ public struct CodixxStrings: Sendable {
         text(en: "Refresh failed; showing the last successful quota.", zh: "刷新失败，当前显示上次获取的额度。")
     }
 
+    public var savedCredentialRefreshInProgress: String {
+        text(en: "A saved account is renewing its login. Retry switching shortly.", zh: "已保存账号正在续期登录凭据，请稍后重试切换。")
+    }
+
     public func quotaQueryFailure(_ error: Error) -> String {
         if let refresh = error as? ChatGPTCredentialRefresher.RefreshError {
             switch refresh {
@@ -284,6 +288,7 @@ public struct CodixxStrings: Sendable {
             switch query {
             case .missingLogin: return text(en: "Missing login credentials. Sign in and save the account again.", zh: "缺少登录凭据，请登录后重新保存账号。")
             case .expiredLogin: return text(en: "Login expired. Sign in to Codex and save the account again.", zh: "登录凭据已失效，请在 Codex 登录后重新保存账号。")
+            case .activeLoginRefreshPending: return text(en: "Codex manages renewal of the active login. Retry the quota query shortly.", zh: "当前账号的登录刷新由 Codex 处理，请稍后重试额度查询。")
             case .http(let status): return text(en: "Quota query failed (HTTP \(status)). Try again later.", zh: "额度查询失败（HTTP \(status)），请稍后重试。")
             case .invalidResponse: return text(en: "The quota service returned an unrecognized response.", zh: "额度接口返回了无法识别的数据。")
             case .noQuota: return text(en: "The service has not returned quota data yet.", zh: "服务端暂未返回可用的额度数据。")
