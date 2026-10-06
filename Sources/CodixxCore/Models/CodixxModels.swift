@@ -60,6 +60,10 @@ public struct AccountQuotaState: Codable, Equatable, Sendable {
         public var resetsAt: Date?
         public var isSecondary: Bool
 
+        public var remainingPercent: Double {
+            min(max(100 - usedPercent, 0), 100)
+        }
+
         public func threshold(short: Double, weekly: Double) -> Double {
             // Older saved observations may lack the duration; retain their slot semantics.
             if let minutes { return minutes >= 10_080 ? weekly : short }

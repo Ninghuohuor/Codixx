@@ -73,6 +73,8 @@ struct QuotaView: View {
 
             ProgressView(value: progress)
                 .tint(tint)
+                .accessibilityLabel(title)
+                .accessibilityValue(percentText)
         }
         .help("\(title): \(percentText) · \(resetText)")
     }
@@ -81,22 +83,30 @@ struct QuotaView: View {
         account?.quota
     }
 
+    private var primaryRemainingPercent: Double? {
+        quota?.reportedWindows.first { !$0.isSecondary }?.remainingPercent
+    }
+
+    private var secondaryRemainingPercent: Double? {
+        quota?.reportedWindows.first { $0.isSecondary }?.remainingPercent
+    }
+
     private var primaryProgress: Double {
-        min(max((quota?.primaryUsedPercent ?? 0) / 100, 0), 1)
+        (primaryRemainingPercent ?? 0) / 100
     }
 
     private var secondaryProgress: Double {
-        min(max((quota?.secondaryUsedPercent ?? 0) / 100, 0), 1)
+        (secondaryRemainingPercent ?? 0) / 100
     }
 
     private var primaryPercentText: String {
-        guard let used = quota?.primaryUsedPercent else { return "--" }
-        return "\(Int(used.rounded()))%"
+        guard let remaining = primaryRemainingPercent else { return "--" }
+        return strings.quotaRemainingPercent(remaining)
     }
 
     private var secondaryPercentText: String {
-        guard let used = quota?.secondaryUsedPercent else { return "--" }
-        return "\(Int(used.rounded()))%"
+        guard let remaining = secondaryRemainingPercent else { return "--" }
+        return strings.quotaRemainingPercent(remaining)
     }
 
     private var resetText: String {

@@ -234,8 +234,8 @@ final class AppState: ObservableObject, LifecycleStateManaging {
 
     var menuBarTitle: String {
         guard let account = currentAccount else { return "Codixx" }
-        if let used = account.quota.reportedWindows.first?.usedPercent {
-            return "Codixx \(Self.percentFormatter.string(from: NSNumber(value: used / 100)) ?? "")"
+        if let remaining = account.quota.reportedWindows.first?.remainingPercent {
+            return "Codixx \(Self.percentFormatter.string(from: NSNumber(value: remaining / 100)) ?? "")"
         }
         return "Codixx"
     }
@@ -256,7 +256,7 @@ final class AppState: ObservableObject, LifecycleStateManaging {
                 }
                 return strings.resets(date)
             } ?? strings.resetUnknown
-            lines.append("\(title): \(quotaPercentText(window.usedPercent)) · \(reset)")
+            lines.append("\(title): \(strings.quotaRemainingPercent(window.remainingPercent)) · \(reset)")
         }
         return lines.joined(separator: "\n")
     }
@@ -1848,10 +1848,6 @@ final class AppState: ObservableObject, LifecycleStateManaging {
 
     private func suppressAutoSwitchAfterManualSwitch() {
         autoSwitchSuppressedUntil = now().addingTimeInterval(manualSwitchAutoSuppressionSeconds)
-    }
-
-    private func quotaPercentText(_ percent: Double?) -> String {
-        percent.map { "\(Int($0.rounded()))%" } ?? "--"
     }
 
     static func accountUsageWindows(

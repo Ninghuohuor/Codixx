@@ -15,7 +15,9 @@ V_MINOR="${V_MINOR%%[!0-9]*}"
 V_PATCH="${V_PATCH%%[!0-9]*}"
 APP_BUILD_NUMBER=$(( ${V_MAJOR:-0} * 100 + ${V_MINOR:-0} * 10 + ${V_PATCH:-0} ))
 
-swift build -c release
+swift build -c release \
+  -Xswiftc -debug-prefix-map -Xswiftc "$ROOT_DIR=/Codixx" \
+  -Xswiftc -file-prefix-map -Xswiftc "$ROOT_DIR=/Codixx"
 
 BIN_DIR="$(swift build -c release --show-bin-path)"
 APP_DIR="$ROOT_DIR/build/Codixx.app"
@@ -28,6 +30,12 @@ mkdir -p "$MACOS_DIR" "$RESOURCES_DIR"
 
 cp "$BIN_DIR/Codixx" "$MACOS_DIR/Codixx"
 chmod +x "$MACOS_DIR/Codixx"
+/usr/bin/strip -S "$MACOS_DIR/Codixx"
+
+if LC_ALL=C /usr/bin/strings -a "$MACOS_DIR/Codixx" | /usr/bin/grep -E '/(Users|home)/[^/[:space:]]+' > /dev/null; then
+  echo "Personal filesystem paths remain in $MACOS_DIR/Codixx; packaging stopped" >&2
+  exit 1
+fi
 
 if [[ -f "$ROOT_DIR/Resources/AppIcon.icns" ]]; then
   cp "$ROOT_DIR/Resources/AppIcon.icns" "$RESOURCES_DIR/AppIcon.icns"
@@ -75,7 +83,8 @@ if security find-identity -v -p codesigning | grep -Fq "\"$SIGN_IDENTITY\""; the
   codesign --force --deep --timestamp=none --sign "$SIGN_IDENTITY" "$APP_DIR"
   echo "Signed $APP_DIR with $SIGN_IDENTITY"
 else
-  echo "Code signing identity '$SIGN_IDENTITY' not found; leaving app unsigned"
+  codesign --force --deep --timestamp=none --sign - "$APP_DIR"
+  echo "Code signing identity '$SIGN_IDENTITY' not found; applied ad-hoc signing"
 fi
 
 echo "Created $APP_DIR"

@@ -10,3 +10,29 @@ docs/superpowers/
 *.xcuserstate
 *.xcworkspace/xcuserdata/
 *.xcodeproj/xcuserdata/
+
+# Local credentials, data, logs, and session exports.
+.env
+.env.*
+!.env.example
+!.env.sample
+auth.json
+credentials*.json
+*.pem
+*.key
+*.sqlite
+*.sqlite-*
+*.db
+*.db-*
+*.jsonl
+*.log
+*.bak
+*.backup
+artifacts/
+.codex/sessions/
+.codex/archived_sessions/
+.codex/log/
+
+# These fixtures contain synthetic test data.
+!fixtures/**/*.sqlite
+!fixtures/**/*.jsonl

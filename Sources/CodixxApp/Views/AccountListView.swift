@@ -1653,7 +1653,7 @@ private struct AccountRowsView: View {
             ForEach(Array(account.quota.reportedWindows.enumerated()), id: \.offset) { _, window in
                 quotaProgressRow(
                     title: state.strings.quotaWindowTitle(minutes: window.minutes),
-                    percent: window.usedPercent,
+                    remainingPercent: window.remainingPercent,
                     resetText: window.resetsAt.map { date in
                         if window.isSecondary || (window.minutes ?? 0) >= 10_080 {
                             return state.strings.weeklyResets(date)
@@ -1668,12 +1668,12 @@ private struct AccountRowsView: View {
 
     private func quotaProgressRow(
         title: String,
-        percent: Double?,
+        remainingPercent: Double,
         resetText: String,
         tint: Color
     ) -> some View {
-        let percentText = percent.map { "\(Int($0.rounded()))%" } ?? "--"
-        let progress = min(max((percent ?? 0) / 100, 0), 1)
+        let percentText = state.strings.quotaRemainingPercent(remainingPercent)
+        let progress = remainingPercent / 100
         return VStack(alignment: .leading, spacing: 4) {
             HStack {
                 Text("\(title) · \(resetText)")

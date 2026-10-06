@@ -319,6 +319,11 @@ public struct CodixxStrings: Sendable {
 
     public var quotaNotReported: String { text(en: "Quota data not received", zh: "暂未获取到额度数据") }
 
+    public func quotaRemainingPercent(_ percent: Double) -> String {
+        let value = Int(percent.rounded())
+        return text(en: "\(value)% remaining", zh: "剩余 \(value)%")
+    }
+
     public func quotaWindowTitle(minutes: Int?) -> String {
         guard let minutes, minutes > 0 else { return text(en: "Usage quota", zh: "使用额度") }
         if minutes == 10_080 { return weeklyQuota }
