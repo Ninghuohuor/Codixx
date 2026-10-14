@@ -1,6 +1,23 @@
-# Codixx
+<h1 align="center">Codixx</h1>
 
-Current version: **1.0.18**
+<p align="center">
+  Codex usage, quota, and account switching in your menu bar.<br>
+  Native macOS app · Local-first
+</p>
+
+<p align="center">
+  <img src="https://img.shields.io/badge/version-1.0.18-2563eb" alt="Version 1.0.18">
+  <img src="https://img.shields.io/badge/macOS-13%2B-475569" alt="macOS 13 or newer">
+  <img src="https://img.shields.io/badge/platform-Apple%20Silicon-475569" alt="Apple Silicon release">
+</p>
+
+<p align="center">
+  <a href="https://github.com/Ninghuohuor/Codixx/releases/latest">Download</a> ·
+  <a href="#features">Features</a> ·
+  <a href="#build-and-test">Build</a>
+</p>
+
+---
 
 ## Download
 
