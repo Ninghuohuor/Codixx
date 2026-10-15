@@ -51,7 +51,6 @@ struct DashboardView: View {
     let state: AppState
     @StateObject private var presentation: DashboardPresentationState
     @State private var selectedTab = 0
-    @State private var trendRefreshTask: Task<Void, Never>?
 
     init(state: AppState) {
         self.state = state
@@ -69,13 +68,9 @@ struct DashboardView: View {
                     .tabItem { Label("重置预测", systemImage: "calendar.badge.clock") }
                     .tag(1)
 
-                DashboardTrendsView(state: state)
-                    .tabItem { Label(presentation.strings.trends, systemImage: "chart.xyaxis.line") }
-                    .tag(2)
-
                 settings
                     .tabItem { Label(presentation.strings.settings, systemImage: "gearshape") }
-                    .tag(3)
+                    .tag(2)
             }
             .allowsHitTesting(presentation.pendingAutoSwitch == nil)
 
@@ -88,19 +83,6 @@ struct DashboardView: View {
         }
         .frame(width: DashboardLayout.width)
         .frame(minHeight: 400, idealHeight: 520, maxHeight: 620)
-        .onChange(of: selectedTab) { tab in
-            guard tab == 2 else {
-                trendRefreshTask?.cancel()
-                trendRefreshTask = nil
-                return
-            }
-            scheduleTrendRefresh()
-        }
-        .onAppear {
-            if selectedTab == 2 {
-                scheduleTrendRefresh()
-            }
-        }
         // Codixx 只做亮色，理由见 AppAppearancePolicy。
         .codixxAppearance()
     }
@@ -131,66 +113,6 @@ struct DashboardView: View {
         .shadow(color: .black.opacity(0.16), radius: 18, y: 8)
     }
 
-    private func scheduleTrendRefresh() {
-        trendRefreshTask?.cancel()
-        trendRefreshTask = Task { @MainActor in
-            await Task.yield()
-            guard !Task.isCancelled, selectedTab == 2 else { return }
-            state.refreshTrendsIfNeeded()
-        }
-    }
-
     private var accounts: some View { AccountListView(state: state) }
     private var settings: some View { SettingsView(state: state) }
-}
-
-private struct DashboardTrendsView: View {
-    @ObservedObject var state: AppState
-
-    var body: some View {
-        Group {
-            if state.isLoadingFullUsageSnapshot || !state.hasLoadedFullUsageSnapshot {
-                TrendLoadingView(strings: state.strings)
-            } else {
-                ScrollView {
-                    VStack(alignment: .leading, spacing: 16) {
-                        if let error = state.errorMessage {
-                            Label(error, systemImage: "exclamationmark.triangle")
-                                .font(.caption)
-                                .foregroundStyle(.orange)
-                                .lineLimit(4)
-                                .padding(12)
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                                .background(Color.orange.opacity(0.10), in: RoundedRectangle(cornerRadius: 8))
-                                .transition(.opacity)
-                        }
-                        UsageTrendView(
-                            snapshot: state.usageSnapshot,
-                            accounts: state.accounts,
-                            strings: state.strings
-                        )
-                        ThreadRankingView(threads: state.topThreads, strings: state.strings)
-                    }
-                    .padding(14)
-                }
-                .transition(.opacity)
-            }
-        }
-    }
-
-}
-
-private struct TrendLoadingView: View {
-    var strings: CodixxStrings
-
-    var body: some View {
-        VStack(spacing: 12) {
-            ProgressView()
-                .controlSize(.large)
-            Text(strings.loadingTrendData)
-                .font(.caption)
-                .foregroundStyle(.secondary)
-        }
-        .frame(maxWidth: .infinity, minHeight: 360, maxHeight: .infinity)
-    }
 }

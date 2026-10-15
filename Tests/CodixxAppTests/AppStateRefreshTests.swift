@@ -4,7 +4,7 @@ import CodixxCore
 import SQLite3
 
 @MainActor
-final class AppStateTrendRefreshTests: XCTestCase {
+final class AppStateRefreshTests: XCTestCase {
     func testManualProSelectionSurvivesEarlyThresholdUntilQuotaIsExhausted() {
         let now = Date(timeIntervalSince1970: 1_778_300_000)
         var pro = displayOrderAccount(alias: "Pro", priority: 2, now: now)
@@ -105,7 +105,7 @@ final class AppStateTrendRefreshTests: XCTestCase {
         try await waitUntil { state.lastUpdatedAt != nil && !state.isRefreshing }
     }
 
-    func testManualQuotaRefreshDoesNotBlockMenuWhenThreadsDatabaseIsLocked() async throws {
+    func testManualRefreshesDoNotBlockMenuWhenThreadsDatabaseIsLocked() async throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
         defer { try? FileManager.default.removeItem(at: directory) }
         let paths = CodixxPaths(home: directory)
@@ -131,6 +131,14 @@ final class AppStateTrendRefreshTests: XCTestCase {
 
         XCTAssertEqual(sqlite3_exec(database, "ROLLBACK", nil, nil, nil), SQLITE_OK)
         try await waitUntil { state.lastUpdatedAt != nil && !state.isRefreshing }
+
+        XCTAssertEqual(sqlite3_exec(database, "BEGIN EXCLUSIVE", nil, nil, nil), SQLITE_OK)
+        let combinedRefreshStarted = Date()
+        state.refreshNow()
+        XCTAssertLessThan(Date().timeIntervalSince(combinedRefreshStarted), 0.5)
+        XCTAssertTrue(state.isRefreshing)
+        XCTAssertEqual(sqlite3_exec(database, "ROLLBACK", nil, nil, nil), SQLITE_OK)
+        try await waitUntil { !state.isRefreshing }
     }
 
     func testReorderAccountsPersistsDisplayOrderWithoutChangingPriorities() throws {
@@ -694,12 +702,12 @@ final class AppStateTrendRefreshTests: XCTestCase {
         state.saveAPIProviderAccount(
             alias: "Relay",
             baseURLText: "https://relay.example.com/v1",
-            apiKey: "sk-e1c12345678992df",
+            apiKey: "example-api-key-1234",
             defaultModel: ""
         )
 
         let account = try XCTUnwrap(state.accounts.first)
-        XCTAssertEqual(state.maskedAPIKey(for: account), "sk-e1c...92df")
+        XCTAssertEqual(state.maskedAPIKey(for: account), "exampl...1234")
     }
 
     func testAppStateKeepsExistingAPIKeyWhenUpdateReceivesMaskedKey() throws {
@@ -717,7 +725,7 @@ final class AppStateTrendRefreshTests: XCTestCase {
         state.saveAPIProviderAccount(
             alias: "Relay",
             baseURLText: "https://relay.example.com/v1",
-            apiKey: "sk-e1c12345678992df",
+            apiKey: "example-api-key-1234",
             defaultModel: ""
         )
         let account = try XCTUnwrap(state.accounts.first)
@@ -726,14 +734,14 @@ final class AppStateTrendRefreshTests: XCTestCase {
             account,
             alias: "Relay 2",
             baseURLText: "https://relay2.example.com/v1",
-            apiKey: "sk-e1c...92df",
+            apiKey: "exampl...1234",
             defaultModel: "gpt-4.1"
         )
 
         let updated = try XCTUnwrap(state.accounts.first)
         XCTAssertEqual(updated.alias, "Relay 2")
         XCTAssertEqual(updated.apiProvider?.keyFingerprint, account.apiProvider?.keyFingerprint)
-        XCTAssertEqual(apiKeyVault.keys[account.apiProvider!.keyFingerprint], "sk-e1c12345678992df")
+        XCTAssertEqual(apiKeyVault.keys[account.apiProvider!.keyFingerprint], "example-api-key-1234")
     }
 
     func testRefreshingAPIBalanceStoresBalanceOnAccount() async throws {
@@ -1030,7 +1038,7 @@ final class AppStateTrendRefreshTests: XCTestCase {
         XCTAssertEqual(codexDesktopManager.restartCallCount, 1)
     }
 
-    func testSwitchClearsStaleSaveStatusAndMarksTrendSnapshotStale() async throws {
+    func testSwitchClearsStaleSaveStatus() async throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
         defer { try? FileManager.default.removeItem(at: directory) }
         let paths = CodixxPaths(home: directory)
@@ -1068,15 +1076,9 @@ final class AppStateTrendRefreshTests: XCTestCase {
         metadata.accounts.append(second)
         try AccountMetadataStore(paths: paths).save(metadata)
 
-        state.refreshTrendsIfNeeded()
-        try await waitUntil { state.hasLoadedFullUsageSnapshot }
-        XCTAssertTrue(state.hasLoadedFullUsageSnapshot)
-
         state.switchToAccount(second)
 
         XCTAssertNil(state.accountSaveStatus)
-        XCTAssertFalse(state.hasLoadedFullUsageSnapshot)
-        XCTAssertFalse(state.isLoadingFullUsageSnapshot)
     }
 
     func testAccountOperationsWriteActivityLogEvents() throws {
@@ -1163,8 +1165,6 @@ final class AppStateTrendRefreshTests: XCTestCase {
 
         XCTAssertEqual(state.currentAccount?.quota.primaryUsedPercent, 62)
         XCTAssertEqual(state.currentAccount?.quota.primaryResetsAt, observedReset)
-        XCTAssertFalse(state.isLoadingFullUsageSnapshot)
-        XCTAssertFalse(state.hasLoadedFullUsageSnapshot)
 
         let nextObservation = observationLine
             .replacingOccurrences(of: "2026-05-08T01:00:00Z", with: "2026-05-08T01:00:01Z")
@@ -1177,7 +1177,27 @@ final class AppStateTrendRefreshTests: XCTestCase {
         try await waitUntil { state.currentAccount?.quota.primaryUsedPercent == 63 && !state.isRefreshing }
     }
 
-    func testQuotaRefreshPreservesEffectiveTokenTotalsFromFullTrendSnapshot() async throws {
+    func testActivityReadFailurePreservesLastKnownActiveThread() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let paths = CodixxPaths(home: directory)
+        let now = Date(timeIntervalSince1970: 1_778_300_000)
+        try writeThreadsDatabase(at: paths.latestStateDatabaseURL(), now: now, threadUpdatedAt: now)
+        let state = AppState(paths: paths, vault: InMemoryVault(), now: { now })
+        state.refreshNow()
+        try await waitUntil { !state.isRefreshing }
+        XCTAssertEqual(state.usageSnapshot.activeThread?.id, "active")
+
+        try FileManager.default.removeItem(at: paths.latestStateDatabaseURL())
+        state.refreshNow()
+        try await waitUntil { !state.isRefreshing }
+
+        XCTAssertEqual(state.usageSnapshot.activeThread?.id, "active")
+        XCTAssertNotNil(state.errorMessage)
+        XCTAssertNil(state.pendingAutoSwitch)
+    }
+
+    func testManualRefreshKeepsActivityWithoutParsingRolloutTokenHistory() async throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
         defer { try? FileManager.default.removeItem(at: directory) }
         let paths = CodixxPaths(home: directory)
@@ -1209,21 +1229,23 @@ final class AppStateTrendRefreshTests: XCTestCase {
         )
 
         state.refreshNow()
-        try await waitUntil { state.hasLoadedFullUsageSnapshot }
+        try await waitUntil { !state.isRefreshing }
 
-        XCTAssertEqual(state.usageSnapshot.totalTokens, 2_750)
-        XCTAssertEqual(state.topThreads.first?.tokensUsed, 2_750)
+        XCTAssertEqual(state.usageSnapshot.totalTokens, 0)
+        XCTAssertTrue(state.usageSnapshot.threads.isEmpty)
+        XCTAssertEqual(state.usageSnapshot.activeThread?.id, "cached-heavy")
+        XCTAssertFalse(FileManager.default.fileExists(atPath: paths.trendCacheJSON.path))
 
         state.refreshQuotaNow()
         try await waitUntil { !state.isRefreshing }
 
-        XCTAssertEqual(state.usageSnapshot.totalTokens, 2_750)
-        XCTAssertEqual(state.usageSnapshot.threads.first?.tokensUsed, 2_750)
-        XCTAssertEqual(state.topThreads.first?.tokensUsed, 2_750)
-        XCTAssertEqual(state.usageSnapshot.activeThread?.tokensUsed, 2_750)
+        XCTAssertEqual(state.usageSnapshot.totalTokens, 0)
+        XCTAssertTrue(state.usageSnapshot.threads.isEmpty)
+        XCTAssertEqual(state.usageSnapshot.activeThread?.id, "cached-heavy")
+        XCTAssertFalse(FileManager.default.fileExists(atPath: paths.trendCacheJSON.path))
     }
 
-    func testQuotaRefreshDoesNotShowRawTokenTotalsBeforeFullTrendSnapshotLoads() async throws {
+    func testQuotaRefreshKeepsActivityWithoutBuildingTokenHistory() async throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
         defer { try? FileManager.default.removeItem(at: directory) }
         let paths = CodixxPaths(home: directory)
@@ -1257,10 +1279,8 @@ final class AppStateTrendRefreshTests: XCTestCase {
         state.refreshQuotaNow()
         try await waitUntil { !state.isRefreshing }
 
-        XCTAssertFalse(state.hasLoadedFullUsageSnapshot)
         XCTAssertEqual(state.usageSnapshot.totalTokens, 0)
         XCTAssertTrue(state.usageSnapshot.threads.isEmpty)
-        XCTAssertTrue(state.topThreads.isEmpty)
         XCTAssertEqual(state.usageSnapshot.activeThread?.id, "cached-heavy")
     }
 
@@ -1575,149 +1595,6 @@ final class AppStateTrendRefreshTests: XCTestCase {
 
         XCTAssertEqual(state.currentAccount?.quota.primaryUsedPercent, 45)
         XCTAssertEqual(state.currentAccount?.quota.secondaryUsedPercent, 67)
-    }
-
-    func testTrendRefreshMarksFullUsageSnapshotLoaded() async throws {
-        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
-        defer { try? FileManager.default.removeItem(at: directory) }
-        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        let state = AppState(
-            paths: CodixxPaths(home: directory),
-            vault: InMemoryVault(),
-            codexDesktopState: NoopCodexDesktopStateCleaner(),
-            codexDesktopManager: CodexDesktopManagerSpy()
-        )
-
-        XCTAssertFalse(state.hasLoadedFullUsageSnapshot)
-        XCTAssertFalse(state.isLoadingFullUsageSnapshot)
-
-        state.refreshTrendsIfNeeded()
-
-        XCTAssertTrue(state.isLoadingFullUsageSnapshot)
-        try await waitUntil { state.hasLoadedFullUsageSnapshot }
-        XCTAssertFalse(state.isLoadingFullUsageSnapshot)
-    }
-
-    func testAccountUsageWindowsAttributeHistoryBeforeFirstSwitchToSourceAccount() throws {
-        let accountA = UUID()
-        let accountB = UUID()
-        let accountCreatedAt = Date(timeIntervalSince1970: 1_777_000_000)
-        let firstSwitchAt = Date(timeIntervalSince1970: 1_778_000_000)
-        let account = CodixxAccount(
-            id: accountA,
-            alias: "A",
-            fingerprint: "fingerprint-a",
-            createdAt: accountCreatedAt,
-            updatedAt: accountCreatedAt,
-            lastUsedAt: nil,
-            quota: .unknown(accountId: accountA.uuidString, alias: "A"),
-            isEnabled: true,
-            priority: 0
-        )
-        let target = CodixxAccount(
-            id: accountB,
-            alias: "B",
-            fingerprint: "fingerprint-b",
-            createdAt: accountCreatedAt,
-            updatedAt: accountCreatedAt,
-            lastUsedAt: nil,
-            quota: .unknown(accountId: accountB.uuidString, alias: "B"),
-            isEnabled: true,
-            priority: 1
-        )
-        let switchEvent = SwitchAuditEvent(
-            timestamp: firstSwitchAt,
-            trigger: .manual,
-            sourceAccountId: accountA,
-            sourceAlias: "A",
-            targetAccountId: accountB,
-            targetAlias: "B",
-            sourcePrimaryUsedPercent: nil,
-            sourceSecondaryUsedPercent: nil,
-            threshold: nil,
-            result: .success,
-            errorSummary: nil,
-            backupPath: nil
-        )
-
-        let windows = AppState.accountUsageWindows(
-            accounts: [account, target],
-            switchEvents: [switchEvent]
-        )
-
-        XCTAssertTrue(windows.contains {
-            $0.accountId == accountA
-                && $0.start == .distantPast
-                && $0.end == firstSwitchAt
-        })
-    }
-
-    func testAccountUsageWindowsAttributeRecentUsageToCurrentAccountAfterExternalLogin() throws {
-        let accountA = UUID()
-        let accountB = UUID()
-        let currentAccountId = UUID()
-        let accountCreatedAt = Date(timeIntervalSince1970: 1_777_000_000)
-        let firstSwitchAt = Date(timeIntervalSince1970: 1_778_000_000)
-        let currentBecameActiveAt = firstSwitchAt.addingTimeInterval(120)
-        let account = CodixxAccount(
-            id: accountA,
-            alias: "A",
-            fingerprint: "fingerprint-a",
-            createdAt: accountCreatedAt,
-            updatedAt: accountCreatedAt,
-            lastUsedAt: nil,
-            quota: .unknown(accountId: accountA.uuidString, alias: "A"),
-            isEnabled: true,
-            priority: 0
-        )
-        let target = CodixxAccount(
-            id: accountB,
-            alias: "B",
-            fingerprint: "fingerprint-b",
-            createdAt: accountCreatedAt,
-            updatedAt: accountCreatedAt,
-            lastUsedAt: nil,
-            quota: .unknown(accountId: accountB.uuidString, alias: "B"),
-            isEnabled: true,
-            priority: 1
-        )
-        let current = CodixxAccount(
-            id: currentAccountId,
-            alias: "Current",
-            fingerprint: "fingerprint-current",
-            createdAt: accountCreatedAt,
-            updatedAt: currentBecameActiveAt,
-            lastUsedAt: currentBecameActiveAt,
-            quota: .unknown(accountId: currentAccountId.uuidString, alias: "Current"),
-            isEnabled: true,
-            priority: 2
-        )
-        let switchEvent = SwitchAuditEvent(
-            timestamp: firstSwitchAt,
-            trigger: .manual,
-            sourceAccountId: accountA,
-            sourceAlias: "A",
-            targetAccountId: accountB,
-            targetAlias: "B",
-            sourcePrimaryUsedPercent: nil,
-            sourceSecondaryUsedPercent: nil,
-            threshold: nil,
-            result: .success,
-            errorSummary: nil,
-            backupPath: nil
-        )
-
-        let windows = AppState.accountUsageWindows(
-            accounts: [account, target, current],
-            switchEvents: [switchEvent],
-            currentAccount: current
-        )
-
-        XCTAssertEqual(windows, [
-            AccountUsageWindow(accountId: accountA, start: .distantPast, end: firstSwitchAt),
-            AccountUsageWindow(accountId: accountB, start: firstSwitchAt, end: currentBecameActiveAt),
-            AccountUsageWindow(accountId: currentAccountId, start: currentBecameActiveAt, end: nil)
-        ])
     }
 
     private func waitUntil(

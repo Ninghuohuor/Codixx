@@ -149,17 +149,6 @@ struct SettingsView: View {
                         step: 30
                     )
 
-                    Divider()
-
-                    Stepper(
-                        "\(state.strings.usageRefresh): \(state.strings.minutesInterval(Int(state.config.usageRefreshIntervalSeconds / 60)))",
-                        value: Binding(
-                            get: { state.config.usageRefreshIntervalSeconds },
-                            set: { state.setUsageRefreshIntervalSeconds($0) }
-                        ),
-                        in: 60...1_800,
-                        step: 60
-                    )
                 }
 
                 settingsSection(title: "Codex") {

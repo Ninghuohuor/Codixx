@@ -55,8 +55,6 @@ private final class LifecycleStateSpy: LifecycleStateManaging {
         refreshQuotaInBackgroundCallCount += 1
     }
 
-    func refreshUsageNow() {}
-
     func refreshAPIBalancesNow() {
         refreshAPIBalancesNowCallCount += 1
     }

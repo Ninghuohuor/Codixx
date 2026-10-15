@@ -18,6 +18,9 @@ struct ResetForecastView: View {
                     }
 
                     if let feed = store.feed {
+                        ForEach(ResetUpdate.calculate(feed: feed, now: context.date)) { update in
+                            updateModule(update, now: context.date)
+                        }
                         forecastModule(feed)
                         if let outlook = ResetCardOutlook.calculate(feed: feed, now: context.date) {
                             resetCardModule(outlook)
@@ -62,6 +65,82 @@ struct ResetForecastView: View {
                 .controlSize(.small)
                 .disabled(store.isRefreshing)
             }
+        }
+    }
+
+    private func updateModule(_ update: ResetUpdate, now: Date) -> some View {
+        moduleCard(accent: .purple) {
+            HStack(alignment: .top, spacing: 8) {
+                moduleHeader(
+                    title: updateTitle(update.kind),
+                    subtitle: "来自 Tibo 的公开消息",
+                    systemImage: "text.bubble",
+                    accent: .purple
+                )
+                Spacer(minLength: 4)
+                VStack(alignment: .trailing, spacing: 4) {
+                    ForEach(updateStatuses(update, now: now), id: \.self) { status in
+                        Text(status)
+                            .font(.caption2.weight(.medium))
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 4)
+                            .background(Color.purple.opacity(0.09), in: Capsule())
+                    }
+                }
+            }
+
+            Text(update.summary)
+                .font(.headline)
+                .fixedSize(horizontal: false, vertical: true)
+                .textSelection(.enabled)
+
+            if update.kind == .progress || update.kind == .clue {
+                Text(update.kind == .progress
+                     ? "原帖未明确是自动重置还是重置卡，请在 Codex 内查看个人额度。"
+                     : "尚未明确是自动重置还是重置卡，也未给出具体日期。")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                if let text = update.originalText, !text.isEmpty {
+                    Text(text)
+                        .font(.caption)
+                        .lineLimit(6)
+                        .textSelection(.enabled)
+                }
+            }
+
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                Text(date(update.publishedAt, format: "yyyy/M/d HH:mm") + " · 北京时间")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                Spacer(minLength: 4)
+                Link(destination: update.sourceURL) {
+                    Label("查看 X 原帖", systemImage: "arrow.up.right")
+                }
+                .font(.caption)
+            }
+        }
+    }
+
+    private func updateTitle(_ kind: ResetUpdate.Kind) -> String {
+        switch kind {
+        case .progress: return "Tibo 重置进展"
+        case .clue: return "Tibo 重置线索"
+        case .announcement: return "Tibo 最新公告"
+        case .preannouncement: return "Tibo 重置预告"
+        }
+    }
+
+    private func updateStatuses(_ update: ResetUpdate, now: Date) -> [String] {
+        if let value = update.progressPhase {
+            return [value == "completed" ? "已确认完成" : phase(value)]
+        }
+        if update.kind == .clue { return ["可能重置"] }
+        return update.effects.map { effect in
+            let kind = effect.kind == "automatic_reset" ? "自动重置" : "重置卡"
+            let status = effect.phase == "rolling_out" && now.timeIntervalSince(update.publishedAt) >= 86400
+                ? "公告时已开始" : phase(effect.phase)
+            return kind + " · " + status
         }
     }
 

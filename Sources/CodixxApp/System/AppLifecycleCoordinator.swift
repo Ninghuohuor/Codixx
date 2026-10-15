@@ -10,7 +10,6 @@ final class AppLifecycleCoordinator: ObservableObject {
     private let initialRefreshDelaySeconds: TimeInterval
     private let shouldStartAuthFileObservation: Bool
     private var quotaTimer: Timer?
-    private var usageTimer: Timer?
     private var apiBalanceTimer: Timer?
     private var authFileDescriptor: Int32 = -1
     private var authFileSource: DispatchSourceFileSystemObject?
@@ -31,7 +30,6 @@ final class AppLifecycleCoordinator: ObservableObject {
     func stop() {
         isStarted = false
         quotaTimer?.invalidate()
-        usageTimer?.invalidate()
         apiBalanceTimer?.invalidate()
         authFileSource?.cancel()
         NotificationCenter.default.removeObserver(self)
@@ -66,11 +64,9 @@ final class AppLifecycleCoordinator: ObservableObject {
 
     private func scheduleTimers() {
         quotaTimer?.invalidate()
-        usageTimer?.invalidate()
         apiBalanceTimer?.invalidate()
 
         scheduleQuotaTimer()
-        scheduleUsageTimer()
         scheduleAPIBalanceTimer()
     }
 
@@ -84,20 +80,6 @@ final class AppLifecycleCoordinator: ObservableObject {
                 guard let self, self.isStarted else { return }
                 self.refreshQuotaAndNotify()
                 self.scheduleQuotaTimer()
-            }
-        }
-    }
-
-    private func scheduleUsageTimer() {
-        usageTimer?.invalidate()
-        usageTimer = Timer.scheduledTimer(
-            withTimeInterval: jitteredInterval(base: max(60, state.config.usageRefreshIntervalSeconds), minimum: 60),
-            repeats: false
-        ) { [weak self] _ in
-            Task { @MainActor in
-                guard let self, self.isStarted else { return }
-                self.refreshUsageAndNotify()
-                self.scheduleUsageTimer()
             }
         }
     }
@@ -172,7 +154,6 @@ final class AppLifecycleCoordinator: ObservableObject {
 
     @objc private func workspaceWillSleep() {
         quotaTimer?.invalidate()
-        usageTimer?.invalidate()
         apiBalanceTimer?.invalidate()
     }
 
@@ -193,11 +174,6 @@ final class AppLifecycleCoordinator: ObservableObject {
 
     private func refreshQuotaAndNotify() {
         state.refreshQuotaInBackground()
-        evaluateNotificationsIfPossible()
-    }
-
-    private func refreshUsageAndNotify() {
-        state.refreshUsageNow()
         evaluateNotificationsIfPossible()
     }
 

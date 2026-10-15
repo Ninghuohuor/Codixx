@@ -26,7 +26,6 @@ protocol LifecycleStateManaging: AnyObject {
     func refreshNow()
     func refreshQuotaNow()
     func refreshQuotaInBackground()
-    func refreshUsageNow()
     func refreshAPIBalancesNow()
 }
 
@@ -112,18 +111,15 @@ final class AppState: ObservableObject, LifecycleStateManaging {
     private var lastQuotaQueries: [UUID: Date] = [:]
     private var runtimeAccountState: RuntimeAccountState?
     private var loadedRuntimeAccountState = false
-    @Published private(set) var usageSnapshot = ThreadUsageSnapshot(
+    private(set) var usageSnapshot = ThreadUsageSnapshot(
         threads: [],
         totalTokens: 0,
         activeThread: nil
     )
-    @Published private(set) var topThreads: [ThreadUsage] = []
     @Published private(set) var switchEvents: [SwitchAuditEvent] = []
     @Published private(set) var appLogEvents: [AppLogEvent] = []
     @Published private(set) var lastUpdatedAt: Date?
     @Published private(set) var isRefreshing = false
-    @Published private(set) var hasLoadedFullUsageSnapshot = false
-    @Published private(set) var isLoadingFullUsageSnapshot = false
     @Published private(set) var accountSaveStatus: AccountSaveStatus?
     @Published private(set) var postSwitchRestartMessage: String?
     @Published private(set) var apiProviderSignOutMessage: String?
@@ -154,7 +150,6 @@ final class AppState: ObservableObject, LifecycleStateManaging {
     private var isQuotaRefreshInProgress = false
     private var queuedQuotaRefresh = false
     private var isSwitchInProgress = false
-    private var usageRefreshTask: Task<Void, Never>?
     private var autoSwitchActivityTask: Task<Void, Never>?
     private var accountOrderPersistenceTask: Task<Void, Never>?
     private var configPersistenceTask: Task<Void, Never>?
@@ -192,10 +187,7 @@ final class AppState: ObservableObject, LifecycleStateManaging {
         self.configStore = CodixxConfigStore(paths: paths)
         self.metadataStore = AccountMetadataStore(paths: paths)
         self.rateLimitReader = RateLimitReader(paths: paths)
-        self.threadUsageReader = ThreadUsageReader(
-            databaseURL: paths.latestStateDatabaseURL(),
-            trendCacheStore: TrendCacheStore(paths: paths)
-        )
+        self.threadUsageReader = ThreadUsageReader(databaseURL: paths.latestStateDatabaseURL())
         self.auditLog = SwitchAuditLog(paths: paths, retention: .init(now: now))
         self.appActivityLog = AppActivityLog(paths: paths, retention: .init(now: now))
         self.accountStore = AccountStore(
@@ -429,24 +421,10 @@ final class AppState: ObservableObject, LifecycleStateManaging {
         }
     }
 
-    func refreshUsageNow() {
-        refresh(
-            applyRateLimitObservations: false,
-            allowAutoSwitch: true,
-            preservingError: nil,
-            throttled: false
-        )
-    }
-
     func refreshAPIBalancesNow() {
         Task {
             await refreshDueAPIBalances(force: true)
         }
-    }
-
-    func refreshTrendsIfNeeded() {
-        guard !hasLoadedFullUsageSnapshot else { return }
-        refreshUsageNow()
     }
 
     func refreshFromMenuOpen() {
@@ -553,10 +531,10 @@ final class AppState: ObservableObject, LifecycleStateManaging {
                 now: refreshStartedAt,
                 includeEffectiveTokenCounts: false
             )
-            if latestUsageSnapshot.isDegraded, !usageSnapshot.threads.isEmpty {
+            if latestUsageSnapshot.isDegraded {
                 refreshErrors.append(latestUsageSnapshot.errorSummary ?? strings.usageReadFailed)
             } else {
-                applyUsageSnapshot(latestUsageSnapshot, preservingTokenBuckets: true)
+                applyUsageSnapshot(latestUsageSnapshot)
             }
         }
 
@@ -574,10 +552,10 @@ final class AppState: ObservableObject, LifecycleStateManaging {
         allowAutoSwitch: Bool
     ) {
         var errors = errors
-        if snapshot.isDegraded, !usageSnapshot.threads.isEmpty {
+        if snapshot.isDegraded {
             errors.append(snapshot.errorSummary ?? strings.usageReadFailed)
         } else {
-            applyUsageSnapshot(snapshot, preservingTokenBuckets: true)
+            applyUsageSnapshot(snapshot)
         }
         finishQuotaRefresh(
             errors: errors,
@@ -593,13 +571,12 @@ final class AppState: ObservableObject, LifecycleStateManaging {
         preservingError preservedError: String?,
         throttled: Bool,
         refreshUsage: Bool = true,
-        refreshUsageIfEmpty: Bool = true,
-        refreshUsageActivityOnly: Bool = false
+        refreshUsageIfEmpty: Bool = true
     ) {
         guard !isRefreshInProgress else { return }
         let refreshStartedAt = now()
         if throttled,
-           !usageSnapshot.threads.isEmpty,
+           usageSnapshot.activeThread != nil,
            let lastRefreshStartedAt,
            refreshStartedAt.timeIntervalSince(lastRefreshStartedAt) < menuRefreshThrottleSeconds
         {
@@ -656,60 +633,16 @@ final class AppState: ObservableObject, LifecycleStateManaging {
             refreshErrors.append(error.localizedDescription)
         }
 
-        let shouldRefreshUsage = refreshUsage || (refreshUsageIfEmpty && usageSnapshot.threads.isEmpty)
-        if shouldRefreshUsage, !refreshUsageActivityOnly {
-            isLoadingFullUsageSnapshot = true
-            let usageReader = threadUsageReader
-            let usageNow = refreshStartedAt
-            let usageAccountWindows = Self.accountUsageWindows(
-                accounts: loadedAccounts,
-                switchEvents: switchEvents,
-                currentAccount: currentAccount
-            )
-            let previousSnapshot = usageSnapshot
-            let currentStrings = strings
+        let shouldRefreshUsage = refreshUsage || (refreshUsageIfEmpty && usageSnapshot.activeThread == nil)
+        if shouldRefreshUsage {
+            let reader = threadUsageReader
             let baseErrors = refreshErrors
-
-            usageRefreshTask?.cancel()
-            usageRefreshTask = Task.detached(priority: .utility) {
-                let latestUsageSnapshot = usageReader.readSnapshot(
-                    now: usageNow,
-                    accountWindows: usageAccountWindows
-                )
-
-                await MainActor.run { [weak self] in
-                    guard let self else { return }
-                    var finalErrors = baseErrors
-                    if latestUsageSnapshot.isDegraded, !previousSnapshot.threads.isEmpty {
-                        finalErrors.append(latestUsageSnapshot.errorSummary ?? currentStrings.usageReadFailed)
-                    } else {
-                        self.applyUsageSnapshot(latestUsageSnapshot)
-                    }
-                    self.hasLoadedFullUsageSnapshot = true
-                    self.isLoadingFullUsageSnapshot = false
-                    self.finishRefresh(
-                        errors: finalErrors,
-                        preservedError: preservedError,
-                        allowAutoSwitch: allowAutoSwitch && !latestUsageSnapshot.isDegraded,
-                        activitySnapshotIsFresh: !latestUsageSnapshot.isDegraded
-                    )
-                }
+            Task.detached(priority: .utility) { [weak self] in
+                let snapshot = reader.readActivitySnapshot(now: refreshStartedAt, includeEffectiveTokenCounts: false)
+                await self?.completeActivityRefresh(snapshot, errors: baseErrors,
+                    preservedError: preservedError, allowAutoSwitch: allowAutoSwitch)
             }
             return
-        } else if shouldRefreshUsage {
-            let latestUsageSnapshot = threadUsageReader.readActivitySnapshot(
-                now: refreshStartedAt,
-                includeEffectiveTokenCounts: !refreshUsageActivityOnly
-            )
-            if latestUsageSnapshot.isDegraded, !usageSnapshot.threads.isEmpty {
-                refreshErrors.append(latestUsageSnapshot.errorSummary ?? strings.usageReadFailed)
-            } else {
-                applyUsageSnapshot(latestUsageSnapshot, preservingTokenBuckets: refreshUsageActivityOnly)
-            }
-            if !refreshUsageActivityOnly {
-                hasLoadedFullUsageSnapshot = true
-                isLoadingFullUsageSnapshot = false
-            }
         }
 
         if let usageError = usageSnapshot.errorSummary {
@@ -721,6 +654,23 @@ final class AppState: ObservableObject, LifecycleStateManaging {
             preservedError: preservedError,
             allowAutoSwitch: allowAutoSwitch
         )
+    }
+
+    private func completeActivityRefresh(
+        _ snapshot: ThreadUsageSnapshot,
+        errors: [String],
+        preservedError: String?,
+        allowAutoSwitch: Bool
+    ) {
+        var errors = errors
+        if snapshot.isDegraded {
+            errors.append(snapshot.errorSummary ?? strings.usageReadFailed)
+        } else {
+            applyUsageSnapshot(snapshot)
+        }
+        finishRefresh(errors: errors, preservedError: preservedError,
+            allowAutoSwitch: allowAutoSwitch && !snapshot.isDegraded,
+            activitySnapshotIsFresh: !snapshot.isDegraded)
     }
 
     private func finishRefresh(
@@ -789,48 +739,12 @@ final class AppState: ObservableObject, LifecycleStateManaging {
         }
     }
 
-    private func applyUsageSnapshot(_ snapshot: ThreadUsageSnapshot, preservingTokenBuckets: Bool = false) {
-        if preservingTokenBuckets, !usageSnapshot.threads.isEmpty {
-            usageSnapshot = ThreadUsageSnapshot(
-                threads: usageSnapshot.threads,
-                totalTokens: usageSnapshot.totalTokens,
-                activeThread: activeThreadPreservingTokenCount(from: snapshot.activeThread),
-                dailyTokenUsage: usageSnapshot.dailyTokenUsage,
-                hourlyTokenUsage: usageSnapshot.hourlyTokenUsage,
-                monthlyTokenUsage: usageSnapshot.monthlyTokenUsage,
-                accountUsageSummaries: usageSnapshot.accountUsageSummaries,
-                errorSummary: snapshot.errorSummary
-            )
-        } else if preservingTokenBuckets {
-            usageSnapshot = ThreadUsageSnapshot(
-                threads: [],
-                totalTokens: 0,
-                activeThread: snapshot.activeThread,
-                dailyTokenUsage: usageSnapshot.dailyTokenUsage,
-                hourlyTokenUsage: usageSnapshot.hourlyTokenUsage,
-                monthlyTokenUsage: usageSnapshot.monthlyTokenUsage,
-                accountUsageSummaries: usageSnapshot.accountUsageSummaries,
-                errorSummary: snapshot.errorSummary
-            )
-        } else {
-            usageSnapshot = snapshot
-        }
-        topThreads = Array(usageSnapshot.threads.sorted { $0.tokensUsed > $1.tokensUsed }.prefix(10))
-    }
-
-    private func activeThreadPreservingTokenCount(from latestActiveThread: ThreadUsage?) -> ThreadUsage? {
-        guard var latestActiveThread else { return nil }
-        if let existing = usageSnapshot.threads.first(where: { $0.id == latestActiveThread.id }) {
-            latestActiveThread.tokensUsed = existing.tokensUsed
-        }
-        return latestActiveThread
-    }
-
-    private func markFullUsageSnapshotNeedsReload() {
-        usageRefreshTask?.cancel()
-        usageRefreshTask = nil
-        hasLoadedFullUsageSnapshot = false
-        isLoadingFullUsageSnapshot = false
+    private func applyUsageSnapshot(_ snapshot: ThreadUsageSnapshot) {
+        // Switching needs activity timestamps, not retained token history.
+        usageSnapshot = ThreadUsageSnapshot(
+            threads: [], totalTokens: 0, activeThread: snapshot.activeThread,
+            errorSummary: snapshot.errorSummary
+        )
     }
 
     func attemptAutoSwitchIfNeeded(activitySnapshotIsFresh: Bool = false) {
@@ -889,11 +803,11 @@ final class AppState: ObservableObject, LifecycleStateManaging {
                 guard let self else { return }
                 self.autoSwitchActivityTask = nil
                 guard self.currentAccount?.id == accountID else { return }
-                if snapshot.isDegraded, !self.usageSnapshot.threads.isEmpty {
+                if snapshot.isDegraded {
                     self.errorMessage = snapshot.errorSummary ?? self.strings.usageReadFailed
                     return
                 }
-                self.applyUsageSnapshot(snapshot, preservingTokenBuckets: true)
+                self.applyUsageSnapshot(snapshot)
                 self.attemptAutoSwitchIfNeeded(activitySnapshotIsFresh: true)
             }
             return
@@ -987,7 +901,6 @@ final class AppState: ObservableObject, LifecycleStateManaging {
                 try codexDesktopManager.quitForCleanSwitch()
             }
             _ = try switcher.switchToAccount(target.id, trigger: .autoPrimaryThreshold)
-            markFullUsageSnapshotNeedsReload()
             refresh(
                 applyRateLimitObservations: false,
                 allowAutoSwitch: false,
@@ -1357,7 +1270,7 @@ final class AppState: ObservableObject, LifecycleStateManaging {
                     errorMessage = snapshot.errorSummary ?? strings.usageReadFailed
                     return
                 }
-                applyUsageSnapshot(snapshot, preservingTokenBuckets: true)
+                applyUsageSnapshot(snapshot)
                 attemptAutoSwitchIfNeeded(activitySnapshotIsFresh: true)
             } else {
                 attemptAutoSwitchIfNeeded()
@@ -1391,7 +1304,6 @@ final class AppState: ObservableObject, LifecycleStateManaging {
                 try codexDesktopManager.quitForCleanSwitch()
             }
             _ = try switcher.switchToAccount(account.id, trigger: .manual)
-            markFullUsageSnapshotNeedsReload()
             suppressAutoSwitchAfterManualSwitch()
             refresh(
                 applyRateLimitObservations: false,
@@ -1441,7 +1353,6 @@ final class AppState: ObservableObject, LifecycleStateManaging {
         do {
             try codexDesktopManager.quitForCleanSwitch()
             _ = try switcher.switchToAccount(account.id, trigger: .manual)
-            markFullUsageSnapshotNeedsReload()
             suppressAutoSwitchAfterManualSwitch()
             refresh(
                 applyRateLimitObservations: false,
@@ -1549,7 +1460,6 @@ final class AppState: ObservableObject, LifecycleStateManaging {
         do {
             try codexDesktopManager.quitForCleanSwitch()
             let result = try switcher.signOutAPIProvider(trigger: .manual)
-            markFullUsageSnapshotNeedsReload()
             suppressAutoSwitchAfterManualSwitch()
             refresh(
                 applyRateLimitObservations: false,
@@ -1782,10 +1692,6 @@ final class AppState: ObservableObject, LifecycleStateManaging {
         updateConfig { $0.quotaRefreshIntervalSeconds = seconds }
     }
 
-    func setUsageRefreshIntervalSeconds(_ seconds: TimeInterval) {
-        updateConfig { $0.usageRefreshIntervalSeconds = seconds }
-    }
-
     func setLanguage(_ language: CodixxLanguage) {
         updateConfig { $0.language = language }
     }
@@ -1847,65 +1753,6 @@ final class AppState: ObservableObject, LifecycleStateManaging {
 
     private func suppressAutoSwitchAfterManualSwitch() {
         autoSwitchSuppressedUntil = now().addingTimeInterval(manualSwitchAutoSuppressionSeconds)
-    }
-
-    static func accountUsageWindows(
-        accounts: [CodixxAccount],
-        switchEvents: [SwitchAuditEvent],
-        currentAccount: CodixxAccount? = nil
-    ) -> [AccountUsageWindow] {
-        let accountIds = Set(accounts.map(\.id))
-        let successfulSwitches = switchEvents
-            .filter { $0.result == .success && $0.targetAccountId != nil }
-            .sorted { $0.timestamp < $1.timestamp }
-
-        if successfulSwitches.isEmpty {
-            let account = currentAccount.flatMap { accountIds.contains($0.id) ? $0 : nil }
-                ?? accounts
-                    .filter { accountIds.contains($0.id) }
-                    .max { ($0.lastUsedAt ?? $0.updatedAt) < ($1.lastUsedAt ?? $1.updatedAt) }
-            if let account {
-                return [AccountUsageWindow(accountId: account.id, start: .distantPast, end: nil)]
-            }
-        }
-
-        var windows: [AccountUsageWindow] = []
-        if let firstSwitch = successfulSwitches.first,
-           let sourceId = firstSwitch.sourceAccountId,
-           accountIds.contains(sourceId)
-        {
-            if Date.distantPast < firstSwitch.timestamp {
-                windows.append(AccountUsageWindow(accountId: sourceId, start: .distantPast, end: firstSwitch.timestamp))
-            }
-        }
-
-        for (index, event) in successfulSwitches.enumerated() {
-            guard let accountId = event.targetAccountId, accountIds.contains(accountId) else { continue }
-            let end = successfulSwitches.indices.contains(index + 1) ? successfulSwitches[index + 1].timestamp : nil
-            windows.append(AccountUsageWindow(accountId: accountId, start: event.timestamp, end: end))
-        }
-
-        if let currentAccount,
-           accountIds.contains(currentAccount.id),
-           let latestSwitchAt = successfulSwitches.last?.timestamp
-        {
-            let currentStart = currentAccount.lastUsedAt ?? currentAccount.updatedAt
-            let currentWindowIsOpen = windows.last { $0.end == nil }?.accountId == currentAccount.id
-            if currentStart > latestSwitchAt, !currentWindowIsOpen {
-                windows = windows.map { window in
-                    guard window.end == nil,
-                          window.start < currentStart
-                    else { return window }
-
-                    var updated = window
-                    updated.end = currentStart
-                    return updated
-                }
-                windows.append(AccountUsageWindow(accountId: currentAccount.id, start: currentStart, end: nil))
-            }
-        }
-
-        return windows
     }
 
     private func handlePostSwitchAction() {

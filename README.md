@@ -23,17 +23,16 @@
 
 For Apple Silicon Macs, download `Codixx-1.0.18-macos-arm64.zip` from the [v1.0.18 GitHub Release](https://github.com/Ninghuohuor/Codixx/releases/tag/v1.0.18), unzip it, and double-click `Codixx.app`. Codixx is a menu bar app, so it runs from the menu bar rather than the Dock. The release package is currently unsigned; if macOS blocks the first launch, right-click the app and choose **Open**.
 
-Codixx is a native macOS menu bar app for people who use Codex heavily and want a local way to track usage, monitor quota state, and switch between saved Codex accounts.
+Codixx is a native macOS menu bar app for people who use Codex heavily and want a local way to monitor quota state and switch between saved Codex accounts.
 
-The app is local-first. It reads Codex data from files on your Mac, stores account snapshots and API keys in macOS Keychain, and keeps token logs and account metadata on your Mac. Quota queries authenticate only with the relevant service; the public reset forecast feed receives no Codex credentials.
+The app is local-first. It reads Codex data from files on your Mac, stores account snapshots and API keys in macOS Keychain, and keeps audit logs and account metadata on your Mac. Quota queries authenticate only with the relevant service; the public reset forecast feed receives no Codex credentials.
 
 ## Features
 
-- **Menu bar dashboard**: Open a compact macOS popover from the menu bar to view Codex usage and account state.
+- **Menu bar dashboard**: Open a compact macOS popover from the menu bar to view Codex quota and account state.
 - **Quota monitoring**: Query saved ChatGPT accounts directly and read local Codex session data; show the quota windows actually returned, including weekly-only accounts.
-- **Reset forecast**: A native tab between Accounts and Trends shows codexreset's announcement forecast, daily probability, average interval, latest automatic reset, and reset-card outlook. Public data is fetched from `https://codexreset.club/api/feed` every five minutes with a local cache. Forecasts concern extra public resets, not an account's regular weekly reset.
+- **Reset forecast**: A native tab between Accounts and Settings shows Tibo's reset progress and latest announcement above codexreset's forecast, daily probability, average interval, latest automatic reset, and reset-card outlook. Public data is fetched from `https://codexreset.club/api/feed` every five minutes with a local cache. Unclassified progress stays separate from confirmed reset history. Forecasts concern extra public resets, not an account's regular weekly reset.
 - **Local reset reminders**: Opt in to automatic-reset or reset-card notifications within Codixx. macOS notification permission is required; Codixx must be running. Old, duplicate, retracted, and stale announcements are not replayed. No email or web-push subscription is created.
-- **Token usage overview**: View total usage, recent trends, active thread usage, and top token-consuming threads.
 - **Multiple account snapshots**: Save local Codex account auth snapshots with readable aliases.
 - **Manual account switching**: Switch the local Codex auth state between saved accounts.
 - **Automatic switching**: Switch to another available account when configured quota thresholds are reached.
@@ -159,15 +158,14 @@ No license has been published yet. Until a license is added, all rights are rese
 
 # Codixx 中文说明
 
-Codixx 是一个原生 macOS 菜单栏 App，面向长期使用 Codex、需要关注 token 消耗、额度状态和本地账号切换的个人用户。
+Codixx 是一个原生 macOS 菜单栏 App，面向长期使用 Codex、需要关注额度状态和本地账号切换的个人用户。
 
-它的核心目标是：在本机读取 Codex 的本地数据，在菜单栏中展示使用情况，并在需要时安全地切换本地保存的 Codex 账号。Codixx 优先服务本地自用场景，不依赖云端后台。
+它的核心目标是：在本机读取 Codex 的本地数据，在菜单栏中展示额度状态，并在需要时安全地切换本地保存的 Codex 账号。Codixx 优先服务本地自用场景，不依赖云端后台。
 
 ## 主要功能
 
-- **菜单栏面板**：从 macOS 顶部菜单栏打开 Codixx 面板，查看当前账号、额度和使用情况。
+- **菜单栏面板**：从 macOS 顶部菜单栏打开 Codixx 面板，查看当前账号和额度。
 - **额度监控**：从本地 Codex 会话数据读取 5 小时额度和周额度状态。
-- **Token 用量概览**：展示总 token、近期趋势、当前活跃线程和 token 消耗最高的线程。
 - **多账号保存**：把本地 Codex 登录快照保存为多个账号，并为每个账号设置别名。
 - **手动切换账号**：在 Codixx 中手动切换本地 Codex auth 状态。
 - **自动切换账号**：当前账号达到设定阈值且对话空闲时，先弹出确认，再切换到可用账号。可以选择本轮暂不切换（直到下次额度重置；时间未知时为 24 小时），或关闭自动切换。

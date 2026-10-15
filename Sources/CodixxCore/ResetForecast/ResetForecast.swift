@@ -7,6 +7,7 @@ public struct ResetFeed: Codable, Equatable, Sendable {
     public var announcements: [ResetAnnouncement]
     public var replyLeads: [ResetReply]?
     public var forecast: ResetEstimate? = nil
+    public var resetClues: [ResetClue]? = nil
 
     public static func decode(_ data: Data) throws -> Self {
         let decoder = JSONDecoder()
@@ -20,7 +21,8 @@ public struct ResetFeed: Codable, Equatable, Sendable {
             return date
         }
         let feed = try decoder.decode(Self.self, from: data)
-        guard feed.schemaVersion == 1, feed.announcements.count <= 5000 else { throw CocoaError(.coderReadCorrupt) }
+        guard feed.schemaVersion == 1, feed.announcements.count <= 5000,
+              (feed.resetClues?.count ?? 0) <= 10 else { throw CocoaError(.coderReadCorrupt) }
         if let forecast = feed.forecast {
             guard forecast.zone == "Asia/Shanghai", forecast.probability.isFinite,
                   (0...1).contains(forecast.probability), forecast.sampleCount >= 0,
@@ -52,6 +54,7 @@ public struct ResetAnnouncement: Codable, Equatable, Identifiable, Sendable {
     public var sourceChanged: Bool?
     public var notificationEligible: Bool?
     public var xReplyTo: String?
+    public var sourceType: String?
     public struct Effect: Codable, Equatable, Sendable {
         public var kind: String
         public var phase: String

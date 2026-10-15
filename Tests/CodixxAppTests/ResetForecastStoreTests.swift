@@ -4,6 +4,18 @@ import CodixxCore
 
 final class ResetForecastStoreTests: XCTestCase {
     @MainActor
+    func testProgressSurvivesCacheAndStoreRestart() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let payload = Data(#"{"schemaVersion":1,"syncIssue":"none","announcements":[],"resetClues":[{"id":"12","url":"https://x.com/thsottiaux/status/12","publishedAt":"2026-10-15T06:00:00Z","text":"Example completion","progress":{"rootId":"11","phase":"completed","summaryZh":"示例重置进展"}}]}"#.utf8)
+        let feed = try ResetFeed.decode(payload)
+        try JSONFileStore<ResetFeed>(url: directory.appendingPathComponent("reset-forecast.json")).save(feed)
+        let store = ResetForecastStore(directory: directory)
+        XCTAssertEqual(store.feed, feed)
+        XCTAssertEqual(store.feed?.resetClues?.first?.progress?.phase, "completed")
+    }
+
+    @MainActor
     func testRemindersFilterOldSeenRetractedAndStaleEventsAcrossRestart() throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: directory) }
