@@ -3,7 +3,18 @@ import Foundation
 /// Uses the same read-only usage endpoint as Codex's backend client.
 /// This request never uses a configured relay URL or changes the active login.
 public struct ChatGPTQuotaClient {
-    public init() {}
+    typealias RequestLoader = @Sendable (URLRequest, URLSessionConfiguration) async throws -> (Data, URLResponse)
+    private let requestLoader: RequestLoader
+
+    public init() {
+        requestLoader = { request, configuration in
+            try await Self.loadRequest(request, configuration: configuration)
+        }
+    }
+
+    init(requestLoader: @escaping RequestLoader) {
+        self.requestLoader = requestLoader
+    }
 
     public enum QueryError: LocalizedError {
         case missingLogin, expiredLogin, activeLoginRefreshPending, http(Int), invalidResponse, noQuota
@@ -34,14 +45,34 @@ public struct ChatGPTQuotaClient {
 
     public func query(snapshot: AuthSnapshot, accountID: String, alias: String) async throws -> AccountQuotaState {
         let request = try Self.request(snapshot: snapshot)
-        let configuration = URLSessionConfiguration.ephemeral
-        let session = URLSession(configuration: configuration, delegate: NoQuotaRedirects(), delegateQueue: nil)
-        defer { session.invalidateAndCancel() }
-        let (data, response) = try await session.data(for: request)
+        let (data, response) = try await loadWithTLSFallback(request)
         guard let http = response as? HTTPURLResponse else { throw QueryError.invalidResponse }
         if http.statusCode == 401 { throw QueryError.expiredLogin }
         guard http.statusCode == 200 else { throw QueryError.http(http.statusCode) }
         return try Self.parse(data, accountID: accountID, alias: alias, now: Date())
+    }
+
+    private func loadWithTLSFallback(_ request: URLRequest) async throws -> (Data, URLResponse) {
+        do {
+            return try await requestLoader(request, .ephemeral)
+        } catch {
+            let networkError = error as NSError
+            guard networkError.domain == NSURLErrorDomain,
+                  networkError.code == URLError.secureConnectionFailed.rawValue else { throw error }
+            try Task.checkCancellation()
+            // Retry this read-only request once when the default TLS handshake
+            // fails. Certificate errors do not trigger this compatibility retry.
+            let configuration = URLSessionConfiguration.ephemeral
+            configuration.tlsMinimumSupportedProtocolVersion = .TLSv12
+            configuration.tlsMaximumSupportedProtocolVersion = .TLSv12
+            return try await requestLoader(request, configuration)
+        }
+    }
+
+    private static func loadRequest(_ request: URLRequest, configuration: URLSessionConfiguration) async throws -> (Data, URLResponse) {
+        let session = URLSession(configuration: configuration, delegate: NoQuotaRedirects(), delegateQueue: nil)
+        defer { session.invalidateAndCancel() }
+        return try await session.data(for: request)
     }
 
     public static func parse(_ data: Data, accountID: String, alias: String, now: Date) throws -> AccountQuotaState {
