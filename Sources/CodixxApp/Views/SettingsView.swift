@@ -9,6 +9,13 @@ struct SettingsView: View {
     @State private var parentWindow: NSWindow?
 
     var body: some View {
+        let logEntries = AppLogEntry.recentEntries(
+            switchEvents: state.switchEvents,
+            appEvents: state.appLogEvents,
+            strings: state.strings,
+            category: selectedLogCategory,
+            limit: isShowingAllLogs ? 20 : 4
+        )
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
                 Text(state.strings.settings)
@@ -191,13 +198,13 @@ struct SettingsView: View {
 
                 settingsSection(title: state.strings.logs) {
                     AppLogView(
-                        entries: visibleLogEntries,
+                        entries: Array(logEntries.prefix(isShowingAllLogs ? 20 : 3)),
                         strings: state.strings,
                         selectedCategory: $selectedLogCategory,
                         showsTitle: false
                     )
 
-                    if filteredLogEntries.count > 3 {
+                    if logEntries.count > 3 {
                         Divider()
 
                         Button {
@@ -220,23 +227,6 @@ struct SettingsView: View {
         .background(WindowReader { window in
             parentWindow = window
         })
-    }
-
-    private var allLogEntries: [AppLogEntry] {
-        AppLogEntry.entries(
-            switchEvents: state.switchEvents,
-            appEvents: state.appLogEvents,
-            strings: state.strings
-        )
-    }
-
-    private var filteredLogEntries: [AppLogEntry] {
-        AppLogEntry.filtered(allLogEntries, by: selectedLogCategory)
-    }
-
-    private var visibleLogEntries: [AppLogEntry] {
-        let limit = isShowingAllLogs ? 20 : 3
-        return Array(filteredLogEntries.prefix(limit))
     }
 
     private func confirmQuit() {

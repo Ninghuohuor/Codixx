@@ -1,4 +1,5 @@
 import AppKit
+import Combine
 import SwiftUI
 import CodixxCore
 
@@ -26,33 +27,59 @@ enum DashboardLayout {
     }
 }
 
+@MainActor
+final class DashboardPresentationState: ObservableObject {
+    @Published private(set) var language: CodixxLanguage
+    @Published private(set) var pendingAutoSwitch: AutoSwitchProposal?
+    private var cancellables: Set<AnyCancellable> = []
+
+    init(state: AppState) {
+        language = state.config.language
+        pendingAutoSwitch = state.pendingAutoSwitch
+        state.$config.map(\.language).removeDuplicates().dropFirst()
+            .sink { [weak self] in self?.language = $0 }
+            .store(in: &cancellables)
+        state.$pendingAutoSwitch.removeDuplicates().dropFirst()
+            .sink { [weak self] in self?.pendingAutoSwitch = $0 }
+            .store(in: &cancellables)
+    }
+
+    var strings: CodixxStrings { CodixxStrings(language: language) }
+}
+
 struct DashboardView: View {
-    @ObservedObject var state: AppState
+    let state: AppState
+    @StateObject private var presentation: DashboardPresentationState
     @State private var selectedTab = 0
     @State private var trendRefreshTask: Task<Void, Never>?
+
+    init(state: AppState) {
+        self.state = state
+        _presentation = StateObject(wrappedValue: DashboardPresentationState(state: state))
+    }
 
     var body: some View {
         ZStack {
             TabView(selection: $selectedTab) {
                 accounts
-                    .tabItem { Label(state.strings.accounts, systemImage: "person.2") }
+                    .tabItem { Label(presentation.strings.accounts, systemImage: "person.2") }
                     .tag(0)
 
                 ResetForecastView(store: state.resetForecastStore)
                     .tabItem { Label("重置预测", systemImage: "calendar.badge.clock") }
                     .tag(1)
 
-                trends
-                    .tabItem { Label(state.strings.trends, systemImage: "chart.xyaxis.line") }
+                DashboardTrendsView(state: state)
+                    .tabItem { Label(presentation.strings.trends, systemImage: "chart.xyaxis.line") }
                     .tag(2)
 
                 settings
-                    .tabItem { Label(state.strings.settings, systemImage: "gearshape") }
+                    .tabItem { Label(presentation.strings.settings, systemImage: "gearshape") }
                     .tag(3)
             }
-            .allowsHitTesting(state.pendingAutoSwitch == nil)
+            .allowsHitTesting(presentation.pendingAutoSwitch == nil)
 
-            if let proposal = state.pendingAutoSwitch {
+            if let proposal = presentation.pendingAutoSwitch {
                 Color.black.opacity(0.16)
                     .ignoresSafeArea()
                 autoSwitchConfirmation(proposal)
@@ -113,7 +140,14 @@ struct DashboardView: View {
         }
     }
 
-    private var trends: some View {
+    private var accounts: some View { AccountListView(state: state) }
+    private var settings: some View { SettingsView(state: state) }
+}
+
+private struct DashboardTrendsView: View {
+    @ObservedObject var state: AppState
+
+    var body: some View {
         Group {
             if state.isLoadingFullUsageSnapshot || !state.hasLoadedFullUsageSnapshot {
                 TrendLoadingView(strings: state.strings)
@@ -144,13 +178,6 @@ struct DashboardView: View {
         }
     }
 
-    private var accounts: some View {
-        AccountListView(state: state)
-    }
-
-    private var settings: some View {
-        SettingsView(state: state)
-    }
 }
 
 private struct TrendLoadingView: View {

@@ -64,6 +64,28 @@ struct AppLogEntry: Identifiable, Equatable {
         }
     }
 
+    static func recentEntries(
+        switchEvents: [SwitchAuditEvent],
+        appEvents: [AppLogEvent],
+        strings: CodixxStrings,
+        category selectedCategory: AppLogCategory,
+        limit: Int
+    ) -> [AppLogEntry] {
+        guard limit > 0 else { return [] }
+        let switches = switchEvents.lazy.filter { event in
+            selectedCategory == .all || selectedCategory == .switching
+                || (selectedCategory == .error && severity(for: event.result) == .error)
+        }.sorted { $0.timestamp > $1.timestamp }.prefix(limit)
+        let activity = appEvents.lazy.filter { event in
+            selectedCategory == .all
+                || (selectedCategory == .error ? severity(for: event.kind) == .error : category(for: event.kind) == selectedCategory)
+        }.sorted { $0.timestamp > $1.timestamp }.prefix(limit)
+        // Localize only rows that can actually be displayed, after filtering.
+        return Array((switches.map { entry(from: $0, strings: strings) }
+            + activity.map { entry(from: $0, strings: strings) })
+            .sorted { $0.timestamp > $1.timestamp }.prefix(limit))
+    }
+
     private static func entry(from event: SwitchAuditEvent, strings: CodixxStrings) -> AppLogEntry {
         AppLogEntry(
             id: "switch-\(event.id.uuidString)",

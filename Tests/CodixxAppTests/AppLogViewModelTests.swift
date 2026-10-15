@@ -95,4 +95,20 @@ final class AppLogViewModelTests: XCTestCase {
         XCTAssertEqual(entries.map(\.id), ["app-00000000-0000-0000-0000-000000000001", "switch-00000000-0000-0000-0000-000000000002"])
         XCTAssertEqual(entries.map(\.category), [.account, .switching])
     }
+
+    func testBoundedLogRowsMatchExistingFiltersIncludingOlderRareEvents() {
+        let strings = CodixxStrings(language: .english)
+        var events = (0..<1_000).map {
+            AppLogEvent(timestamp: Date(timeIntervalSince1970: Double($0)), kind: .apiBalanceRefreshed)
+        }
+        events.append(AppLogEvent(timestamp: Date(timeIntervalSince1970: 1), kind: .accountSaved, accountAlias: "Example"))
+        events.append(AppLogEvent(timestamp: Date(timeIntervalSince1970: 2), kind: .apiBalanceRefreshFailed))
+        let all = AppLogEntry.entries(switchEvents: [], appEvents: events, strings: strings)
+        for category in AppLogCategory.allCases {
+            for limit in [3, 4, 20] {
+                let actual = AppLogEntry.recentEntries(switchEvents: [], appEvents: events, strings: strings, category: category, limit: limit)
+                XCTAssertEqual(actual, Array(AppLogEntry.filtered(all, by: category).prefix(limit)))
+            }
+        }
+    }
 }

@@ -526,7 +526,7 @@ final class AppState: ObservableObject, LifecycleStateManaging {
             refreshErrors.append(error.localizedDescription)
         }
         do {
-            appLogEvents = try appActivityLog.loadEvents().sorted { $0.timestamp > $1.timestamp }
+            publishAppLogEvents(Array(try appActivityLog.loadEvents().reversed()))
         } catch {
             refreshErrors.append(error.localizedDescription)
         }
@@ -651,7 +651,7 @@ final class AppState: ObservableObject, LifecycleStateManaging {
             refreshErrors.append(error.localizedDescription)
         }
         do {
-            appLogEvents = try appActivityLog.loadEvents().sorted { $0.timestamp > $1.timestamp }
+            publishAppLogEvents(Array(try appActivityLog.loadEvents().reversed()))
         } catch {
             refreshErrors.append(error.localizedDescription)
         }
@@ -1644,11 +1644,11 @@ final class AppState: ObservableObject, LifecycleStateManaging {
                 )
             }
         let paths = paths
-        let clock = now
+        let activityLog = appActivityLog
         let previousTask = accountOrderPersistenceTask
         hasPendingAccountOrderCommit = false
 
-        let task = Task.detached(priority: .utility) { [accountSnapshot, event, paths, clock, previousTask] in
+        let task = Task.detached(priority: .utility) { [accountSnapshot, event, paths, activityLog, previousTask] in
             if let previousTask {
                 await previousTask.value
             }
@@ -1658,9 +1658,8 @@ final class AppState: ObservableObject, LifecycleStateManaging {
                 try AccountMetadataStore(paths: paths).save(AccountMetadataList(accounts: accountSnapshot))
                 let loadedEvents: [AppLogEvent]?
                 if let event {
-                    let appActivityLog = AppActivityLog(paths: paths, retention: .init(now: clock))
-                    try appActivityLog.append(event)
-                    loadedEvents = try appActivityLog.loadEvents().sorted { $0.timestamp > $1.timestamp }
+                    try activityLog.append(event)
+                    loadedEvents = Array(try activityLog.loadEvents().reversed())
                 } else {
                     loadedEvents = nil
                 }
@@ -1668,7 +1667,7 @@ final class AppState: ObservableObject, LifecycleStateManaging {
                 if let loadedEvents {
                     let eventsToPublish = loadedEvents
                     await MainActor.run { [weak self] in
-                        self?.appLogEvents = eventsToPublish
+                        self?.publishAppLogEvents(eventsToPublish)
                     }
                 }
             } catch {
@@ -1961,9 +1960,9 @@ final class AppState: ObservableObject, LifecycleStateManaging {
 
     private func scheduleAccountMetadataPersistence(accounts accountSnapshot: [CodixxAccount], event: AppLogEvent?) {
         let paths = paths
-        let clock = now
+        let activityLog = appActivityLog
         let previousTask = accountOrderPersistenceTask
-        let task = Task.detached(priority: .utility) { [accountSnapshot, event, paths, clock, previousTask] in
+        let task = Task.detached(priority: .utility) { [accountSnapshot, event, paths, activityLog, previousTask] in
             if let previousTask {
                 await previousTask.value
             }
@@ -1972,11 +1971,10 @@ final class AppState: ObservableObject, LifecycleStateManaging {
             do {
                 try AccountMetadataStore(paths: paths).save(AccountMetadataList(accounts: accountSnapshot))
                 guard let event else { return }
-                let appActivityLog = AppActivityLog(paths: paths, retention: .init(now: clock))
-                try appActivityLog.append(event)
-                let loadedEvents = try appActivityLog.loadEvents().sorted { $0.timestamp > $1.timestamp }
+                try activityLog.append(event)
+                let loadedEvents = Array(try activityLog.loadEvents().reversed())
                 await MainActor.run { [weak self] in
-                    self?.appLogEvents = loadedEvents
+                    self?.publishAppLogEvents(loadedEvents)
                 }
             } catch {
                 let message = error.localizedDescription
@@ -2018,11 +2016,10 @@ final class AppState: ObservableObject, LifecycleStateManaging {
         )
         if kind == .apiBalanceRefreshed || kind == .apiBalanceRefreshFailed {
             appLogEvents.insert(event, at: 0)
-            let paths = paths
-            let clock = now
+            let activityLog = appActivityLog
             Task.detached(priority: .utility) { [weak self] in
                 do {
-                    try AppActivityLog(paths: paths, retention: .init(now: clock)).append(event)
+                    try activityLog.append(event)
                 } catch {
                     let message = error.localizedDescription
                     await MainActor.run { [weak self] in
@@ -2034,10 +2031,14 @@ final class AppState: ObservableObject, LifecycleStateManaging {
         }
         do {
             try appActivityLog.append(event)
-            appLogEvents = try appActivityLog.loadEvents().sorted { $0.timestamp > $1.timestamp }
+            publishAppLogEvents(Array(try appActivityLog.loadEvents().reversed()))
         } catch {
             errorMessage = error.localizedDescription
         }
+    }
+
+    private func publishAppLogEvents(_ events: [AppLogEvent]) {
+        if appLogEvents != events { appLogEvents = events }
     }
 
     private func applyLatestRateLimitObservation(
